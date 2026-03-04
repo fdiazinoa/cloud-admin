@@ -164,6 +164,25 @@ export async function updateTenantTaxId(id: string, taxId: string): Promise<void
     if (error) throw error;
 }
 
+export async function updateTenant(
+    id: string,
+    payload: {
+        name: string;
+        legal_name: string | null;
+        tax_id: string | null;
+        phone: string | null;
+        type: "full" | "pos_only";
+        cloud_sync: boolean;
+    },
+): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("tenants")
+        .update(payload)
+        .eq("id", id);
+
+    if (error) throw error;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes] = await Promise.all([
         supabaseAdmin.from("tenants").select("status"),
@@ -219,6 +238,7 @@ export const tenantService = {
     changeTenantPassword,
     getTenants,
     updateTenantTaxId,
+    updateTenant,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,

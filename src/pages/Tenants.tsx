@@ -9,6 +9,9 @@ export const Tenants: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+    const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
         tempPassword: string;
@@ -16,6 +19,14 @@ export const Tenants: React.FC = () => {
 
     // Form state
     const [formData, setFormData] = useState({ name: '', email: '', taxId: '', type: 'full' as 'full' | 'pos_only', cloudSync: true });
+    const [editFormData, setEditFormData] = useState({
+        name: '',
+        legalName: '',
+        taxId: '',
+        phone: '',
+        type: 'full' as 'full' | 'pos_only',
+        cloudSync: true,
+    });
 
     const getErrorMessage = (error: unknown) => {
         if (typeof error === 'string') return error;
@@ -107,6 +118,53 @@ export const Tenants: React.FC = () => {
             alert('Error al aprovisionar el Tenant: ' + getErrorMessage(err));
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    const normalizeOptional = (value: string) => {
+        const trimmed = value.trim();
+        return trimmed ? trimmed : null;
+    };
+
+    const openEditModal = (tenant: Tenant) => {
+        setEditingTenant(tenant);
+        setEditFormData({
+            name: tenant.name || '',
+            legalName: tenant.legal_name || '',
+            taxId: tenant.tax_id || '',
+            phone: tenant.phone || '',
+            type: tenant.type || 'full',
+            cloudSync: tenant.cloud_sync ?? true,
+        });
+        setIsEditModalOpen(true);
+    };
+
+    const closeEditModal = () => {
+        setIsEditModalOpen(false);
+        setEditingTenant(null);
+    };
+
+    const handleUpdateTenant = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingTenant) return;
+
+        setIsEditSubmitting(true);
+        try {
+            await tenantService.updateTenant(editingTenant.id, {
+                name: editFormData.name.trim(),
+                legal_name: normalizeOptional(editFormData.legalName),
+                tax_id: normalizeOptional(editFormData.taxId),
+                phone: normalizeOptional(editFormData.phone),
+                type: editFormData.type,
+                cloud_sync: editFormData.cloudSync,
+            });
+            closeEditModal();
+            await fetchTenants();
+        } catch (err: unknown) {
+            console.error('Error updating tenant:', err);
+            alert('Error al actualizar el Tenant: ' + getErrorMessage(err));
+        } finally {
+            setIsEditSubmitting(false);
         }
     };
 
@@ -206,7 +264,12 @@ export const Tenants: React.FC = () => {
                                 <td className="px-6 py-4 text-center">{getStatusBadge(t.status)}</td>
                                 <td className="px-6 py-4 text-right">
                                     <div className="flex justify-end gap-2">
-                                        <button className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Editar">
+                                        <button
+                                            type="button"
+                                            onClick={() => openEditModal(t)}
+                                            className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                            title="Editar"
+                                        >
                                             <Edit3 size={18} />
                                         </button>
                                         <button
@@ -312,6 +375,119 @@ export const Tenants: React.FC = () => {
                                     className="flex-1 px-4 py-3 text-white bg-blue-600 hover:bg-blue-700 rounded-xl font-bold shadow-sm transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
                                 >
                                     {isSubmitting ? <><Loader2 size={18} className="animate-spin" /> Creando Esquema...</> : 'Confirmar Registro'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Tenant Modal */}
+            {isEditModalOpen && editingTenant && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                            <h3 className="font-black text-lg text-slate-800">Editar Empresa</h3>
+                            <button type="button" onClick={closeEditModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <form onSubmit={handleUpdateTenant} className="p-6 space-y-5">
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Nombre Comercial <span className="text-red-500">*</span></label>
+                                <input
+                                    required
+                                    type="text"
+                                    value={editFormData.name}
+                                    onChange={e => setEditFormData({ ...editFormData, name: e.target.value })}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Razón Social</label>
+                                <input
+                                    type="text"
+                                    value={editFormData.legalName}
+                                    onChange={e => setEditFormData({ ...editFormData, legalName: e.target.value })}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                    placeholder="Opcional"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">RNC / Cédula</label>
+                                    <input
+                                        type="text"
+                                        value={editFormData.taxId}
+                                        onChange={e => setEditFormData({ ...editFormData, taxId: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Opcional"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Teléfono</label>
+                                    <input
+                                        type="text"
+                                        value={editFormData.phone}
+                                        onChange={e => setEditFormData({ ...editFormData, phone: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Opcional"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Email de Contacto</label>
+                                <input
+                                    type="email"
+                                    value={editingTenant.email}
+                                    disabled
+                                    className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 cursor-not-allowed"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">El email de acceso se mantiene fijo para no desincronizar autenticación.</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Solución</label>
+                                    <select
+                                        value={editFormData.type}
+                                        onChange={e => setEditFormData({ ...editFormData, type: e.target.value as 'full' | 'pos_only' })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                    >
+                                        <option value="full">MALL POS + Cloud ERP</option>
+                                        <option value="pos_only">Solo MALL POS</option>
+                                    </select>
+                                </div>
+                                <div className="flex items-center pt-7">
+                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={editFormData.cloudSync}
+                                            onChange={e => setEditFormData({ ...editFormData, cloudSync: e.target.checked })}
+                                            className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors"
+                                        />
+                                        <span className="text-sm font-bold text-slate-700 select-none group-hover:text-blue-700 transition-colors">Activar Respaldo Cloud</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div className="pt-4 flex gap-3">
+                                <button
+                                    type="button"
+                                    onClick={closeEditModal}
+                                    className="flex-1 px-4 py-3 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl font-bold transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isEditSubmitting}
+                                    className="flex-1 px-4 py-3 text-white bg-blue-600 hover:bg-blue-700 rounded-xl font-bold shadow-sm transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
+                                >
+                                    {isEditSubmitting ? <><Loader2 size={18} className="animate-spin" /> Guardando...</> : 'Guardar Cambios'}
                                 </button>
                             </div>
                         </form>
