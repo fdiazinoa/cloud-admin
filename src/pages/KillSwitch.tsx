@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Skull, AlertTriangle, Key, ShieldAlert, Loader2 } from 'lucide-react';
 import { tenantService } from '../lib/tenantService';
 
+// Version: 1.0.2 - Force redeploy to sync real data and remove demo residuals
 export const KillSwitch: React.FC = () => {
     const [tenants, setTenants] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -72,8 +73,8 @@ export const KillSwitch: React.FC = () => {
                                     <p className="text-slate-400 text-[10px] mt-0.5 font-mono">{tenant.email}</p>
                                 </div>
                                 <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${(tenant.status === 'ACTIVE' || tenant.status === 'TRIAL')
-                                        ? 'bg-emerald-100 text-emerald-700'
-                                        : 'bg-red-100 text-red-700'
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-red-100 text-red-700'
                                     }`}>
                                     {(tenant.status === 'ACTIVE' || tenant.status === 'TRIAL') ? 'Servicio Activo' : 'Suspendido'}
                                 </span>
@@ -101,8 +102,8 @@ export const KillSwitch: React.FC = () => {
                                     onClick={() => handleToggleStatus(tenant.id, tenant.status)}
                                     disabled={actionLoading === tenant.id}
                                     className={`w-full py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm ${(tenant.status === 'ACTIVE' || tenant.status === 'TRIAL')
-                                            ? 'bg-red-600 hover:bg-red-700 text-white'
-                                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                        ? 'bg-red-600 hover:bg-red-700 text-white'
+                                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                                         } disabled:opacity-50`}
                                 >
                                     {actionLoading === tenant.id ? (
