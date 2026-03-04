@@ -46,16 +46,17 @@ export const Tenants: React.FC = () => {
     );
 
     const toggleTenantStatus = async (tenant: Tenant) => {
-        const newStatus = tenant.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
-        if (!confirm(`¿Estás seguro que deseas cambiar el estado a ${newStatus}?`)) return;
+        const isCurrentlyActive = tenant.status === 'ACTIVE' || tenant.status === 'TRIAL';
+        const newStatusLabel = isCurrentlyActive ? 'SUSPENDER' : 'REACTIVAR';
+
+        if (!confirm(`¿Estás seguro que deseas ${newStatusLabel} esta empresa?`)) return;
 
         try {
-            const { error } = await supabaseAdmin
-                .from('tenants')
-                .update({ status: newStatus })
-                .eq('id', tenant.id);
-
-            if (error) throw error;
+            if (isCurrentlyActive) {
+                await tenantService.suspendTenant(tenant.id);
+            } else {
+                await tenantService.reactivateTenant(tenant.id);
+            }
             await fetchTenants(); // Reload
         } catch (err) {
             console.error('Error toggling status:', err);

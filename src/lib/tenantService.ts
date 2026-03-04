@@ -125,13 +125,15 @@ export async function getTenants(): Promise<any[]> {
 }
 
 /**
- * Suspend a tenant (Update its verification or status).
- * Currently we use verified as a proxy for active/suspended.
+ * Suspend a tenant (Update its verification and status).
  */
 export async function suspendTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
-        .update({ verified: false })
+        .update({
+            verified: false,
+            status: 'SUSPENDED'
+        })
         .eq("id", id);
     if (error) throw error;
 }
@@ -142,7 +144,10 @@ export async function suspendTenant(id: string): Promise<void> {
 export async function reactivateTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
-        .update({ verified: true })
+        .update({
+            verified: true,
+            status: 'ACTIVE'
+        })
         .eq("id", id);
     if (error) throw error;
 }
