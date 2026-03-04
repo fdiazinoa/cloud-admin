@@ -22,6 +22,26 @@ if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env");
 }
 
+const decodeJwtRole = (token) => {
+    try {
+        const [, payload] = token.split(".");
+        if (!payload) return null;
+        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const json = Buffer.from(normalized, "base64").toString("utf8");
+        const parsed = JSON.parse(json);
+        return typeof parsed.role === "string" ? parsed.role : null;
+    } catch {
+        return null;
+    }
+};
+
+const anonRole = decodeJwtRole(supabaseAnonKey);
+if (anonRole !== "anon") {
+    throw new Error(
+        `VITE_SUPABASE_ANON_KEY must be an anon key for this check (current role: ${anonRole || "unknown"})`,
+    );
+}
+
 const checks = [
     ["landlord", "subscriptions"],
     ["landlord", "tenants"],

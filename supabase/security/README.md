@@ -39,8 +39,12 @@ What it does:
 Run:
 
 ```bash
+npm run check:supabase-keys
 npm run verify:supabase-security
 ```
+
+`verify:supabase-security` now fails fast if `VITE_SUPABASE_ANON_KEY` is not truly
+an anon key.
 
 If `resolve_tenant_license()` still returns `400`, inspect the live function body in the
 Supabase SQL editor:
