@@ -36,9 +36,10 @@ const decodeJwtRole = (token) => {
 };
 
 const anonRole = decodeJwtRole(supabaseAnonKey);
-if (anonRole !== "anon") {
+const isPublicClientKey = supabaseAnonKey.startsWith("sb_publishable_") || anonRole === "anon";
+if (!isPublicClientKey) {
     throw new Error(
-        `VITE_SUPABASE_ANON_KEY must be an anon key for this check (current role: ${anonRole || "unknown"})`,
+        `VITE_SUPABASE_ANON_KEY must be anon or sb_publishable for this check (current role: ${anonRole || "unknown"})`,
     );
 }
 

@@ -17,6 +17,16 @@ function decodeJwtRole(token: string): string | null {
     }
 }
 
+function isPublicClientKey(token: string): boolean {
+    if (token.startsWith('sb_publishable_')) return true;
+    return decodeJwtRole(token) === 'anon';
+}
+
+function isElevatedServerKey(token: string): boolean {
+    if (token.startsWith('sb_secret_')) return true;
+    return decodeJwtRole(token) === 'service_role';
+}
+
 if (!supabaseUrl || !supabaseKey) {
     throw new Error('Missing Supabase Environment Variables');
 }
@@ -26,14 +36,13 @@ if (!supabaseServiceKey) {
 }
 
 if (!allowInsecureKeys) {
-    const anonRole = decodeJwtRole(supabaseKey);
-    const serviceRole = decodeJwtRole(supabaseServiceKey);
-
-    if (anonRole !== 'anon') {
-        throw new Error(`VITE_SUPABASE_ANON_KEY must be an anon key (current role: ${anonRole || 'unknown'})`);
+    if (!isPublicClientKey(supabaseKey)) {
+        const anonRole = decodeJwtRole(supabaseKey);
+        throw new Error(`VITE_SUPABASE_ANON_KEY must be anon or sb_publishable (current role: ${anonRole || 'unknown'})`);
     }
-    if (serviceRole !== 'service_role') {
-        throw new Error(`VITE_SUPABASE_SERVICE_ROLE_KEY must be a service_role key (current role: ${serviceRole || 'unknown'})`);
+    if (!isElevatedServerKey(supabaseServiceKey)) {
+        const serviceRole = decodeJwtRole(supabaseServiceKey);
+        throw new Error(`VITE_SUPABASE_SERVICE_ROLE_KEY must be service_role or sb_secret (current role: ${serviceRole || 'unknown'})`);
     }
     if (supabaseKey === supabaseServiceKey) {
         throw new Error('VITE_SUPABASE_ANON_KEY and VITE_SUPABASE_SERVICE_ROLE_KEY cannot be the same key');

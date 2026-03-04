@@ -18,6 +18,9 @@ const decodeJwtRole = (token) => {
     }
 };
 
+const isPublicClientKey = (token) => token?.startsWith("sb_publishable_") || decodeJwtRole(token) === "anon";
+const isElevatedServerKey = (token) => token?.startsWith("sb_secret_") || decodeJwtRole(token) === "service_role";
+
 const loadEnv = (filePath) => Object.fromEntries(
     fs.readFileSync(filePath, "utf8")
         .split(/\r?\n/)
@@ -50,13 +53,13 @@ for (const envPath of defaultEnvPaths) {
         console.log("- VITE_SUPABASE_SERVICE_ROLE_KEY role: not set");
     }
 
-    if (anonRole !== "anon") {
+    if (!isPublicClientKey(anonKey)) {
         hasError = true;
-        console.error("  ERROR: VITE_SUPABASE_ANON_KEY is not anon.");
+        console.error("  ERROR: VITE_SUPABASE_ANON_KEY is not anon/sb_publishable.");
     }
-    if (serviceKey && serviceRole !== "service_role") {
+    if (serviceKey && !isElevatedServerKey(serviceKey)) {
         hasError = true;
-        console.error("  ERROR: VITE_SUPABASE_SERVICE_ROLE_KEY is not service_role.");
+        console.error("  ERROR: VITE_SUPABASE_SERVICE_ROLE_KEY is not service_role/sb_secret.");
     }
     if (anonKey && serviceKey && anonKey === serviceKey) {
         hasError = true;
