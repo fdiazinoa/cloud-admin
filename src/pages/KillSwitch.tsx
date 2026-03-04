@@ -22,10 +22,11 @@ export const KillSwitch: React.FC = () => {
         fetchTenants();
     }, []);
 
-    const handleToggleStatus = async (id: string, currentlyVerified: boolean) => {
+    const handleToggleStatus = async (id: string, currentStatus: string) => {
+        const isCurrentlyActive = currentStatus === 'ACTIVE' || currentStatus === 'TRIAL';
         setActionLoading(id);
         try {
-            if (currentlyVerified) {
+            if (isCurrentlyActive) {
                 await tenantService.suspendTenant(id);
             } else {
                 await tenantService.reactivateTenant(id);
@@ -70,11 +71,11 @@ export const KillSwitch: React.FC = () => {
                                     <p className="text-slate-500 text-xs">ID: {tenant.id.substring(0, 8)}...</p>
                                     <p className="text-slate-400 text-[10px] mt-0.5 font-mono">{tenant.email}</p>
                                 </div>
-                                <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${tenant.verified
+                                <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${(tenant.status === 'ACTIVE' || tenant.status === 'TRIAL')
                                         ? 'bg-emerald-100 text-emerald-700'
                                         : 'bg-red-100 text-red-700'
                                     }`}>
-                                    {tenant.verified ? 'Servicio Activo' : 'Suspendido'}
+                                    {(tenant.status === 'ACTIVE' || tenant.status === 'TRIAL') ? 'Servicio Activo' : 'Suspendido'}
                                 </span>
                             </div>
                             <div className="p-4 space-y-3">
@@ -90,23 +91,23 @@ export const KillSwitch: React.FC = () => {
                                 </div>
                                 <div className="flex justify-between text-xs pt-2 border-t border-slate-50">
                                     <span className="text-slate-400 italic">Estado de Seguridad</span>
-                                    <span className={`font-bold ${tenant.verified ? 'text-emerald-500' : 'text-red-500'}`}>
-                                        {tenant.verified ? 'VALIDADO' : 'BLOQUEADO'}
+                                    <span className={`font-bold ${(tenant.status === 'ACTIVE' || tenant.status === 'TRIAL') ? 'text-emerald-500' : 'text-red-500'}`}>
+                                        {(tenant.status === 'ACTIVE' || tenant.status === 'TRIAL') ? 'VALIDADO' : 'BLOQUEADO'}
                                     </span>
                                 </div>
                             </div>
                             <div className="p-4 bg-slate-50 border-t border-slate-100">
                                 <button
-                                    onClick={() => handleToggleStatus(tenant.id, tenant.verified)}
+                                    onClick={() => handleToggleStatus(tenant.id, tenant.status)}
                                     disabled={actionLoading === tenant.id}
-                                    className={`w-full py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm ${tenant.verified
+                                    className={`w-full py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-sm ${(tenant.status === 'ACTIVE' || tenant.status === 'TRIAL')
                                             ? 'bg-red-600 hover:bg-red-700 text-white'
                                             : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                                         } disabled:opacity-50`}
                                 >
                                     {actionLoading === tenant.id ? (
                                         <Loader2 className="animate-spin" size={18} />
-                                    ) : tenant.verified ? (
+                                    ) : (tenant.status === 'ACTIVE' || tenant.status === 'TRIAL') ? (
                                         <><ShieldAlert size={18} /> SUSPENDER SERVICIO</>
                                     ) : (
                                         <><Key size={18} /> REACTIVAR SERVICIO</>

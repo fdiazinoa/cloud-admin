@@ -131,7 +131,6 @@ export async function suspendTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
         .update({
-            verified: false,
             status: 'SUSPENDED'
         })
         .eq("id", id);
@@ -145,7 +144,6 @@ export async function reactivateTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
         .update({
-            verified: true,
             status: 'ACTIVE'
         })
         .eq("id", id);
