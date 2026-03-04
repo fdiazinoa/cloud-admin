@@ -16,7 +16,7 @@ LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, landlord
 AS $$
-    SELECT t.id, t.status, t.slug
+    SELECT t.id, t.status, t.slug::TEXT
     FROM landlord.tenants AS t
     WHERE t.id = p_tenant_id
     LIMIT 1;
@@ -38,7 +38,7 @@ SET search_path = public, landlord
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT t.id, t.status, t.slug
+    SELECT t.id, t.status, t.slug::TEXT
     FROM landlord.tenants AS t
     WHERE
         (p_tenant_id IS NOT NULL AND t.id = p_tenant_id)
