@@ -108,8 +108,50 @@ export async function changeTenantPassword(newPassword: string): Promise<void> {
     if (error) throw error;
 }
 
+/**
+ * Fetch all real tenants from the landlord.tenants table using the admin client.
+ */
+export async function getTenants(): Promise<any[]> {
+    const { data, error } = await supabaseAdmin
+        .from("tenants")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        console.error("Error fetching tenants:", error);
+        throw error;
+    }
+    return data || [];
+}
+
+/**
+ * Suspend a tenant (Update its verification or status).
+ * Currently we use verified as a proxy for active/suspended.
+ */
+export async function suspendTenant(id: string): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("tenants")
+        .update({ verified: false })
+        .eq("id", id);
+    if (error) throw error;
+}
+
+/**
+ * Reactivate a tenant.
+ */
+export async function reactivateTenant(id: string): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("tenants")
+        .update({ verified: true })
+        .eq("id", id);
+    if (error) throw error;
+}
+
 export const tenantService = {
     createTenant,
     verifyTenantEmail,
     changeTenantPassword,
+    getTenants,
+    suspendTenant,
+    reactivateTenant,
 };
