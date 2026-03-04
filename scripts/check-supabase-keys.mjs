@@ -44,13 +44,17 @@ for (const envPath of defaultEnvPaths) {
     const serviceKey = env.VITE_SUPABASE_SERVICE_ROLE_KEY;
     const anonRole = anonKey ? decodeJwtRole(anonKey) : null;
     const serviceRole = serviceKey ? decodeJwtRole(serviceKey) : null;
+    const anonKind = anonKey?.startsWith("sb_publishable_") ? "publishable" : (anonRole || "unknown");
+    const serviceKind = serviceKey
+        ? (serviceKey.startsWith("sb_secret_") ? "secret" : (serviceRole || "unknown"))
+        : "not set";
 
     console.log(`\n[${envPath}]`);
-    console.log(`- VITE_SUPABASE_ANON_KEY role: ${anonRole || "missing/invalid"}`);
+    console.log(`- VITE_SUPABASE_ANON_KEY kind: ${anonKind}`);
     if (serviceKey) {
-        console.log(`- VITE_SUPABASE_SERVICE_ROLE_KEY role: ${serviceRole || "missing/invalid"}`);
+        console.log(`- VITE_SUPABASE_SERVICE_ROLE_KEY kind: ${serviceKind}`);
     } else {
-        console.log("- VITE_SUPABASE_SERVICE_ROLE_KEY role: not set");
+        console.log("- VITE_SUPABASE_SERVICE_ROLE_KEY kind: not set");
     }
 
     if (!isPublicClientKey(anonKey)) {
