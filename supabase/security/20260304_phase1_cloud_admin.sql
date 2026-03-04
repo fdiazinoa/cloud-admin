@@ -6,7 +6,9 @@ BEGIN;
 
 ALTER TABLE IF EXISTS landlord.subscriptions ENABLE ROW LEVEL SECURITY;
 
-CREATE OR REPLACE FUNCTION public.get_tenant_status(p_tenant_id UUID)
+DROP FUNCTION IF EXISTS public.get_tenant_status(UUID);
+
+CREATE FUNCTION public.get_tenant_status(p_tenant_id UUID)
 RETURNS TABLE (
     id UUID,
     status landlord.tenant_status,
@@ -22,7 +24,12 @@ AS $$
     LIMIT 1;
 $$;
 
-CREATE OR REPLACE FUNCTION public.resolve_tenant_license(
+DROP FUNCTION IF EXISTS public.resolve_tenant_license(UUID, TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.resolve_tenant_license(TEXT, TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.resolve_tenant_license(JSON);
+DROP FUNCTION IF EXISTS public.resolve_tenant_license(JSONB);
+
+CREATE FUNCTION public.resolve_tenant_license(
     p_tenant_id UUID DEFAULT NULL,
     p_slug TEXT DEFAULT NULL,
     p_email TEXT DEFAULT NULL

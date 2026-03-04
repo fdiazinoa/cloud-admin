@@ -42,6 +42,15 @@ Run:
 npm run verify:supabase-security
 ```
 
+If `resolve_tenant_license()` still returns `400`, inspect the live function body in the
+Supabase SQL editor:
+
+```sql
+select pg_get_functiondef('public.resolve_tenant_license(uuid,text,text)'::regprocedure);
+```
+
+If that body does not show `t.slug::TEXT`, the old RPC is still active in that project.
+
 Expected state after phase 1:
 
 - `landlord.subscriptions` should stop being publicly queryable.
