@@ -5,7 +5,11 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabaseServiceKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-    console.error('Missing Supabase Environment Variables');
+    throw new Error('Missing Supabase Environment Variables');
+}
+
+if (!supabaseServiceKey) {
+    throw new Error('Missing VITE_SUPABASE_SERVICE_ROLE_KEY for administrative operations');
 }
 
 export const supabase = createClient(supabaseUrl, supabaseKey, {
@@ -13,11 +17,8 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
     db: { schema: 'landlord' }
 });
 
-// Admin client for backend operations (Auth User Creation)
-// Warning: Use with caution in frontend applications
-export const supabaseAdmin = supabaseServiceKey
-    ? createClient(supabaseUrl, supabaseServiceKey, {
-        auth: { autoRefreshToken: false, persistSession: false },
-        db: { schema: 'landlord' }
-    })
-    : supabase; // Fallback to anon if not provided (will fail on admin ops)
+// TODO: Move all service-role operations to a trusted backend or Edge Function.
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    db: { schema: 'landlord' }
+});

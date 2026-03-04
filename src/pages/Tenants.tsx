@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Plus, Power, Edit3, Loader2, X } from 'lucide-react';
 import type { Tenant } from '../types';
-import { supabase, supabaseAdmin } from '../lib/supabase';
 import { tenantService } from '../lib/tenantService';
 
 export const Tenants: React.FC = () => {
@@ -10,9 +9,27 @@ export const Tenants: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [provisionedCredentials, setProvisionedCredentials] = useState<{
+        email: string;
+        tempPassword: string;
+    } | null>(null);
 
     // Form state
     const [formData, setFormData] = useState({ name: '', email: '', taxId: '', type: 'full' as 'full' | 'pos_only', cloudSync: true });
+
+    const getErrorMessage = (error: unknown) => {
+        if (typeof error === 'string') return error;
+        if (error instanceof Error) return error.message;
+        if (
+            typeof error === 'object'
+            && error !== null
+            && 'error_description' in error
+            && typeof error.error_description === 'string'
+        ) {
+            return error.error_description;
+        }
+        return 'Error desconocido';
+    };
 
     useEffect(() => {
         fetchTenants();
@@ -21,17 +38,7 @@ export const Tenants: React.FC = () => {
     const fetchTenants = async () => {
         setLoading(true);
         try {
-            console.log("Fetching tenants using supabaseAdmin...");
-            const { data, error } = await supabaseAdmin
-                .from('tenants')
-                .select('*')
-                .order('created_at', { ascending: false });
-
-            if (error) {
-                console.error('Supabase error fetching tenants:', error);
-                throw error;
-            }
-            console.log("Tenants received:", data);
+            const data = await tenantService.getTenants();
             setTenants(data || []);
         } catch (err) {
             console.error('Error fetching tenants:', err);
@@ -83,26 +90,21 @@ export const Tenants: React.FC = () => {
 
             // Update optional fields like tax_id
             if (formData.taxId) {
-                await supabase.from('tenants').update({ tax_id: formData.taxId }).eq('id', tenantId);
+                await tenantService.updateTenantTaxId(tenantId, formData.taxId);
             }
 
-            // TODO: Send verification email with tempPassword (implementation pending)
-            console.log('Tenant created. Temp password:', tempPassword);
-
             // Success cleanup
+            setProvisionedCredentials({
+                email: formData.email,
+                tempPassword,
+            });
             setFormData({ name: '', email: '', taxId: '', type: 'full', cloudSync: true });
             setIsModalOpen(false);
             await fetchTenants();
 
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Error provisioning tenant:', err);
-            let msg = 'Error desconocido';
-            if (err.message) msg = err.message;
-            else if (typeof err === 'string') msg = err;
-            else if (err.error_description) msg = err.error_description;
-            else msg = JSON.stringify(err);
-
-            alert('Error al aprovisionar el Tenant: ' + msg);
+            alert('Error al aprovisionar el Tenant: ' + getErrorMessage(err));
         } finally {
             setIsSubmitting(false);
         }
@@ -132,6 +134,32 @@ export const Tenants: React.FC = () => {
                     Nuevo Tenant
                 </button>
             </div>
+
+            {provisionedCredentials && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <h3 className="text-sm font-black uppercase tracking-wider text-emerald-800">Credenciales temporales</h3>
+                            <p className="mt-1 text-sm text-emerald-700">
+                                Entrega estas credenciales por un canal seguro y fuerza el cambio de contrasena en el primer acceso.
+                            </p>
+                            <p className="mt-3 text-sm text-slate-700">
+                                <span className="font-bold">Email:</span> {provisionedCredentials.email}
+                            </p>
+                            <p className="text-sm text-slate-700">
+                                <span className="font-bold">Clave temporal:</span> {provisionedCredentials.tempPassword}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setProvisionedCredentials(null)}
+                            className="rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-emerald-700 transition-colors hover:bg-emerald-100"
+                        >
+                            Ocultar
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                 <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">

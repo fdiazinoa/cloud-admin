@@ -1,13 +1,18 @@
 export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL';
+export type TenantType = 'full' | 'pos_only';
 
 export interface Tenant {
     id: string;
     name: string;
+    slug?: string;
     legal_name?: string;
     tax_id?: string;
     email: string;
     phone?: string;
     status: TenantStatus;
+    type?: TenantType;
+    cloud_sync?: boolean;
+    email_verified?: boolean;
     created_at: string;
 }
 

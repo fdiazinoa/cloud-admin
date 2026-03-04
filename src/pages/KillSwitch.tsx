@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Skull, AlertTriangle, Key, ShieldAlert, Loader2 } from 'lucide-react';
 import { tenantService } from '../lib/tenantService';
+import type { Tenant } from '../types';
 
 // Version: 1.0.2 - Force redeploy to sync real data and remove demo residuals
 export const KillSwitch: React.FC = () => {
-    const [tenants, setTenants] = useState<any[]>([]);
+    const [tenants, setTenants] = useState<Tenant[]>([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
 
