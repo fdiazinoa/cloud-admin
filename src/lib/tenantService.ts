@@ -2,6 +2,7 @@
 // Uses Supabase Auth for user creation and the landlord schema functions for provisioning
 
 import { supabase, supabaseAdmin } from "./supabase";
+import type { Tenant } from "../types";
 // Removed unused uuid import
 
 /**
@@ -46,7 +47,14 @@ export async function createTenant({
         email,
         password: tempPassword,
         email_confirm: true,
-        user_metadata: { name, slug, type, cloudSync },
+        user_metadata: {
+            name,
+            full_name: name,
+            slug,
+            type,
+            cloudSync,
+            is_new_user: true,
+        },
     });
 
     if (authError) {
@@ -56,6 +64,9 @@ export async function createTenant({
 
     // Save the ID in case we need to rollback
     const authUserId = authUser?.user?.id;
+    if (!authUserId) {
+        throw new Error("Supabase Auth user ID missing after tenant user creation");
+    }
 
     // 3️⃣ Call the provisioning function defined in the landlord schema
     const { data, error: fnError } = await supabaseAdmin.rpc("create_new_tenant", {
@@ -77,11 +88,34 @@ export async function createTenant({
 
     // 4️⃣ Insert subscription / plan (simplified – could be expanded later)
     const tenantId = data as string; // function returns UUID
-    await supabase.from("subscriptions").insert({
+
+    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+        user_metadata: {
+            name,
+            full_name: name,
+            slug,
+            type,
+            cloudSync,
+            is_new_user: true,
+            tenant_id: tenantId,
+        },
+    });
+
+    if (metadataError) {
+        console.error("Failed to sync tenant metadata into Supabase Auth", metadataError);
+        throw metadataError;
+    }
+
+    const { error: subscriptionError } = await supabaseAdmin.from("subscriptions").insert({
         tenant_id: tenantId,
         plan_name: plan,
         is_active: true,
     });
+
+    if (subscriptionError) {
+        console.error("Failed to create tenant subscription", subscriptionError);
+        throw subscriptionError;
+    }
 
     // 5️⃣ Send verification email – Supabase automatically sends a magic link if you enable it,
     // but we will trigger a custom email via a server‑side function (placeholder here).
@@ -111,7 +145,7 @@ export async function changeTenantPassword(newPassword: string): Promise<void> {
 /**
  * Fetch all real tenants from the landlord.tenants table using the admin client.
  */
-export async function getTenants(): Promise<any[]> {
+export async function getTenants(): Promise<Tenant[]> {
     const { data, error } = await supabaseAdmin
         .from("tenants")
         .select("*")
