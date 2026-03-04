@@ -1,4 +1,4 @@
-import { supabaseAdmin } from "./supabase";
+import { supabase, supabaseAdmin } from "./supabase";
 import type { Tenant } from "../types";
 
 export interface DashboardStats {
@@ -39,17 +39,16 @@ export async function createTenant({
     type?: "full" | "pos_only";
     cloudSync?: boolean;
 }): Promise<{ tenantId: string; tempPassword: string }> {
-    // 1️⃣ Generate temporary password
+    // 1) Generate temporary password
     const tempPassword = generateTempPassword();
 
-    // 2️⃣ Create Supabase Auth user (service role key is required)
-    // We ALWAYS create the user so they can login and we can use the Kill Switch (disable account),
-    // even if they don't sync data to the cloud (cloudSync = false).
+    // 2) Create Auth user (service role).
     const { error: authError, data: authUser } = await supabaseAdmin.auth.admin.createUser({
         email,
         password: tempPassword,
         email_confirm: true,
         user_metadata: {
+            name,
             full_name: name,
             slug,
             type,
@@ -63,10 +62,12 @@ export async function createTenant({
         throw authError;
     }
 
-    // Save the ID in case we need to rollback
     const authUserId = authUser?.user?.id;
+    if (!authUserId) {
+        throw new Error("Supabase Auth user ID missing after tenant user creation");
+    }
 
-    // 3️⃣ Call the provisioning function defined in the landlord schema
+    // 3) Provision tenant schema/records in landlord.
     const { data, error: fnError } = await supabaseAdmin.rpc("create_new_tenant", {
         p_name: name,
         p_slug: slug,
@@ -76,15 +77,34 @@ export async function createTenant({
     });
 
     if (fnError) {
-        // Rollback auth user if we created one
-        if (authUserId) {
-            await supabaseAdmin.auth.admin.deleteUser(authUserId);
-        }
+        console.error("Tenant provisioning failed", fnError);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
         throw fnError;
     }
 
-    // 4️⃣ Insert subscription / plan (simplified – could be expanded later)
-    const tenantId = data as string; // function returns UUID
+    const tenantId = data as string;
+
+    // 4) Sync auth metadata with the real tenant ID.
+    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+        user_metadata: {
+            name,
+            full_name: name,
+            slug,
+            type,
+            cloudSync,
+            is_new_user: true,
+            tenant_id: tenantId,
+        },
+    });
+
+    if (metadataError) {
+        console.error("Failed to sync tenant metadata into Supabase Auth", metadataError);
+        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        throw metadataError;
+    }
+
+    // 5) Create tenant subscription row.
     const { error: subscriptionError } = await supabaseAdmin.from("subscriptions").insert({
         tenant_id: tenantId,
         plan_name: plan,
@@ -92,36 +112,11 @@ export async function createTenant({
     });
 
     if (subscriptionError) {
+        console.error("Failed to create tenant subscription", subscriptionError);
         await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
-        if (authUserId) {
-            await supabaseAdmin.auth.admin.deleteUser(authUserId);
-        }
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
         throw subscriptionError;
     }
-
-    if (authUserId) {
-        const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-            user_metadata: {
-                full_name: name,
-                slug,
-                tenant_id: tenantId,
-                type,
-                cloudSync,
-                is_new_user: true,
-            },
-        });
-
-        if (metadataError) {
-            await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
-            await supabaseAdmin.auth.admin.deleteUser(authUserId);
-            throw metadataError;
-        }
-    }
-
-    // 5️⃣ Send verification email – Supabase automatically sends a magic link if you enable it,
-    // but we will trigger a custom email via a server‑side function (placeholder here).
-    // In production you would call an email service (SendGrid, Postmark, etc.).
-    // await sendVerificationEmail(email, tempPassword);
 
     return { tenantId, tempPassword };
 }
@@ -138,8 +133,9 @@ export async function verifyTenantEmail(token: string): Promise<void> {
 /**
  * Change the temporary password after the user logs in for the first time.
  */
-export async function changeTenantPassword(): Promise<void> {
-    throw new Error("Password changes must be handled in an authenticated tenant session.");
+export async function changeTenantPassword(newPassword: string): Promise<void> {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
 }
 
 /**
@@ -151,7 +147,10 @@ export async function getTenants(): Promise<Tenant[]> {
         .select("*")
         .order("created_at", { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+        console.error("Error fetching tenants:", error);
+        throw error;
+    }
     return (data as Tenant[]) || [];
 }
 
@@ -207,14 +206,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 }
 
 /**
- * Suspend a tenant (Update its verification and status).
+ * Suspend a tenant (update status).
  */
 export async function suspendTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
-        .update({
-            status: 'SUSPENDED'
-        })
+        .update({ status: "SUSPENDED" })
         .eq("id", id);
     if (error) throw error;
 }
@@ -225,9 +222,7 @@ export async function suspendTenant(id: string): Promise<void> {
 export async function reactivateTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
-        .update({
-            status: 'ACTIVE'
-        })
+        .update({ status: "ACTIVE" })
         .eq("id", id);
     if (error) throw error;
 }
