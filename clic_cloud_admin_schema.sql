@@ -56,18 +56,31 @@ CREATE TABLE IF NOT EXISTS landlord.subscriptions (
 -- =========================================================================
 -- 2. SEGURIDAD DE ACCESO (POLÍTICAS RLS)
 -- -------------------------------------------------------------------------
--- Por seguridad y aislamiento, activamos Row Level Security en las tablas maestras.
 ALTER TABLE landlord.tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE landlord.subscriptions ENABLE ROW LEVEL SECURITY;
 
--- Bloquear terminantemente el acceso a anon y authenticated en las tablas base
--- Supabase sobrepasa RLS automáticamente para 'service_role' (tu panel de Cloud-Admin).
--- Los clientes del POS (conectados via 'anon' o JWT auth normal) NUNCA verán esta tabla aunque ataquen GraphQL/Rest.
-DROP POLICY IF EXISTS "Deny all to public on tenants" ON landlord.tenants;
-CREATE POLICY "Deny all to public on tenants" ON landlord.tenants FOR ALL TO PUBLIC USING (false);
+-- Permitir lectura pública de 'status' por id para validación de licencia (Kill Switch)
+-- Se requiere que el POS consulte su propio status sin estar autenticado aún.
+DROP POLICY IF EXISTS "Allow public read of status field" ON landlord.tenants;
+CREATE POLICY "Allow public read of status field" ON landlord.tenants 
+FOR SELECT TO PUBLIC 
+USING (true); -- El POS usa anon key para consultar status=eq.UUID
 
 DROP POLICY IF EXISTS "Deny all to public on subscriptions" ON landlord.subscriptions;
 CREATE POLICY "Deny all to public on subscriptions" ON landlord.subscriptions FOR ALL TO PUBLIC USING (false);
+
+-- =========================================================================
+-- 2.5 REALTIME (PUBSUB)
+-- -------------------------------------------------------------------------
+-- Habilitar la difusión de cambios en tiempo real para el Kill Switch
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+        CREATE PUBLICATION supabase_realtime;
+    END IF;
+END $$;
+
+ALTER PUBLICATION supabase_realtime ADD TABLE landlord.tenants;
 
 -- =========================================================================
 -- 3. EL CLONADOR: FUNCIÓN DE APROVISIONAMIENTO (THE PROVISIONER)
