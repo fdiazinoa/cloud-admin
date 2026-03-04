@@ -34,6 +34,17 @@ What it does:
 - Removes the public read policies.
 - Replaces them with a deny-all public policy.
 
+## Phase 3
+
+Apply `20260304_phase3_public_tables_lockdown.sql` after ERP/POS are confirmed to
+work without anonymous direct reads/writes on `public.*` tables.
+
+What it does:
+
+- Enables RLS on the remaining tables flagged by Security Advisor in `public`.
+- Creates a deny-all policy for `PUBLIC` on each table.
+- Preserves service-role access for trusted server-side/admin flows.
+
 ## Verification
 
 Run:
@@ -61,3 +72,9 @@ Expected state after phase 1:
 - `landlord.tenants` will still be public until phase 2 is applied.
 - The `public.*` advisor findings remain open until ERP and sync flows are
   updated with real tenant- or mall-scoped policies.
+
+Expected state after phase 3:
+
+- Security Advisor should stop reporting `RLS Disabled in Public` for the
+  listed `public.*` tables.
+- Anonymous API reads on those tables should no longer return real rows.
