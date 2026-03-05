@@ -11,6 +11,9 @@ export const Tenants: React.FC = () => {
     const [distributorsLoading, setDistributorsLoading] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+    const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
         tempPassword: string;
@@ -28,6 +31,14 @@ export const Tenants: React.FC = () => {
         type: 'full' as TenantType,
         cloudSync: true,
     });
+    const [editFormData, setEditFormData] = useState({
+        name: '',
+        legalName: '',
+        taxId: '',
+        phone: '',
+        type: 'full' as TenantType,
+        cloudSync: true,
+    });
 
     const getErrorMessage = (error: unknown) => {
         if (typeof error === 'string') return error;
@@ -41,21 +52,6 @@ export const Tenants: React.FC = () => {
             return error.error_description;
         }
         return 'Error desconocido';
-    };
-
-    const resetForm = () => {
-        setFormData({
-            name: '',
-            email: '',
-            taxId: '',
-            contactName: '',
-            contactEmail: '',
-            city: '',
-            capturedByDistributorId: '',
-            servicedByDistributorId: '',
-            type: 'full',
-            cloudSync: true,
-        });
     };
 
     useEffect(() => {
@@ -117,13 +113,8 @@ export const Tenants: React.FC = () => {
     const handleCreateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
-
         try {
-            const slug = formData.name
-                .toLowerCase()
-                .replace(/[^a-z0-9_]/g, '_')
-                .replace(/_+/g, '_')
-                .replace(/^_|_$/g, '');
+            const slug = formData.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
 
             const { tenantId, tempPassword } = await tenantService.createTenant({
                 name: formData.name,
@@ -148,7 +139,18 @@ export const Tenants: React.FC = () => {
                 tempPassword,
             });
 
-            resetForm();
+            setFormData({
+                name: '',
+                email: '',
+                taxId: '',
+                contactName: '',
+                contactEmail: '',
+                city: '',
+                capturedByDistributorId: '',
+                servicedByDistributorId: '',
+                type: 'full',
+                cloudSync: true,
+            });
             setIsModalOpen(false);
             await fetchTenants();
         } catch (err: unknown) {
@@ -159,16 +161,59 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const normalizeOptional = (value: string) => {
+        const trimmed = value.trim();
+        return trimmed ? trimmed : null;
+    };
+
+    const openEditModal = (tenant: Tenant) => {
+        setEditingTenant(tenant);
+        setEditFormData({
+            name: tenant.name || '',
+            legalName: tenant.legal_name || '',
+            taxId: tenant.tax_id || '',
+            phone: tenant.phone || '',
+            type: tenant.type || 'full',
+            cloudSync: tenant.cloud_sync ?? true,
+        });
+        setIsEditModalOpen(true);
+    };
+
+    const closeEditModal = () => {
+        setIsEditModalOpen(false);
+        setEditingTenant(null);
+    };
+
+    const handleUpdateTenant = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editingTenant) return;
+
+        setIsEditSubmitting(true);
+        try {
+            await tenantService.updateTenant(editingTenant.id, {
+                name: editFormData.name.trim(),
+                legal_name: normalizeOptional(editFormData.legalName),
+                tax_id: normalizeOptional(editFormData.taxId),
+                phone: normalizeOptional(editFormData.phone),
+                type: editFormData.type,
+                cloud_sync: editFormData.cloudSync,
+            });
+            closeEditModal();
+            await fetchTenants();
+        } catch (err: unknown) {
+            console.error('Error updating tenant:', err);
+            alert('Error al actualizar el Tenant: ' + getErrorMessage(err));
+        } finally {
+            setIsEditSubmitting(false);
+        }
+    };
+
     const getStatusBadge = (status: string) => {
         switch (status) {
-            case 'ACTIVE':
-                return <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Activo</span>;
-            case 'SUSPENDED':
-                return <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Suspendido</span>;
-            case 'TRIAL':
-                return <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Prueba</span>;
-            default:
-                return null;
+            case 'ACTIVE': return <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Activo</span>;
+            case 'SUSPENDED': return <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Suspendido</span>;
+            case 'TRIAL': return <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Prueba</span>;
+            default: return null;
         }
     };
 
@@ -194,10 +239,10 @@ export const Tenants: React.FC = () => {
                         <div>
                             <h3 className="text-sm font-black uppercase tracking-wider text-emerald-800">Credenciales temporales</h3>
                             <p className="mt-1 text-sm text-emerald-700">
-                                Comparte estas credenciales por un canal seguro y fuerza el cambio de contrasena en el primer acceso.
+                                Entrega estas credenciales por un canal seguro y fuerza el cambio de contrasena en el primer acceso.
                             </p>
                             <p className="mt-3 text-sm text-slate-700">
-                                <span className="font-bold">Email de acceso:</span> {provisionedCredentials.email}
+                                <span className="font-bold">Email:</span> {provisionedCredentials.email}
                             </p>
                             <p className="text-sm text-slate-700">
                                 <span className="font-bold">Clave temporal:</span> {provisionedCredentials.tempPassword}
@@ -263,7 +308,12 @@ export const Tenants: React.FC = () => {
                                 <td className="px-6 py-4 text-center">{getStatusBadge(tenant.status)}</td>
                                 <td className="px-6 py-4 text-right">
                                     <div className="flex justify-end gap-2">
-                                        <button className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Editar">
+                                        <button
+                                            type="button"
+                                            onClick={() => openEditModal(tenant)}
+                                            className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                            title="Editar"
+                                        >
                                             <Edit3 size={18} />
                                         </button>
                                         <button
@@ -297,7 +347,7 @@ export const Tenants: React.FC = () => {
                                     required
                                     type="text"
                                     value={formData.name}
-                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
                                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                     placeholder="Ej. Supermercado El Sol"
                                 />
@@ -310,7 +360,7 @@ export const Tenants: React.FC = () => {
                                     <input
                                         type="text"
                                         value={formData.taxId}
-                                        onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
+                                        onChange={e => setFormData({ ...formData, taxId: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                         placeholder="Opcional"
                                     />
@@ -321,7 +371,7 @@ export const Tenants: React.FC = () => {
                                         required
                                         type="email"
                                         value={formData.email}
-                                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                                        onChange={e => setFormData({ ...formData, email: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                         placeholder="admin@empresa.com"
                                     />
@@ -335,7 +385,7 @@ export const Tenants: React.FC = () => {
                                         required
                                         type="text"
                                         value={formData.contactName}
-                                        onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+                                        onChange={e => setFormData({ ...formData, contactName: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                         placeholder="Nombre y apellido"
                                     />
@@ -346,7 +396,7 @@ export const Tenants: React.FC = () => {
                                         required
                                         type="email"
                                         value={formData.contactEmail}
-                                        onChange={(e) => setFormData({ ...formData, contactEmail: e.target.value })}
+                                        onChange={e => setFormData({ ...formData, contactEmail: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                         placeholder="contacto@empresa.com"
                                     />
@@ -357,7 +407,7 @@ export const Tenants: React.FC = () => {
                                         required
                                         type="text"
                                         value={formData.city}
-                                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                                        onChange={e => setFormData({ ...formData, city: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                         placeholder="Santo Domingo"
                                     />
@@ -372,7 +422,7 @@ export const Tenants: React.FC = () => {
                                     </label>
                                     <select
                                         value={formData.capturedByDistributorId}
-                                        onChange={(e) => setFormData({ ...formData, capturedByDistributorId: e.target.value })}
+                                        onChange={e => setFormData({ ...formData, capturedByDistributorId: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                     >
                                         <option value="">Sin asignar</option>
@@ -390,7 +440,7 @@ export const Tenants: React.FC = () => {
                                     </label>
                                     <select
                                         value={formData.servicedByDistributorId}
-                                        onChange={(e) => setFormData({ ...formData, servicedByDistributorId: e.target.value })}
+                                        onChange={e => setFormData({ ...formData, servicedByDistributorId: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                     >
                                         <option value="">Sin asignar</option>
@@ -414,7 +464,7 @@ export const Tenants: React.FC = () => {
                                     <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Solución</label>
                                     <select
                                         value={formData.type}
-                                        onChange={(e) => setFormData({ ...formData, type: e.target.value as TenantType })}
+                                        onChange={e => setFormData({ ...formData, type: e.target.value as TenantType })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                     >
                                         <option value="full">MALL POS + Cloud ERP</option>
@@ -427,7 +477,7 @@ export const Tenants: React.FC = () => {
                                             <input
                                                 type="checkbox"
                                                 checked={formData.cloudSync}
-                                                onChange={(e) => setFormData({ ...formData, cloudSync: e.target.checked })}
+                                                onChange={e => setFormData({ ...formData, cloudSync: e.target.checked })}
                                                 className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors"
                                             />
                                         </div>
@@ -450,6 +500,118 @@ export const Tenants: React.FC = () => {
                                     className="flex-1 px-4 py-3 text-white bg-blue-600 hover:bg-blue-700 rounded-xl font-bold shadow-sm transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
                                 >
                                     {isSubmitting ? <><Loader2 size={18} className="animate-spin" /> Creando Esquema...</> : 'Confirmar Registro'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {isEditModalOpen && editingTenant && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                            <h3 className="font-black text-lg text-slate-800">Editar Empresa</h3>
+                            <button type="button" onClick={closeEditModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <form onSubmit={handleUpdateTenant} className="p-6 space-y-5">
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Nombre Comercial <span className="text-red-500">*</span></label>
+                                <input
+                                    required
+                                    type="text"
+                                    value={editFormData.name}
+                                    onChange={e => setEditFormData({ ...editFormData, name: e.target.value })}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Razón Social</label>
+                                <input
+                                    type="text"
+                                    value={editFormData.legalName}
+                                    onChange={e => setEditFormData({ ...editFormData, legalName: e.target.value })}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                    placeholder="Opcional"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">RNC / Cédula</label>
+                                    <input
+                                        type="text"
+                                        value={editFormData.taxId}
+                                        onChange={e => setEditFormData({ ...editFormData, taxId: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Opcional"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Teléfono</label>
+                                    <input
+                                        type="text"
+                                        value={editFormData.phone}
+                                        onChange={e => setEditFormData({ ...editFormData, phone: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Opcional"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Email de Contacto</label>
+                                <input
+                                    type="email"
+                                    value={editingTenant.email}
+                                    disabled
+                                    className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 cursor-not-allowed"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">El email de acceso se mantiene fijo para no desincronizar autenticación.</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Solución</label>
+                                    <select
+                                        value={editFormData.type}
+                                        onChange={e => setEditFormData({ ...editFormData, type: e.target.value as TenantType })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                    >
+                                        <option value="full">MALL POS + Cloud ERP</option>
+                                        <option value="pos_only">Solo MALL POS</option>
+                                    </select>
+                                </div>
+                                <div className="flex items-center pt-7">
+                                    <label className="flex items-center gap-3 cursor-pointer group">
+                                        <input
+                                            type="checkbox"
+                                            checked={editFormData.cloudSync}
+                                            onChange={e => setEditFormData({ ...editFormData, cloudSync: e.target.checked })}
+                                            className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors"
+                                        />
+                                        <span className="text-sm font-bold text-slate-700 select-none group-hover:text-blue-700 transition-colors">Activar Respaldo Cloud</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div className="pt-4 flex gap-3">
+                                <button
+                                    type="button"
+                                    onClick={closeEditModal}
+                                    className="flex-1 px-4 py-3 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl font-bold transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isEditSubmitting}
+                                    className="flex-1 px-4 py-3 text-white bg-blue-600 hover:bg-blue-700 rounded-xl font-bold shadow-sm transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
+                                >
+                                    {isEditSubmitting ? <><Loader2 size={18} className="animate-spin" /> Guardando...</> : 'Guardar Cambios'}
                                 </button>
                             </div>
                         </form>

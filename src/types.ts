@@ -17,6 +17,7 @@ export interface Tenant {
     captured_by_distributor_id?: string;
     serviced_by_distributor_id?: string;
     status: TenantStatus;
+    email_verified?: boolean;
     created_at: string;
 }
 
