@@ -28,6 +28,18 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
+-- Tabla de distribuidores/canales
+CREATE TABLE IF NOT EXISTS landlord.distributors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    code VARCHAR(80) UNIQUE,
+    email VARCHAR(255),
+    phone VARCHAR(50),
+    city VARCHAR(120),
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
 -- Tabla Central de Tenants
 CREATE TABLE IF NOT EXISTS landlord.tenants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -36,12 +48,20 @@ CREATE TABLE IF NOT EXISTS landlord.tenants (
     slug VARCHAR(63) NOT NULL UNIQUE, 
     tax_id VARCHAR(50),
     email VARCHAR(255) NOT NULL,
+    contact_name VARCHAR(255),
+    contact_email VARCHAR(255),
+    city VARCHAR(120),
+    captured_by_distributor_id UUID REFERENCES landlord.distributors(id) ON DELETE SET NULL,
+    serviced_by_distributor_id UUID REFERENCES landlord.distributors(id) ON DELETE SET NULL,
     type landlord.tenant_type DEFAULT 'full',
     cloud_sync BOOLEAN DEFAULT true,
     email_verified BOOLEAN DEFAULT false,
     status landlord.tenant_status DEFAULT 'TRIAL',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+
+CREATE INDEX IF NOT EXISTS idx_tenants_captured_by_distributor ON landlord.tenants(captured_by_distributor_id);
+CREATE INDEX IF NOT EXISTS idx_tenants_serviced_by_distributor ON landlord.tenants(serviced_by_distributor_id);
 
 -- Tabla Relacional de Suscripciones
 CREATE TABLE IF NOT EXISTS landlord.subscriptions (
@@ -57,6 +77,7 @@ CREATE TABLE IF NOT EXISTS landlord.subscriptions (
 -- 2. SEGURIDAD DE ACCESO (POLÍTICAS RLS)
 -- -------------------------------------------------------------------------
 ALTER TABLE landlord.tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE landlord.distributors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE landlord.subscriptions ENABLE ROW LEVEL SECURITY;
 
 -- Permitir lectura pública de 'status' por id para validación de licencia (Kill Switch)
@@ -68,6 +89,9 @@ USING (true); -- El POS usa anon key para consultar status=eq.UUID
 
 DROP POLICY IF EXISTS "Deny all to public on subscriptions" ON landlord.subscriptions;
 CREATE POLICY "Deny all to public on subscriptions" ON landlord.subscriptions FOR ALL TO PUBLIC USING (false);
+
+DROP POLICY IF EXISTS "Deny all to public on distributors" ON landlord.distributors;
+CREATE POLICY "Deny all to public on distributors" ON landlord.distributors FOR ALL TO PUBLIC USING (false) WITH CHECK (false);
 
 -- =========================================================================
 -- 2.5 REALTIME (PUBSUB)
@@ -95,7 +119,18 @@ CREATE TABLE IF NOT EXISTS seed_template.transactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
-CREATE OR REPLACE FUNCTION landlord.create_new_tenant(p_name TEXT, p_slug TEXT, p_email TEXT, p_type TEXT DEFAULT 'full', p_cloud_sync BOOLEAN DEFAULT true)
+CREATE OR REPLACE FUNCTION landlord.create_new_tenant(
+    p_name TEXT,
+    p_slug TEXT,
+    p_email TEXT,
+    p_type TEXT DEFAULT 'full',
+    p_cloud_sync BOOLEAN DEFAULT true,
+    p_contact_name TEXT DEFAULT NULL,
+    p_contact_email TEXT DEFAULT NULL,
+    p_city TEXT DEFAULT NULL,
+    p_captured_by_distributor_id UUID DEFAULT NULL,
+    p_serviced_by_distributor_id UUID DEFAULT NULL
+)
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER -- Se ejecuta con privilegios elevados (quien creó la función, ideal superuser)
@@ -108,8 +143,32 @@ BEGIN
     v_clean_slug := lower(regexp_replace(p_slug, '[^a-zA-Z0-9_]', '_', 'g'));
 
     -- 1. Insertar el tenant en Landlord
-    INSERT INTO landlord.tenants (name, slug, email, status, type, cloud_sync)
-    VALUES (p_name, v_clean_slug, p_email, 'TRIAL', p_type::landlord.tenant_type, p_cloud_sync)
+    INSERT INTO landlord.tenants (
+        name,
+        slug,
+        email,
+        status,
+        type,
+        cloud_sync,
+        contact_name,
+        contact_email,
+        city,
+        captured_by_distributor_id,
+        serviced_by_distributor_id
+    )
+    VALUES (
+        p_name,
+        v_clean_slug,
+        p_email,
+        'TRIAL',
+        p_type::landlord.tenant_type,
+        p_cloud_sync,
+        p_contact_name,
+        p_contact_email,
+        p_city,
+        p_captured_by_distributor_id,
+        p_serviced_by_distributor_id
+    )
     RETURNING id INTO v_tenant_id;
 
     -- 2. Crear el Esquema Aislado Físicamente en PostgreSQL
