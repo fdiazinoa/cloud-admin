@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Users, Server, AlertCircle, DollarSign } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { supabase } from '../lib/supabase';
+import { tenantService } from '../lib/tenantService';
 
 const mockMRRData = [
     { name: 'Ene', value: 1200 },
@@ -22,19 +22,8 @@ export const Dashboard: React.FC = () => {
     useEffect(() => {
         const fetchGlobalStats = async () => {
             try {
-                const [tenantsRes, terminalsRes] = await Promise.all([
-                    supabase.from('tenants').select('status', { count: 'exact' }),
-                    supabase.from('terminals').select('id', { count: 'exact', head: true })
-                ]);
-
-                const active = tenantsRes.data?.filter(t => t.status === 'ACTIVE' || t.status === 'TRIAL').length || 0;
-                const suspended = tenantsRes.data?.filter(t => t.status === 'SUSPENDED').length || 0;
-
-                setStats({
-                    activeTenants: active,
-                    suspendedTenants: suspended,
-                    terminals: terminalsRes.count || 0
-                });
+                const nextStats = await tenantService.getDashboardStats();
+                setStats(nextStats);
             } catch (e) {
                 console.error("Failed to fetch dashboard stats", e);
             }

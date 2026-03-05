@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:supabase-keys": "node scripts/check-supabase-keys.mjs",
+    "verify:supabase-security": "node scripts/verify-supabase-security.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",

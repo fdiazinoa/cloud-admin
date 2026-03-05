@@ -1,9 +1,11 @@
-// tenantService.ts – Service layer for creating tenants with email/password validation
-// Uses Supabase Auth for user creation and the landlord schema functions for provisioning
-
 import { supabase, supabaseAdmin } from "./supabase";
 import type { Tenant } from "../types";
-// Removed unused uuid import
+
+export interface DashboardStats {
+    activeTenants: number;
+    suspendedTenants: number;
+    terminals: number;
+}
 
 /**
  * Generate a random temporary password (12‑16 characters, alphanumeric).
@@ -37,12 +39,10 @@ export async function createTenant({
     type?: "full" | "pos_only";
     cloudSync?: boolean;
 }): Promise<{ tenantId: string; tempPassword: string }> {
-    // 1️⃣ Generate temporary password
+    // 1) Generate temporary password
     const tempPassword = generateTempPassword();
 
-    // 2️⃣ Create Supabase Auth user (service role key is required)
-    // We ALWAYS create the user so they can login and we can use the Kill Switch (disable account),
-    // even if they don't sync data to the cloud (cloudSync = false).
+    // 2) Create Auth user (service role).
     const { error: authError, data: authUser } = await supabaseAdmin.auth.admin.createUser({
         email,
         password: tempPassword,
@@ -62,13 +62,12 @@ export async function createTenant({
         throw authError;
     }
 
-    // Save the ID in case we need to rollback
     const authUserId = authUser?.user?.id;
     if (!authUserId) {
         throw new Error("Supabase Auth user ID missing after tenant user creation");
     }
 
-    // 3️⃣ Call the provisioning function defined in the landlord schema
+    // 3) Provision tenant schema/records in landlord.
     const { data, error: fnError } = await supabaseAdmin.rpc("create_new_tenant", {
         p_name: name,
         p_slug: slug,
@@ -79,16 +78,13 @@ export async function createTenant({
 
     if (fnError) {
         console.error("Tenant provisioning failed", fnError);
-        // Rollback auth user if we created one
-        if (authUserId) {
-            await supabaseAdmin.auth.admin.deleteUser(authUserId);
-        }
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
         throw fnError;
     }
 
-    // 4️⃣ Insert subscription / plan (simplified – could be expanded later)
-    const tenantId = data as string; // function returns UUID
+    const tenantId = data as string;
 
+    // 4) Sync auth metadata with the real tenant ID.
     const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
         user_metadata: {
             name,
@@ -103,9 +99,12 @@ export async function createTenant({
 
     if (metadataError) {
         console.error("Failed to sync tenant metadata into Supabase Auth", metadataError);
+        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
         throw metadataError;
     }
 
+    // 5) Create tenant subscription row.
     const { error: subscriptionError } = await supabaseAdmin.from("subscriptions").insert({
         tenant_id: tenantId,
         plan_name: plan,
@@ -114,13 +113,10 @@ export async function createTenant({
 
     if (subscriptionError) {
         console.error("Failed to create tenant subscription", subscriptionError);
+        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
         throw subscriptionError;
     }
-
-    // 5️⃣ Send verification email – Supabase automatically sends a magic link if you enable it,
-    // but we will trigger a custom email via a server‑side function (placeholder here).
-    // In production you would call an email service (SendGrid, Postmark, etc.).
-    // await sendVerificationEmail(email, tempPassword);
 
     return { tenantId, tempPassword };
 }
@@ -155,18 +151,67 @@ export async function getTenants(): Promise<Tenant[]> {
         console.error("Error fetching tenants:", error);
         throw error;
     }
-    return data || [];
+    return (data as Tenant[]) || [];
+}
+
+export async function updateTenantTaxId(id: string, taxId: string): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("tenants")
+        .update({ tax_id: taxId })
+        .eq("id", id);
+
+    if (error) throw error;
+}
+
+export async function updateTenant(
+    id: string,
+    payload: {
+        name: string;
+        legal_name: string | null;
+        tax_id: string | null;
+        phone: string | null;
+        type: "full" | "pos_only";
+        cloud_sync: boolean;
+    },
+): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("tenants")
+        .update(payload)
+        .eq("id", id);
+
+    if (error) throw error;
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+    const [tenantsRes, terminalsRes] = await Promise.all([
+        supabaseAdmin.from("tenants").select("status"),
+        supabaseAdmin.schema("public").from("terminals").select("id", { count: "exact", head: true }),
+    ]);
+
+    if (tenantsRes.error) throw tenantsRes.error;
+    if (terminalsRes.error) throw terminalsRes.error;
+
+    const activeTenants = tenantsRes.data?.filter(
+        (tenant) => tenant.status === "ACTIVE" || tenant.status === "TRIAL",
+    ).length || 0;
+    const suspendedTenants = tenantsRes.data?.filter(
+        (tenant) => tenant.status === "SUSPENDED",
+    ).length || 0;
+
+    return {
+        activeTenants,
+        suspendedTenants,
+        terminals: terminalsRes.count || 0,
+    };
 }
 
 /**
- * Suspend a tenant (Update its verification and status).
+ * Suspend a tenant (update status).
  */
 export async function suspendTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
-        .update({
-            status: 'SUSPENDED'
-        })
+        .update({ status: "SUSPENDED" })
         .eq("id", id);
     if (error) throw error;
 }
@@ -177,9 +222,7 @@ export async function suspendTenant(id: string): Promise<void> {
 export async function reactivateTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
-        .update({
-            status: 'ACTIVE'
-        })
+        .update({ status: "ACTIVE" })
         .eq("id", id);
     if (error) throw error;
 }
@@ -189,6 +232,9 @@ export const tenantService = {
     verifyTenantEmail,
     changeTenantPassword,
     getTenants,
+    updateTenantTaxId,
+    updateTenant,
+    getDashboardStats,
     suspendTenant,
     reactivateTenant,
 };
