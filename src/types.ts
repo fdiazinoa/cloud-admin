@@ -9,10 +9,26 @@ export interface Tenant {
     tax_id?: string;
     email: string;
     phone?: string;
-    status: TenantStatus;
+    contact_name?: string;
+    contact_email?: string;
+    city?: string;
     type?: TenantType;
     cloud_sync?: boolean;
+    captured_by_distributor_id?: string;
+    serviced_by_distributor_id?: string;
+    status: TenantStatus;
     email_verified?: boolean;
+    created_at: string;
+}
+
+export interface Distributor {
+    id: string;
+    name: string;
+    code?: string;
+    email?: string;
+    phone?: string;
+    city?: string;
+    is_active: boolean;
     created_at: string;
 }
 
