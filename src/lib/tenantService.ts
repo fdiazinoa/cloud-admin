@@ -1,8 +1,25 @@
-// tenantService.ts – Service layer for creating tenants with email/password validation
-// Uses Supabase Auth for user creation and the landlord schema functions for provisioning
-
 import { supabase, supabaseAdmin } from "./supabase";
-// Removed unused uuid import
+import type { Distributor, Tenant, TenantType } from "../types";
+
+interface CreateTenantInput {
+    name: string;
+    slug: string;
+    email: string;
+    contactName: string;
+    contactEmail: string;
+    city: string;
+    capturedByDistributorId?: string;
+    servicedByDistributorId?: string;
+    plan?: string;
+    type?: TenantType;
+    cloudSync?: boolean;
+}
+
+function normalizeOptional(value?: string): string | null {
+    if (!value) return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
 
 /**
  * Generate a random temporary password (12‑16 characters, alphanumeric).
@@ -25,28 +42,36 @@ export async function createTenant({
     name,
     slug,
     email,
+    contactName,
+    contactEmail,
+    city,
+    capturedByDistributorId,
+    servicedByDistributorId,
     plan = "TRIAL",
     type = "full",
     cloudSync = true,
-}: {
-    name: string;
-    slug: string;
-    email: string;
-    plan?: string;
-    type?: "full" | "pos_only";
-    cloudSync?: boolean;
-}): Promise<{ tenantId: string; tempPassword: string }> {
-    // 1️⃣ Generate temporary password
+}: CreateTenantInput): Promise<{ tenantId: string; tempPassword: string }> {
+    const accessEmail = email.trim().toLowerCase();
+    const contactMail = contactEmail.trim().toLowerCase();
     const tempPassword = generateTempPassword();
 
-    // 2️⃣ Create Supabase Auth user (service role key is required)
-    // We ALWAYS create the user so they can login and we can use the Kill Switch (disable account),
-    // even if they don't sync data to the cloud (cloudSync = false).
     const { error: authError, data: authUser } = await supabaseAdmin.auth.admin.createUser({
-        email,
+        email: accessEmail,
         password: tempPassword,
         email_confirm: true,
-        user_metadata: { name, slug, type, cloudSync },
+        user_metadata: {
+            name,
+            full_name: name,
+            slug,
+            type,
+            cloudSync,
+            contact_name: contactName.trim(),
+            contact_email: contactMail,
+            city: city.trim(),
+            captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
+            serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
+            is_new_user: true,
+        },
     });
 
     if (authError) {
@@ -54,41 +79,98 @@ export async function createTenant({
         throw authError;
     }
 
-    // Save the ID in case we need to rollback
     const authUserId = authUser?.user?.id;
+    if (!authUserId) {
+        throw new Error("Supabase Auth user ID missing after tenant user creation");
+    }
 
-    // 3️⃣ Call the provisioning function defined in the landlord schema
     const { data, error: fnError } = await supabaseAdmin.rpc("create_new_tenant", {
         p_name: name,
         p_slug: slug,
-        p_email: email,
+        p_email: accessEmail,
         p_type: type,
         p_cloud_sync: cloudSync,
+        p_contact_name: contactName.trim(),
+        p_contact_email: contactMail,
+        p_city: city.trim(),
+        p_captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
+        p_serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
     });
 
     if (fnError) {
         console.error("Tenant provisioning failed", fnError);
-        // Rollback auth user if we created one
-        if (authUserId) {
-            await supabaseAdmin.auth.admin.deleteUser(authUserId);
-        }
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
         throw fnError;
     }
 
-    // 4️⃣ Insert subscription / plan (simplified – could be expanded later)
-    const tenantId = data as string; // function returns UUID
-    await supabase.from("subscriptions").insert({
+    const tenantId = data as string;
+
+    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+        user_metadata: {
+            name,
+            full_name: name,
+            slug,
+            type,
+            cloudSync,
+            contact_name: contactName.trim(),
+            contact_email: contactMail,
+            city: city.trim(),
+            captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
+            serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
+            is_new_user: true,
+            tenant_id: tenantId,
+        },
+    });
+
+    if (metadataError) {
+        console.error("Failed to sync tenant metadata into Supabase Auth", metadataError);
+        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        throw metadataError;
+    }
+
+    const { error: subscriptionError } = await supabaseAdmin.from("subscriptions").insert({
         tenant_id: tenantId,
         plan_name: plan,
         is_active: true,
     });
 
-    // 5️⃣ Send verification email – Supabase automatically sends a magic link if you enable it,
-    // but we will trigger a custom email via a server‑side function (placeholder here).
-    // In production you would call an email service (SendGrid, Postmark, etc.).
-    // await sendVerificationEmail(email, tempPassword);
+    if (subscriptionError) {
+        console.error("Failed to create tenant subscription", subscriptionError);
+        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        throw subscriptionError;
+    }
 
     return { tenantId, tempPassword };
+}
+
+export async function updateTenantTaxId(id: string, taxId: string): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("tenants")
+        .update({ tax_id: taxId.trim() })
+        .eq("id", id);
+
+    if (error) throw error;
+}
+
+export async function getDistributors(): Promise<Distributor[]> {
+    const { data, error } = await supabaseAdmin
+        .from("distributors")
+        .select("*")
+        .eq("is_active", true)
+        .order("name", { ascending: true });
+
+    if (error) {
+        const errorCode = (error as { code?: string }).code;
+        if (errorCode === "42P01") {
+            return [];
+        }
+        console.error("Error fetching distributors:", error);
+        throw error;
+    }
+
+    return (data as Distributor[]) || [];
 }
 
 /**
@@ -111,7 +193,7 @@ export async function changeTenantPassword(newPassword: string): Promise<void> {
 /**
  * Fetch all real tenants from the landlord.tenants table using the admin client.
  */
-export async function getTenants(): Promise<any[]> {
+export async function getTenants(): Promise<Tenant[]> {
     const { data, error } = await supabaseAdmin
         .from("tenants")
         .select("*")
@@ -121,18 +203,16 @@ export async function getTenants(): Promise<any[]> {
         console.error("Error fetching tenants:", error);
         throw error;
     }
-    return data || [];
+    return (data as Tenant[]) || [];
 }
 
 /**
- * Suspend a tenant (Update its verification and status).
+ * Suspend a tenant (update status).
  */
 export async function suspendTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
-        .update({
-            status: 'SUSPENDED'
-        })
+        .update({ status: "SUSPENDED" })
         .eq("id", id);
     if (error) throw error;
 }
@@ -143,15 +223,15 @@ export async function suspendTenant(id: string): Promise<void> {
 export async function reactivateTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
-        .update({
-            status: 'ACTIVE'
-        })
+        .update({ status: "ACTIVE" })
         .eq("id", id);
     if (error) throw error;
 }
 
 export const tenantService = {
     createTenant,
+    updateTenantTaxId,
+    getDistributors,
     verifyTenantEmail,
     changeTenantPassword,
     getTenants,

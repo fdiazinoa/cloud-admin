@@ -1,37 +1,72 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Search, Plus, Power, Edit3, Loader2, X } from 'lucide-react';
-import type { Tenant } from '../types';
-import { supabase, supabaseAdmin } from '../lib/supabase';
+import type { Distributor, Tenant, TenantType } from '../types';
 import { tenantService } from '../lib/tenantService';
 
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [tenants, setTenants] = useState<Tenant[]>([]);
+    const [distributors, setDistributors] = useState<Distributor[]>([]);
     const [loading, setLoading] = useState(true);
+    const [distributorsLoading, setDistributorsLoading] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [provisionedCredentials, setProvisionedCredentials] = useState<{
+        email: string;
+        tempPassword: string;
+    } | null>(null);
 
-    // Form state
-    const [formData, setFormData] = useState({ name: '', email: '', taxId: '', type: 'full' as 'full' | 'pos_only', cloudSync: true });
+    const [formData, setFormData] = useState({
+        name: '',
+        email: '',
+        taxId: '',
+        contactName: '',
+        contactEmail: '',
+        city: '',
+        capturedByDistributorId: '',
+        servicedByDistributorId: '',
+        type: 'full' as TenantType,
+        cloudSync: true,
+    });
+
+    const getErrorMessage = (error: unknown) => {
+        if (typeof error === 'string') return error;
+        if (error instanceof Error) return error.message;
+        if (
+            typeof error === 'object'
+            && error !== null
+            && 'error_description' in error
+            && typeof error.error_description === 'string'
+        ) {
+            return error.error_description;
+        }
+        return 'Error desconocido';
+    };
+
+    const resetForm = () => {
+        setFormData({
+            name: '',
+            email: '',
+            taxId: '',
+            contactName: '',
+            contactEmail: '',
+            city: '',
+            capturedByDistributorId: '',
+            servicedByDistributorId: '',
+            type: 'full',
+            cloudSync: true,
+        });
+    };
 
     useEffect(() => {
-        fetchTenants();
+        void fetchTenants();
+        void fetchDistributors();
     }, []);
 
     const fetchTenants = async () => {
         setLoading(true);
         try {
-            console.log("Fetching tenants using supabaseAdmin...");
-            const { data, error } = await supabaseAdmin
-                .from('tenants')
-                .select('*')
-                .order('created_at', { ascending: false });
-
-            if (error) {
-                console.error('Supabase error fetching tenants:', error);
-                throw error;
-            }
-            console.log("Tenants received:", data);
+            const data = await tenantService.getTenants();
             setTenants(data || []);
         } catch (err) {
             console.error('Error fetching tenants:', err);
@@ -40,10 +75,25 @@ export const Tenants: React.FC = () => {
         }
     };
 
-    const filteredTenants = tenants.filter(t =>
-        t.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (t.tax_id && t.tax_id.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    const fetchDistributors = async () => {
+        setDistributorsLoading(true);
+        try {
+            const data = await tenantService.getDistributors();
+            setDistributors(data || []);
+        } catch (err) {
+            console.error('Error fetching distributors:', err);
+        } finally {
+            setDistributorsLoading(false);
+        }
+    };
+
+    const filteredTenants = tenants.filter((tenant) => {
+        const normalizedSearch = searchTerm.toLowerCase();
+        return tenant.name.toLowerCase().includes(normalizedSearch)
+            || (tenant.tax_id && tenant.tax_id.toLowerCase().includes(normalizedSearch))
+            || (tenant.contact_name && tenant.contact_name.toLowerCase().includes(normalizedSearch))
+            || (tenant.city && tenant.city.toLowerCase().includes(normalizedSearch));
+    });
 
     const toggleTenantStatus = async (tenant: Tenant) => {
         const isCurrentlyActive = tenant.status === 'ACTIVE' || tenant.status === 'TRIAL';
@@ -57,7 +107,7 @@ export const Tenants: React.FC = () => {
             } else {
                 await tenantService.reactivateTenant(tenant.id);
             }
-            await fetchTenants(); // Reload
+            await fetchTenants();
         } catch (err) {
             console.error('Error toggling status:', err);
             alert('Hubo un error al actualizar el estatus');
@@ -67,42 +117,43 @@ export const Tenants: React.FC = () => {
     const handleCreateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
-        try {
-            // Generate basic slug from name
-            const slug = formData.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
 
-            // 1. Call the Postgres Provisioner Function
+        try {
+            const slug = formData.name
+                .toLowerCase()
+                .replace(/[^a-z0-9_]/g, '_')
+                .replace(/_+/g, '_')
+                .replace(/^_|_$/g, '');
+
             const { tenantId, tempPassword } = await tenantService.createTenant({
                 name: formData.name,
                 slug,
                 email: formData.email,
+                contactName: formData.contactName,
+                contactEmail: formData.contactEmail,
+                city: formData.city,
+                capturedByDistributorId: formData.capturedByDistributorId || undefined,
+                servicedByDistributorId: formData.servicedByDistributorId || undefined,
                 plan: 'TRIAL',
                 type: formData.type,
                 cloudSync: formData.cloudSync,
             });
 
-            // Update optional fields like tax_id
-            if (formData.taxId) {
-                await supabase.from('tenants').update({ tax_id: formData.taxId }).eq('id', tenantId);
+            if (formData.taxId.trim()) {
+                await tenantService.updateTenantTaxId(tenantId, formData.taxId);
             }
 
-            // TODO: Send verification email with tempPassword (implementation pending)
-            console.log('Tenant created. Temp password:', tempPassword);
+            setProvisionedCredentials({
+                email: formData.email.trim().toLowerCase(),
+                tempPassword,
+            });
 
-            // Success cleanup
-            setFormData({ name: '', email: '', taxId: '', type: 'full', cloudSync: true });
+            resetForm();
             setIsModalOpen(false);
             await fetchTenants();
-
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Error provisioning tenant:', err);
-            let msg = 'Error desconocido';
-            if (err.message) msg = err.message;
-            else if (typeof err === 'string') msg = err;
-            else if (err.error_description) msg = err.error_description;
-            else msg = JSON.stringify(err);
-
-            alert('Error al aprovisionar el Tenant: ' + msg);
+            alert('Error al aprovisionar el Tenant: ' + getErrorMessage(err));
         } finally {
             setIsSubmitting(false);
         }
@@ -110,10 +161,14 @@ export const Tenants: React.FC = () => {
 
     const getStatusBadge = (status: string) => {
         switch (status) {
-            case 'ACTIVE': return <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Activo</span>;
-            case 'SUSPENDED': return <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Suspendido</span>;
-            case 'TRIAL': return <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Prueba</span>;
-            default: return null;
+            case 'ACTIVE':
+                return <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Activo</span>;
+            case 'SUSPENDED':
+                return <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Suspendido</span>;
+            case 'TRIAL':
+                return <span className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-xs font-bold uppercase transition-colors">Prueba</span>;
+            default:
+                return null;
         }
     };
 
@@ -133,13 +188,39 @@ export const Tenants: React.FC = () => {
                 </button>
             </div>
 
+            {provisionedCredentials && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                        <div>
+                            <h3 className="text-sm font-black uppercase tracking-wider text-emerald-800">Credenciales temporales</h3>
+                            <p className="mt-1 text-sm text-emerald-700">
+                                Comparte estas credenciales por un canal seguro y fuerza el cambio de contrasena en el primer acceso.
+                            </p>
+                            <p className="mt-3 text-sm text-slate-700">
+                                <span className="font-bold">Email de acceso:</span> {provisionedCredentials.email}
+                            </p>
+                            <p className="text-sm text-slate-700">
+                                <span className="font-bold">Clave temporal:</span> {provisionedCredentials.tempPassword}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setProvisionedCredentials(null)}
+                            className="rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-emerald-700 transition-colors hover:bg-emerald-100"
+                        >
+                            Ocultar
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
                 <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                     <div className="relative w-96">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                         <input
                             type="text"
-                            placeholder="Buscar compañía por nombre o RNC..."
+                            placeholder="Buscar por nombre, RNC, contacto o ciudad..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none transition-all"
@@ -167,24 +248,28 @@ export const Tenants: React.FC = () => {
                                 <td colSpan={5} className="px-6 py-8 text-center text-slate-500 italic">No se encontraron tenants.</td>
                             </tr>
                         )}
-                        {filteredTenants.map((t) => (
-                            <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                        {filteredTenants.map((tenant) => (
+                            <tr key={tenant.id} className="hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4">
-                                    <div className="font-bold text-slate-800">{t.name}</div>
-                                    <div className="text-xs text-slate-400 font-mono mt-0.5">{t.id}</div>
+                                    <div className="font-bold text-slate-800">{tenant.name}</div>
+                                    <div className="text-xs text-slate-400 font-mono mt-0.5">{tenant.id}</div>
                                 </td>
-                                <td className="px-6 py-4 font-mono text-slate-600">{t.tax_id || 'N/A'}</td>
-                                <td className="px-6 py-4 text-slate-600">{t.email}</td>
-                                <td className="px-6 py-4 text-center">{getStatusBadge(t.status)}</td>
+                                <td className="px-6 py-4 font-mono text-slate-600">{tenant.tax_id || 'N/A'}</td>
+                                <td className="px-6 py-4">
+                                    <div className="font-semibold text-slate-700">{tenant.contact_name || 'Sin persona de contacto'}</div>
+                                    <div className="text-xs text-slate-500">{tenant.contact_email || tenant.email}</div>
+                                    <div className="text-xs text-slate-400">{tenant.city || 'Ciudad no definida'}</div>
+                                </td>
+                                <td className="px-6 py-4 text-center">{getStatusBadge(tenant.status)}</td>
                                 <td className="px-6 py-4 text-right">
                                     <div className="flex justify-end gap-2">
                                         <button className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Editar">
                                             <Edit3 size={18} />
                                         </button>
                                         <button
-                                            onClick={() => toggleTenantStatus(t)}
-                                            className={`p-2 rounded-lg transition-colors ${t.status === 'ACTIVE' ? 'text-slate-400 hover:text-red-600 hover:bg-red-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
-                                            title={t.status === 'ACTIVE' ? 'Forzar Suspensión' : 'Reactivar'}
+                                            onClick={() => toggleTenantStatus(tenant)}
+                                            className={`p-2 rounded-lg transition-colors ${tenant.status === 'ACTIVE' ? 'text-slate-400 hover:text-red-600 hover:bg-red-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                                            title={tenant.status === 'ACTIVE' ? 'Forzar Suspensión' : 'Reactivar'}
                                         >
                                             <Power size={18} />
                                         </button>
@@ -196,10 +281,9 @@ export const Tenants: React.FC = () => {
                 </table>
             </div>
 
-            {/* Create Tenant Modal */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                             <h3 className="font-black text-lg text-slate-800">Aprovisionar Nueva Empresa</h3>
                             <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700 transition-colors">
@@ -213,42 +297,124 @@ export const Tenants: React.FC = () => {
                                     required
                                     type="text"
                                     value={formData.name}
-                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                     placeholder="Ej. Supermercado El Sol"
                                 />
                                 <p className="text-xs text-slate-500 mt-1">El nombre se usará para generar el slug del esquema de base de datos.</p>
                             </div>
+
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-1">RNC / Cédula</label>
                                     <input
                                         type="text"
                                         value={formData.taxId}
-                                        onChange={e => setFormData({ ...formData, taxId: e.target.value })}
+                                        onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                         placeholder="Opcional"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Email <span className="text-red-500">*</span></label>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Email de Acceso <span className="text-red-500">*</span></label>
                                     <input
                                         required
                                         type="email"
                                         value={formData.email}
-                                        onChange={e => setFormData({ ...formData, email: e.target.value })}
+                                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                         placeholder="admin@empresa.com"
                                     />
                                 </div>
                             </div>
 
+                            <div className="grid grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Persona de Contacto <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        type="text"
+                                        value={formData.contactName}
+                                        onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Nombre y apellido"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Mail de Contacto <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        type="email"
+                                        value={formData.contactEmail}
+                                        onChange={(e) => setFormData({ ...formData, contactEmail: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="contacto@empresa.com"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Ciudad <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        type="text"
+                                        value={formData.city}
+                                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Santo Domingo"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">
+                                        Distribuidor que Captó
+                                        {distributorsLoading ? ' (cargando...)' : ''}
+                                    </label>
+                                    <select
+                                        value={formData.capturedByDistributorId}
+                                        onChange={(e) => setFormData({ ...formData, capturedByDistributorId: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                    >
+                                        <option value="">Sin asignar</option>
+                                        {distributors.map((distributor) => (
+                                            <option key={distributor.id} value={distributor.id}>
+                                                {distributor.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">
+                                        Distribuidor que da Servicio
+                                        {distributorsLoading ? ' (cargando...)' : ''}
+                                    </label>
+                                    <select
+                                        value={formData.servicedByDistributorId}
+                                        onChange={(e) => setFormData({ ...formData, servicedByDistributorId: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                    >
+                                        <option value="">Sin asignar</option>
+                                        {distributors.map((distributor) => (
+                                            <option key={distributor.id} value={distributor.id}>
+                                                {distributor.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {distributors.length === 0 && !distributorsLoading && (
+                                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                                    No hay distribuidores activos. Puedes crear tenants sin asignación y completar este dato después.
+                                </p>
+                            )}
+
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Solución</label>
                                     <select
                                         value={formData.type}
-                                        onChange={e => setFormData({ ...formData, type: e.target.value as 'full' | 'pos_only' })}
+                                        onChange={(e) => setFormData({ ...formData, type: e.target.value as TenantType })}
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                     >
                                         <option value="full">MALL POS + Cloud ERP</option>
@@ -261,7 +427,7 @@ export const Tenants: React.FC = () => {
                                             <input
                                                 type="checkbox"
                                                 checked={formData.cloudSync}
-                                                onChange={e => setFormData({ ...formData, cloudSync: e.target.checked })}
+                                                onChange={(e) => setFormData({ ...formData, cloudSync: e.target.checked })}
                                                 className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors"
                                             />
                                         </div>
