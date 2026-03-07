@@ -1,5 +1,5 @@
 import { supabase, supabaseAdmin } from "./supabase";
-import type { Tenant } from "../types";
+import type { Tenant, TenantTerminalRegistryEntry, TenantTerminalSnapshot, Terminal } from "../types";
 
 export interface DashboardStats {
     activeTenants: number;
@@ -227,6 +227,86 @@ export async function reactivateTenant(id: string): Promise<void> {
     if (error) throw error;
 }
 
+export async function getTenantTerminalOverview(tenantId: string): Promise<TenantTerminalSnapshot[]> {
+    const [terminalsRes, registryRes] = await Promise.all([
+        supabaseAdmin
+            .schema("public")
+            .from("terminals")
+            .select("id,tenant_id,device_token,name,is_active,last_checkin_at,created_at")
+            .eq("tenant_id", tenantId)
+            .order("created_at", { ascending: true }),
+        supabaseAdmin
+            .from("tenant_server_registry")
+            .select("*")
+            .eq("tenant_id", tenantId)
+            .order("last_seen_at", { ascending: false }),
+    ]);
+
+    if (terminalsRes.error) {
+        throw terminalsRes.error;
+    }
+
+    let registryRows: TenantTerminalRegistryEntry[] = [];
+    if (registryRes.error) {
+        const code = (registryRes.error as { code?: string }).code;
+        if (code !== "42P01") {
+            throw registryRes.error;
+        }
+    } else {
+        registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
+    }
+
+    const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
+    const registryByDeviceId = new Map<string, TenantTerminalRegistryEntry>();
+    const matchedRegistryIds = new Set<string>();
+
+    for (const row of registryRows) {
+        if (row.terminal_id && !registryByTerminalId.has(row.terminal_id)) {
+            registryByTerminalId.set(row.terminal_id, row);
+        }
+        if (row.device_id && !registryByDeviceId.has(row.device_id)) {
+            registryByDeviceId.set(row.device_id, row);
+        }
+    }
+
+    const snapshots: TenantTerminalSnapshot[] = ((terminalsRes.data as Terminal[]) || []).map((terminal) => {
+        const registry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminal.device_token) || null;
+        if (registry?.id) {
+            matchedRegistryIds.add(registry.id);
+        }
+
+        return {
+            id: terminal.id,
+            tenant_id: terminal.tenant_id,
+            terminal_id: terminal.id,
+            name: terminal.name || terminal.id,
+            device_token: terminal.device_token,
+            is_active: Boolean(terminal.is_active),
+            last_checkin_at: terminal.last_checkin_at || null,
+            created_at: terminal.created_at || null,
+            registry,
+        };
+    });
+
+    for (const row of registryRows) {
+        if (matchedRegistryIds.has(row.id)) continue;
+
+        snapshots.push({
+            id: row.id,
+            tenant_id: row.tenant_id,
+            terminal_id: row.terminal_id || null,
+            name: row.terminal_name || row.terminal_id || row.device_id || "Terminal sin catálogo",
+            device_token: row.device_id || null,
+            is_active: (row.status || "").toUpperCase() === "ONLINE",
+            last_checkin_at: row.last_seen_at || null,
+            created_at: row.created_at || null,
+            registry: row,
+        });
+    }
+
+    return snapshots;
+}
+
 export const tenantService = {
     createTenant,
     verifyTenantEmail,
@@ -237,4 +317,5 @@ export const tenantService = {
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
+    getTenantTerminalOverview,
 };

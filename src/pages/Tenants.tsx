@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, Power, Edit3, Loader2, X } from 'lucide-react';
-import type { Tenant } from '../types';
+import { Search, Plus, Power, Edit3, Loader2, X, Monitor, Wifi, WifiOff, Server } from 'lucide-react';
+import type { Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 
 export const Tenants: React.FC = () => {
@@ -12,6 +12,10 @@ export const Tenants: React.FC = () => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isEditSubmitting, setIsEditSubmitting] = useState(false);
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
+    const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
+    const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
+    const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
+    const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
         tempPassword: string;
@@ -144,6 +148,29 @@ export const Tenants: React.FC = () => {
         setEditingTenant(null);
     };
 
+    const openTerminalModal = async (tenant: Tenant) => {
+        setSelectedTenantForTerminals(tenant);
+        setTenantTerminals([]);
+        setIsTerminalModalOpen(true);
+        setIsTerminalModalLoading(true);
+
+        try {
+            const data = await tenantService.getTenantTerminalOverview(tenant.id);
+            setTenantTerminals(data);
+        } catch (err) {
+            console.error('Error fetching tenant terminals:', err);
+            alert('No se pudieron cargar las terminales de este tenant.');
+        } finally {
+            setIsTerminalModalLoading(false);
+        }
+    };
+
+    const closeTerminalModal = () => {
+        setIsTerminalModalOpen(false);
+        setSelectedTenantForTerminals(null);
+        setTenantTerminals([]);
+    };
+
     const handleUpdateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingTenant) return;
@@ -176,6 +203,23 @@ export const Tenants: React.FC = () => {
             default: return null;
         }
     };
+
+    const formatDateTime = (value?: string | null) => {
+        if (!value) return 'N/D';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return 'N/D';
+        return parsed.toLocaleString('es-DO');
+    };
+
+    const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
+        const registryStatus = (terminal.registry?.status || '').toUpperCase();
+        if (registryStatus === 'ONLINE') return 'ONLINE';
+        if (registryStatus === 'OFFLINE') return 'OFFLINE';
+        return terminal.is_active ? 'ACTIVA' : 'INACTIVA';
+    };
+
+    const onlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
+    const offlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
 
     return (
         <div className="space-y-6">
@@ -264,6 +308,14 @@ export const Tenants: React.FC = () => {
                                 <td className="px-6 py-4 text-center">{getStatusBadge(t.status)}</td>
                                 <td className="px-6 py-4 text-right">
                                     <div className="flex justify-end gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => void openTerminalModal(t)}
+                                            className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+                                            title="Ver terminales"
+                                        >
+                                            <Monitor size={18} />
+                                        </button>
                                         <button
                                             type="button"
                                             onClick={() => openEditModal(t)}
@@ -378,6 +430,135 @@ export const Tenants: React.FC = () => {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {isTerminalModalOpen && selectedTenantForTerminals && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div>
+                                <h3 className="font-black text-lg text-slate-800">Terminales Activas del Tenant</h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    {selectedTenantForTerminals.name} · {selectedTenantForTerminals.email}
+                                </p>
+                                <p className="text-xs text-slate-400 font-mono mt-1">{selectedTenantForTerminals.id}</p>
+                            </div>
+                            <button type="button" onClick={closeTerminalModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Terminales listadas</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{tenantTerminals.length}</p>
+                                </div>
+                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Endpoints Online</p>
+                                    <p className="mt-2 text-3xl font-black text-emerald-700">{onlineTerminalCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Endpoints Offline / sin reporte</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{Math.max(tenantTerminals.length - onlineTerminalCount, offlineTerminalCount)}</p>
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                Esta vista combina el catálogo de terminales del tenant con el registry de endpoints publicados en cloud. La máscara de red aún no se persiste, por eso se muestra como <span className="font-bold">N/D</span>.
+                            </div>
+
+                            {isTerminalModalLoading ? (
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500 flex items-center justify-center gap-3">
+                                    <Loader2 className="animate-spin text-violet-500" size={20} />
+                                    Cargando terminales...
+                                </div>
+                            ) : tenantTerminals.length === 0 ? (
+                                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500">
+                                    No hay terminales ni endpoints reportados para este tenant.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                    {tenantTerminals.map((terminal) => {
+                                        const statusLabel = getRegistryStatusLabel(terminal);
+                                        const isOnline = statusLabel === 'ONLINE';
+
+                                        return (
+                                            <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                                                <div className="flex items-start justify-between gap-4">
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className={`rounded-2xl p-3 ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                                {isOnline ? <Wifi size={18} /> : <WifiOff size={18} />}
+                                                            </div>
+                                                            <div>
+                                                                <h4 className="font-black text-slate-800 truncate">{terminal.name}</h4>
+                                                                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                                                                    Terminal ID: {terminal.terminal_id || 'N/D'}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                        {statusLabel}
+                                                    </span>
+                                                </div>
+
+                                                <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Device Token</p>
+                                                        <p className="mt-1 text-slate-700 font-mono break-all">{terminal.device_token || terminal.registry?.device_id || 'N/D'}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Hostname</p>
+                                                        <p className="mt-1 text-slate-700">{terminal.registry?.hostname || 'N/D'}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">IP Principal</p>
+                                                        <p className="mt-1 text-slate-700 font-mono">{terminal.registry?.local_ip || 'N/D'}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Mask / Subred</p>
+                                                        <p className="mt-1 text-slate-700">N/D</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">IPs Reportadas</p>
+                                                        <p className="mt-1 text-slate-700 font-mono break-all">
+                                                            {terminal.registry?.local_ips?.length ? terminal.registry.local_ips.join(', ') : 'N/D'}
+                                                        </p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Endpoint Publicado</p>
+                                                        <p className="mt-1 text-slate-700 font-mono break-all">{terminal.registry?.endpoint_url || 'N/D'}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rol</p>
+                                                        <div className="mt-1 flex items-center gap-2 text-slate-700">
+                                                            <Server size={14} className="text-violet-500" />
+                                                            <span>{terminal.registry?.is_primary ? 'Server Master' : 'Cliente / Secundaria'}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Último Heartbeat</p>
+                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.registry?.last_seen_at)}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Último Check-in</p>
+                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.last_checkin_at)}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Creada</p>
+                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.created_at)}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}
