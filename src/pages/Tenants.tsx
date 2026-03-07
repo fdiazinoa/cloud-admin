@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Power, Edit3, Loader2, X, Monitor, Wifi, WifiOff, Server } from 'lucide-react';
+import { Search, Plus, Power, Edit3, Loader2, X, Monitor, Wifi, WifiOff, Server, AlertTriangle } from 'lucide-react';
 import type { Distributor, Tenant, TenantTerminalSnapshot, TenantType } from '../types';
 import { tenantService } from '../lib/tenantService';
 
@@ -258,6 +258,61 @@ export const Tenants: React.FC = () => {
         return terminal.is_active ? 'ACTIVA' : 'INACTIVA';
     };
 
+    const getApkVersionKey = (terminal: TenantTerminalSnapshot) => {
+        const version = terminal.registry?.app_version?.trim() || '';
+        const versionCode = terminal.registry?.app_version_code ? String(terminal.registry.app_version_code) : '';
+        if (!version && !versionCode) return '';
+        return `${version}::${versionCode}`;
+    };
+
+    const formatApkVersion = (terminal: TenantTerminalSnapshot) => {
+        const version = terminal.registry?.app_version?.trim() || '';
+        const versionCode = terminal.registry?.app_version_code;
+        if (!version && !versionCode) return 'N/D';
+        if (version && versionCode) return `APK v${version} (${versionCode})`;
+        if (version) return `APK v${version}`;
+        return `Build ${versionCode}`;
+    };
+
+    const referenceVersionCandidate = (() => {
+        const primary = tenantTerminals.find((terminal) => terminal.registry?.is_primary && getApkVersionKey(terminal));
+        if (primary) {
+            return {
+                key: getApkVersionKey(primary),
+                label: formatApkVersion(primary),
+                source: primary.name,
+            };
+        }
+
+        const versionCounter = new Map<string, { count: number; label: string; source: string }>();
+        for (const terminal of tenantTerminals) {
+            const key = getApkVersionKey(terminal);
+            if (!key) continue;
+
+            const current = versionCounter.get(key);
+            versionCounter.set(key, {
+                count: (current?.count || 0) + 1,
+                label: current?.label || formatApkVersion(terminal),
+                source: current?.source || terminal.name,
+            });
+        }
+
+        const mostCommonVersion = Array.from(versionCounter.entries()).sort((a, b) => b[1].count - a[1].count)[0];
+        return mostCommonVersion
+            ? {
+                key: mostCommonVersion[0],
+                label: mostCommonVersion[1].label,
+                source: mostCommonVersion[1].source,
+            }
+            : null;
+    })();
+
+    const referenceVersionKey = referenceVersionCandidate?.key || '';
+    const outOfVersionCount = tenantTerminals.filter((terminal) => {
+        const terminalVersionKey = getApkVersionKey(terminal);
+        return Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
+    }).length;
+    const missingVersionCount = tenantTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
     const onlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
     const offlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
 
@@ -576,7 +631,7 @@ export const Tenants: React.FC = () => {
                         </div>
 
                         <div className="p-6 overflow-y-auto space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Terminales listadas</p>
                                     <p className="mt-2 text-3xl font-black text-slate-800">{tenantTerminals.length}</p>
@@ -585,6 +640,10 @@ export const Tenants: React.FC = () => {
                                     <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Endpoints Online</p>
                                     <p className="mt-2 text-3xl font-black text-emerald-700">{onlineTerminalCount}</p>
                                 </div>
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Fuera de versión</p>
+                                    <p className="mt-2 text-3xl font-black text-amber-700">{outOfVersionCount}</p>
+                                </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Endpoints Offline / sin reporte</p>
                                     <p className="mt-2 text-3xl font-black text-slate-800">{Math.max(tenantTerminals.length - onlineTerminalCount, offlineTerminalCount)}</p>
@@ -592,7 +651,15 @@ export const Tenants: React.FC = () => {
                             </div>
 
                             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                                Esta vista combina el catálogo de terminales del tenant con el registry de endpoints publicados en cloud. La máscara de red aún no se persiste, por eso se muestra como <span className="font-bold">N/D</span>.
+                                <p>
+                                    Esta vista combina el catálogo de terminales del tenant con el registry de endpoints publicados en cloud. La máscara de red aún no se persiste, por eso se muestra como <span className="font-bold">N/D</span>.
+                                </p>
+                                <p className="mt-2">
+                                    {referenceVersionCandidate
+                                        ? <>Versión de referencia: <span className="font-bold">{referenceVersionCandidate.label}</span> reportada por <span className="font-bold">{referenceVersionCandidate.source}</span>.</>
+                                        : <>Aún no hay versión de APK reportada por las terminales de este tenant.</>}
+                                    {missingVersionCount > 0 ? <> <span className="font-bold">{missingVersionCount}</span> terminal(es) todavía no reportan versión.</> : null}
+                                </p>
                             </div>
 
                             {isTerminalModalLoading ? (
@@ -609,9 +676,12 @@ export const Tenants: React.FC = () => {
                                     {tenantTerminals.map((terminal) => {
                                         const statusLabel = getRegistryStatusLabel(terminal);
                                         const isOnline = statusLabel === 'ONLINE';
+                                        const terminalVersionKey = getApkVersionKey(terminal);
+                                        const isOutOfVersion = Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
+                                        const hasVersion = Boolean(terminalVersionKey);
 
                                         return (
-                                            <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                                            <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
                                                 <div className="flex items-start justify-between gap-4">
                                                     <div className="min-w-0">
                                                         <div className="flex items-center gap-3">
@@ -626,9 +696,20 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                         </div>
                                                     </div>
-                                                    <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                                                        {statusLabel}
-                                                    </span>
+                                                    <div className="flex flex-col items-end gap-2">
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                            {statusLabel}
+                                                        </span>
+                                                        <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase ${
+                                                            isOutOfVersion
+                                                                ? 'bg-amber-100 text-amber-700'
+                                                                : hasVersion
+                                                                    ? 'bg-blue-100 text-blue-700'
+                                                                    : 'bg-slate-100 text-slate-500'
+                                                        }`}>
+                                                            {isOutOfVersion ? 'Fuera de versión' : hasVersion ? 'Versión reportada' : 'Sin versión'}
+                                                        </span>
+                                                    </div>
                                                 </div>
 
                                                 <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -657,6 +738,29 @@ export const Tenants: React.FC = () => {
                                                     <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Endpoint Publicado</p>
                                                         <p className="mt-1 text-slate-700 font-mono break-all">{terminal.registry?.endpoint_url || 'N/D'}</p>
+                                                    </div>
+                                                    <div className={`rounded-2xl px-4 py-3 border md:col-span-2 ${
+                                                        isOutOfVersion
+                                                            ? 'border-amber-200 bg-amber-50'
+                                                            : 'border-slate-100 bg-slate-50'
+                                                    }`}>
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div>
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Versión APK</p>
+                                                                <p className="mt-1 text-slate-700 font-mono">{formatApkVersion(terminal)}</p>
+                                                            </div>
+                                                            {isOutOfVersion ? (
+                                                                <div className="flex items-center gap-2 text-amber-700 text-xs font-bold uppercase">
+                                                                    <AlertTriangle size={14} />
+                                                                    Desfasada
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
+                                                        {isOutOfVersion && referenceVersionCandidate ? (
+                                                            <p className="mt-2 text-xs text-amber-700">
+                                                                Debe alinearse con <span className="font-bold">{referenceVersionCandidate.label}</span>.
+                                                            </p>
+                                                        ) : null}
                                                     </div>
                                                     <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rol</p>
