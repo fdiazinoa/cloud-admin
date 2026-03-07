@@ -1,5 +1,12 @@
 import { supabase, supabaseAdmin } from "./supabase";
-import type { Distributor, Tenant, TenantType } from "../types";
+import type {
+    Distributor,
+    Tenant,
+    TenantTerminalRegistryEntry,
+    TenantTerminalSnapshot,
+    TenantType,
+    Terminal,
+} from "../types";
 
 export interface DashboardStats {
     activeTenants: number;
@@ -27,9 +34,6 @@ function normalizeOptional(value?: string): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-/**
- * Generate a random temporary password (12‑16 characters, alphanumeric).
- */
 function generateTempPassword(): string {
     const length = 14;
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -40,10 +44,6 @@ function generateTempPassword(): string {
     return pwd;
 }
 
-/**
- * Create a new tenant in the landlord schema and provision an isolated schema.
- * Returns the tenant UUID and the temporary password (to be sent by email).
- */
 export async function createTenant({
     name,
     slug,
@@ -222,6 +222,86 @@ export async function getDistributors(): Promise<Distributor[]> {
     return (data as Distributor[]) || [];
 }
 
+export async function getTenantTerminalOverview(tenantId: string): Promise<TenantTerminalSnapshot[]> {
+    const [terminalsRes, registryRes] = await Promise.all([
+        supabaseAdmin
+            .schema("public")
+            .from("terminals")
+            .select("id,tenant_id,device_token,name,is_active,last_checkin_at,created_at")
+            .eq("tenant_id", tenantId)
+            .order("created_at", { ascending: true }),
+        supabaseAdmin
+            .from("tenant_server_registry")
+            .select("*")
+            .eq("tenant_id", tenantId)
+            .order("last_seen_at", { ascending: false }),
+    ]);
+
+    if (terminalsRes.error) {
+        throw terminalsRes.error;
+    }
+
+    let registryRows: TenantTerminalRegistryEntry[] = [];
+    if (registryRes.error) {
+        const code = (registryRes.error as { code?: string }).code;
+        if (code !== "42P01") {
+            throw registryRes.error;
+        }
+    } else {
+        registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
+    }
+
+    const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
+    const registryByDeviceId = new Map<string, TenantTerminalRegistryEntry>();
+    const matchedRegistryIds = new Set<string>();
+
+    for (const row of registryRows) {
+        if (row.terminal_id && !registryByTerminalId.has(row.terminal_id)) {
+            registryByTerminalId.set(row.terminal_id, row);
+        }
+        if (row.device_id && !registryByDeviceId.has(row.device_id)) {
+            registryByDeviceId.set(row.device_id, row);
+        }
+    }
+
+    const snapshots: TenantTerminalSnapshot[] = ((terminalsRes.data as Terminal[]) || []).map((terminal) => {
+        const registry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminal.device_token) || null;
+        if (registry?.id) {
+            matchedRegistryIds.add(registry.id);
+        }
+
+        return {
+            id: terminal.id,
+            tenant_id: terminal.tenant_id,
+            terminal_id: terminal.id,
+            name: terminal.name || terminal.id,
+            device_token: terminal.device_token,
+            is_active: Boolean(terminal.is_active),
+            last_checkin_at: terminal.last_checkin_at || null,
+            created_at: terminal.created_at || null,
+            registry,
+        };
+    });
+
+    for (const row of registryRows) {
+        if (matchedRegistryIds.has(row.id)) continue;
+
+        snapshots.push({
+            id: row.id,
+            tenant_id: row.tenant_id,
+            terminal_id: row.terminal_id || null,
+            name: row.terminal_name || row.terminal_id || row.device_id || "Terminal sin catálogo",
+            device_token: row.device_id || null,
+            is_active: (row.status || "").toUpperCase() === "ONLINE",
+            last_checkin_at: row.last_seen_at || null,
+            created_at: row.created_at || null,
+            registry: row,
+        });
+    }
+
+    return snapshots;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes] = await Promise.all([
         supabaseAdmin.from("tenants").select("status"),
@@ -245,9 +325,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     };
 }
 
-/**
- * Suspend a tenant (update status).
- */
 export async function suspendTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
@@ -256,9 +333,6 @@ export async function suspendTenant(id: string): Promise<void> {
     if (error) throw error;
 }
 
-/**
- * Reactivate a tenant.
- */
 export async function reactivateTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
@@ -275,6 +349,7 @@ export const tenantService = {
     updateTenantTaxId,
     updateTenant,
     getDistributors,
+    getTenantTerminalOverview,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
