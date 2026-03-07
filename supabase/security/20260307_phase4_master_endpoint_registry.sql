@@ -152,13 +152,13 @@ BEGIN
     );
 
     IF COALESCE(p_is_primary, TRUE) THEN
-        UPDATE landlord.tenant_server_registry
+        UPDATE landlord.tenant_server_registry AS registry
         SET
             is_primary = FALSE,
             updated_at = timezone('utc', now())
-        WHERE tenant_id = v_tenant.id
-          AND device_id <> p_device_id
-          AND is_primary = TRUE;
+        WHERE registry.tenant_id = v_tenant.id
+          AND registry.device_id <> p_device_id
+          AND registry.is_primary = TRUE;
     END IF;
 
     RETURN QUERY
