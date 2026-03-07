@@ -313,8 +313,92 @@ export const Tenants: React.FC = () => {
         return Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
     }).length;
     const missingVersionCount = tenantTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
+
+    const normalizeIp = (value?: string | null) => (value || '').trim();
+
+    const parseEndpointHost = (value?: string | null) => {
+        const rawValue = (value || '').trim();
+        if (!rawValue) return null;
+
+        try {
+            const normalized = rawValue.includes('://') ? rawValue : `http://${rawValue}`;
+            const parsed = new URL(normalized);
+            return parsed.hostname || null;
+        } catch {
+            return null;
+        }
+    };
+
+    const isIpv4 = (value: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(value);
+
+    const isPrivateLanIp = (value: string) => {
+        if (!isIpv4(value)) return false;
+        if (value.startsWith('10.')) return true;
+        if (value.startsWith('192.168.')) return true;
+
+        const [firstOctet, secondOctet] = value.split('.').map((part) => Number(part));
+        return firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31;
+    };
+
+    const isLikelyVirtualIp = (value: string) => {
+        if (!isIpv4(value)) return false;
+
+        return (
+            value.startsWith('127.')
+            || value.startsWith('169.254.')
+            || value.startsWith('10.0.2.')
+            || value.startsWith('10.0.3.')
+            || value === '10.0.2.2'
+            || value === '10.0.3.2'
+            || value.startsWith('192.168.56.')
+            || value.startsWith('192.168.58.')
+            || value.startsWith('192.168.59.')
+            || value.startsWith('192.168.122.')
+            || value === '192.168.64.1'
+        );
+    };
+
+    const getReportedIps = (terminal: TenantTerminalSnapshot) => {
+        const endpointHost = parseEndpointHost(terminal.registry?.endpoint_url);
+        return Array.from(
+            new Set(
+                [
+                    terminal.registry?.local_ip,
+                    ...(terminal.registry?.local_ips || []),
+                    endpointHost,
+                ]
+                    .map((value) => normalizeIp(value))
+                    .filter(Boolean)
+            )
+        );
+    };
+
+    const getLanIps = (terminal: TenantTerminalSnapshot) =>
+        getReportedIps(terminal).filter((ip) => isPrivateLanIp(ip) && !isLikelyVirtualIp(ip));
+
+    const getDiscardedIps = (terminal: TenantTerminalSnapshot) =>
+        getReportedIps(terminal).filter((ip) => !getLanIps(terminal).includes(ip));
+
+    const getPreferredLanIp = (terminal: TenantTerminalSnapshot) => {
+        const endpointHost = normalizeIp(parseEndpointHost(terminal.registry?.endpoint_url));
+        if (endpointHost && getLanIps(terminal).includes(endpointHost)) return endpointHost;
+
+        const primaryIp = normalizeIp(terminal.registry?.local_ip);
+        if (primaryIp && getLanIps(terminal).includes(primaryIp)) return primaryIp;
+
+        return getLanIps(terminal)[0] || primaryIp || endpointHost || 'N/D';
+    };
+
+    const getRoleLabel = (terminal: TenantTerminalSnapshot) => {
+        if (terminal.registry?.is_primary) return 'Server Master';
+        if (terminal.registry) return 'Cliente con endpoint';
+        return 'Cliente / catálogo';
+    };
     const onlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
     const offlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
+    const masterTerminalCount = tenantTerminals.filter((terminal) => terminal.registry?.is_primary).length;
+    const clientTerminalCount = tenantTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
+    const publishedEndpointCount = tenantTerminals.filter((terminal) => Boolean(terminal.registry)).length;
 
     return (
         <div className="space-y-6">
@@ -645,8 +729,8 @@ export const Tenants: React.FC = () => {
                                     <p className="mt-2 text-3xl font-black text-amber-700">{outOfVersionCount}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Endpoints Offline / sin reporte</p>
-                                    <p className="mt-2 text-3xl font-black text-slate-800">{Math.max(tenantTerminals.length - onlineTerminalCount, offlineTerminalCount)}</p>
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Clientes / cajas</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{clientTerminalCount}</p>
                                 </div>
                             </div>
 
@@ -655,11 +739,29 @@ export const Tenants: React.FC = () => {
                                     Esta vista combina el catálogo de terminales del tenant con el registry de endpoints publicados en cloud. La máscara de red aún no se persiste, por eso se muestra como <span className="font-bold">N/D</span>.
                                 </p>
                                 <p className="mt-2">
+                                    Use <span className="font-bold">IP LAN recomendada</span> o <span className="font-bold">Endpoint publicado</span> para conectar nuevas cajas. Las IPs virtuales o de emulador se separan como descartadas.
+                                </p>
+                                <p className="mt-2">
                                     {referenceVersionCandidate
                                         ? <>Versión de referencia: <span className="font-bold">{referenceVersionCandidate.label}</span> reportada por <span className="font-bold">{referenceVersionCandidate.source}</span>.</>
                                         : <>Aún no hay versión de APK reportada por las terminales de este tenant.</>}
                                     {missingVersionCount > 0 ? <> <span className="font-bold">{missingVersionCount}</span> terminal(es) todavía no reportan versión.</> : null}
                                 </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-violet-700">Server master</p>
+                                    <p className="mt-2 text-3xl font-black text-violet-700">{masterTerminalCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Con endpoint cloud</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{publishedEndpointCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Offline / sin reporte</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{Math.max(tenantTerminals.length - onlineTerminalCount, offlineTerminalCount)}</p>
+                                </div>
                             </div>
 
                             {isTerminalModalLoading ? (
@@ -679,6 +781,8 @@ export const Tenants: React.FC = () => {
                                         const terminalVersionKey = getApkVersionKey(terminal);
                                         const isOutOfVersion = Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
                                         const hasVersion = Boolean(terminalVersionKey);
+                                        const lanIps = getLanIps(terminal);
+                                        const discardedIps = getDiscardedIps(terminal);
 
                                         return (
                                             <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
@@ -721,20 +825,28 @@ export const Tenants: React.FC = () => {
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Hostname</p>
                                                         <p className="mt-1 text-slate-700">{terminal.registry?.hostname || 'N/D'}</p>
                                                     </div>
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">IP Principal</p>
-                                                        <p className="mt-1 text-slate-700 font-mono">{terminal.registry?.local_ip || 'N/D'}</p>
+                                                    <div className="rounded-2xl bg-emerald-50 px-4 py-3 border border-emerald-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">IP LAN recomendada</p>
+                                                        <p className="mt-1 text-slate-700 font-mono">{getPreferredLanIp(terminal)}</p>
                                                     </div>
                                                     <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Mask / Subred</p>
                                                         <p className="mt-1 text-slate-700">N/D</p>
                                                     </div>
                                                     <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">IPs Reportadas</p>
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">IPs LAN válidas</p>
                                                         <p className="mt-1 text-slate-700 font-mono break-all">
-                                                            {terminal.registry?.local_ips?.length ? terminal.registry.local_ips.join(', ') : 'N/D'}
+                                                            {lanIps.length ? lanIps.join(', ') : 'N/D'}
                                                         </p>
                                                     </div>
+                                                    {discardedIps.length > 0 && (
+                                                        <div className="rounded-2xl bg-amber-50 px-4 py-3 border border-amber-100 md:col-span-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">IPs descartadas / virtuales</p>
+                                                            <p className="mt-1 text-slate-700 font-mono break-all">
+                                                                {discardedIps.join(', ')}
+                                                            </p>
+                                                        </div>
+                                                    )}
                                                     <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Endpoint Publicado</p>
                                                         <p className="mt-1 text-slate-700 font-mono break-all">{terminal.registry?.endpoint_url || 'N/D'}</p>
@@ -766,7 +878,7 @@ export const Tenants: React.FC = () => {
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rol</p>
                                                         <div className="mt-1 flex items-center gap-2 text-slate-700">
                                                             <Server size={14} className="text-violet-500" />
-                                                            <span>{terminal.registry?.is_primary ? 'Server Master' : 'Cliente / Secundaria'}</span>
+                                                            <span>{getRoleLabel(terminal)}</span>
                                                         </div>
                                                     </div>
                                                     <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">

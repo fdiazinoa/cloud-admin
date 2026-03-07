@@ -227,9 +227,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         supabaseAdmin
             .schema("public")
             .from("terminals")
-            .select("id,tenant_id,device_token,name,is_active,last_checkin_at,created_at")
-            .eq("tenant_id", tenantId)
-            .order("created_at", { ascending: true }),
+            .select("*")
+            .eq("tenant_id", tenantId),
         supabaseAdmin
             .from("tenant_server_registry")
             .select("*")
@@ -237,18 +236,25 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             .order("last_seen_at", { ascending: false }),
     ]);
 
+    const terminalRows: Terminal[] = [];
     if (terminalsRes.error) {
-        throw terminalsRes.error;
+        console.warn("Tenant terminal catalog unavailable, falling back to registry data:", terminalsRes.error);
+    } else {
+        terminalRows.push(...((terminalsRes.data as Terminal[]) || []));
     }
 
     let registryRows: TenantTerminalRegistryEntry[] = [];
     if (registryRes.error) {
         const code = (registryRes.error as { code?: string }).code;
         if (code !== "42P01") {
-            throw registryRes.error;
+            console.warn("Tenant server registry unavailable, falling back to catalog data:", registryRes.error);
         }
     } else {
         registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
+    }
+
+    if (terminalsRes.error && registryRes.error) {
+        throw terminalsRes.error;
     }
 
     const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
@@ -264,8 +270,18 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         }
     }
 
-    const snapshots: TenantTerminalSnapshot[] = ((terminalsRes.data as Terminal[]) || []).map((terminal) => {
-        const registry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminal.device_token) || null;
+    const snapshots: TenantTerminalSnapshot[] = terminalRows.map((terminal) => {
+        const deviceToken =
+            terminal.device_token
+            || terminal.device_id
+            || terminal.current_device_id
+            || null;
+        const terminalName =
+            terminal.name
+            || terminal.terminal_name
+            || terminal.label
+            || terminal.id;
+        const registry = registryByTerminalId.get(terminal.id) || (deviceToken ? registryByDeviceId.get(deviceToken) : null) || null;
         if (registry?.id) {
             matchedRegistryIds.add(registry.id);
         }
@@ -274,10 +290,10 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             id: terminal.id,
             tenant_id: terminal.tenant_id,
             terminal_id: terminal.id,
-            name: terminal.name || terminal.id,
-            device_token: terminal.device_token,
-            is_active: Boolean(terminal.is_active),
-            last_checkin_at: terminal.last_checkin_at || null,
+            name: terminalName,
+            device_token: deviceToken,
+            is_active: terminal.is_active ?? terminal.active ?? true,
+            last_checkin_at: terminal.last_checkin_at || terminal.last_seen_at || terminal.updated_at || null,
             created_at: terminal.created_at || null,
             registry,
         };
@@ -299,7 +315,11 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         });
     }
 
-    return snapshots;
+    return snapshots.sort((a, b) => {
+        const aTime = new Date(a.last_checkin_at || a.created_at || 0).getTime();
+        const bTime = new Date(b.last_checkin_at || b.created_at || 0).getTime();
+        return bTime - aTime;
+    });
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
