@@ -42,7 +42,12 @@ TO PUBLIC
 USING (false)
 WITH CHECK (false);
 
-CREATE OR REPLACE FUNCTION landlord.register_tenant_server_endpoint(
+DROP FUNCTION IF EXISTS landlord.upsert_tenant_server_endpoint(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT[], TEXT, BOOLEAN, TIMESTAMPTZ, TEXT);
+DROP FUNCTION IF EXISTS landlord.get_tenant_server_endpoint(UUID, TEXT, TEXT);
+DROP FUNCTION IF EXISTS landlord.register_tenant_server_endpoint(UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, INTEGER, TEXT, TEXT[], TEXT, BOOLEAN, TIMESTAMPTZ, TEXT);
+DROP FUNCTION IF EXISTS landlord.resolve_tenant_server_endpoint(UUID, TEXT, TEXT);
+
+CREATE FUNCTION landlord.register_tenant_server_endpoint(
     p_tenant_id UUID DEFAULT NULL,
     p_tenant_slug TEXT DEFAULT NULL,
     p_tenant_email TEXT DEFAULT NULL,
@@ -59,23 +64,7 @@ CREATE OR REPLACE FUNCTION landlord.register_tenant_server_endpoint(
     p_last_seen_at TIMESTAMPTZ DEFAULT timezone('utc', now()),
     p_status TEXT DEFAULT 'ONLINE'
 )
-RETURNS TABLE (
-    tenant_id UUID,
-    tenant_slug TEXT,
-    tenant_email TEXT,
-    device_id TEXT,
-    terminal_id TEXT,
-    terminal_name TEXT,
-    hostname TEXT,
-    protocol TEXT,
-    port INTEGER,
-    local_ip TEXT,
-    local_ips TEXT[],
-    endpoint_url TEXT,
-    is_primary BOOLEAN,
-    last_seen_at TIMESTAMPTZ,
-    status TEXT
-)
+RETURNS SETOF landlord.tenant_server_registry
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, landlord
@@ -214,26 +203,11 @@ BEGIN
         last_seen_at = EXCLUDED.last_seen_at,
         status = EXCLUDED.status,
         updated_at = timezone('utc', now())
-    RETURNING
-        tenant_server_registry.tenant_id,
-        tenant_server_registry.tenant_slug,
-        tenant_server_registry.tenant_email,
-        tenant_server_registry.device_id,
-        tenant_server_registry.terminal_id,
-        tenant_server_registry.terminal_name,
-        tenant_server_registry.hostname,
-        tenant_server_registry.protocol,
-        tenant_server_registry.port,
-        tenant_server_registry.local_ip,
-        tenant_server_registry.local_ips,
-        tenant_server_registry.endpoint_url,
-        tenant_server_registry.is_primary,
-        tenant_server_registry.last_seen_at,
-        tenant_server_registry.status;
+    RETURNING *;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION landlord.upsert_tenant_server_endpoint(
+CREATE FUNCTION landlord.upsert_tenant_server_endpoint(
     p_tenant_id UUID DEFAULT NULL,
     p_tenant_slug TEXT DEFAULT NULL,
     p_tenant_email TEXT DEFAULT NULL,
@@ -250,23 +224,7 @@ CREATE OR REPLACE FUNCTION landlord.upsert_tenant_server_endpoint(
     p_last_seen_at TIMESTAMPTZ DEFAULT timezone('utc', now()),
     p_status TEXT DEFAULT 'ONLINE'
 )
-RETURNS TABLE (
-    tenant_id UUID,
-    tenant_slug TEXT,
-    tenant_email TEXT,
-    device_id TEXT,
-    terminal_id TEXT,
-    terminal_name TEXT,
-    hostname TEXT,
-    protocol TEXT,
-    port INTEGER,
-    local_ip TEXT,
-    local_ips TEXT[],
-    endpoint_url TEXT,
-    is_primary BOOLEAN,
-    last_seen_at TIMESTAMPTZ,
-    status TEXT
-)
+RETURNS SETOF landlord.tenant_server_registry
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, landlord
@@ -291,28 +249,12 @@ AS $$
     );
 $$;
 
-CREATE OR REPLACE FUNCTION landlord.resolve_tenant_server_endpoint(
+CREATE FUNCTION landlord.resolve_tenant_server_endpoint(
     p_tenant_id UUID DEFAULT NULL,
     p_tenant_slug TEXT DEFAULT NULL,
     p_tenant_email TEXT DEFAULT NULL
 )
-RETURNS TABLE (
-    tenant_id UUID,
-    tenant_slug TEXT,
-    tenant_email TEXT,
-    device_id TEXT,
-    terminal_id TEXT,
-    terminal_name TEXT,
-    hostname TEXT,
-    protocol TEXT,
-    port INTEGER,
-    local_ip TEXT,
-    local_ips TEXT[],
-    endpoint_url TEXT,
-    is_primary BOOLEAN,
-    last_seen_at TIMESTAMPTZ,
-    status TEXT
-)
+RETURNS SETOF landlord.tenant_server_registry
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, landlord
@@ -346,21 +288,7 @@ BEGIN
 
     RETURN QUERY
     SELECT
-        r.tenant_id,
-        r.tenant_slug,
-        r.tenant_email,
-        r.device_id,
-        r.terminal_id,
-        r.terminal_name,
-        r.hostname,
-        r.protocol,
-        r.port,
-        r.local_ip,
-        r.local_ips,
-        r.endpoint_url,
-        r.is_primary,
-        r.last_seen_at,
-        r.status
+        r.*
     FROM landlord.tenant_server_registry AS r
     WHERE r.tenant_id = v_tenant_id
       AND COALESCE(r.status, 'ONLINE') = 'ONLINE'
@@ -369,28 +297,12 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION landlord.get_tenant_server_endpoint(
+CREATE FUNCTION landlord.get_tenant_server_endpoint(
     p_tenant_id UUID DEFAULT NULL,
     p_tenant_slug TEXT DEFAULT NULL,
     p_tenant_email TEXT DEFAULT NULL
 )
-RETURNS TABLE (
-    tenant_id UUID,
-    tenant_slug TEXT,
-    tenant_email TEXT,
-    device_id TEXT,
-    terminal_id TEXT,
-    terminal_name TEXT,
-    hostname TEXT,
-    protocol TEXT,
-    port INTEGER,
-    local_ip TEXT,
-    local_ips TEXT[],
-    endpoint_url TEXT,
-    is_primary BOOLEAN,
-    last_seen_at TIMESTAMPTZ,
-    status TEXT
-)
+RETURNS SETOF landlord.tenant_server_registry
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, landlord
