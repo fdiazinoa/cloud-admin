@@ -61,6 +61,8 @@ export interface TenantTerminalRegistryEntry {
     local_ip?: string | null;
     local_ips?: string[];
     endpoint_url?: string | null;
+    app_version?: string | null;
+    app_version_code?: number | null;
     is_primary?: boolean | null;
     status?: string | null;
     last_seen_at?: string | null;
