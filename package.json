@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "check:supabase-keys": "node scripts/check-supabase-keys.mjs",
-    "verify:supabase-security": "node scripts/verify-supabase-security.mjs"
+    "verify:supabase-security": "node scripts/verify-supabase-security.mjs",
+    "verify:master-registry": "node scripts/verify-master-registry.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",

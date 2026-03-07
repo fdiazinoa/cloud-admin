@@ -45,6 +45,29 @@ What it does:
 - Creates a deny-all policy for `PUBLIC` on each table.
 - Preserves service-role access for trusted server-side/admin flows.
 
+## Phase 4
+
+Apply `20260307_phase4_master_endpoint_registry.sql` to support APK auto-discovery
+for `Server / Cliente`.
+
+What it does:
+
+- Creates `landlord.tenant_server_registry`.
+- Adds `landlord.register_tenant_server_endpoint()` and
+  `landlord.upsert_tenant_server_endpoint()` for server heartbeat/publish.
+- Adds `landlord.resolve_tenant_server_endpoint()` and
+  `landlord.get_tenant_server_endpoint()` for client resolution.
+- Keeps the registry service-role only; anonymous/browser clients do not get
+  direct access to this registry.
+
+Expected flow after phase 4:
+
+- A POS configured as `Server` publishes its LAN endpoint to cloud.
+- A POS configured as `Cliente` resolves that endpoint from cloud before
+  falling back to manual IP entry.
+- If DHCP changes the server IP, the next publish/heartbeat overwrites the
+  stored endpoint.
+
 ## Verification
 
 Run:
@@ -78,3 +101,10 @@ Expected state after phase 3:
 - Security Advisor should stop reporting `RLS Disabled in Public` for the
   listed `public.*` tables.
 - Anonymous API reads on those tables should no longer return real rows.
+
+Expected state after phase 4:
+
+- `landlord.tenant_server_registry` exists with RLS enabled.
+- Service-role calls to `landlord.register_tenant_server_endpoint()` succeed.
+- Service-role calls to `landlord.resolve_tenant_server_endpoint()` return the
+  most recent primary server for the tenant.
