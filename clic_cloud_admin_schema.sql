@@ -23,7 +23,7 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE landlord.tenant_type AS ENUM ('full', 'pos_only');
+    CREATE TYPE landlord.tenant_type AS ENUM ('full', 'pos_only', 'erp_only');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
