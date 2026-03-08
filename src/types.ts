@@ -1,5 +1,5 @@
 export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL';
-export type TenantType = 'full' | 'pos_only';
+export type TenantType = 'full' | 'pos_only' | 'erp_only';
 
 export interface Tenant {
     id: string;
