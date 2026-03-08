@@ -28,10 +28,32 @@ interface CreateTenantInput {
     cloudSync?: boolean;
 }
 
+type TenantUpdatePayload = {
+    name: string;
+    legal_name: string | null;
+    tax_id: string | null;
+    phone: string | null;
+    type: TenantType;
+    cloud_sync: boolean;
+};
+
 function normalizeOptional(value?: string): string | null {
     if (!value) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+}
+
+function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | null {
+    if (!error || typeof error !== "object") return null;
+
+    const message = "message" in error && typeof error.message === "string" ? error.message : "";
+    const details = "details" in error && typeof error.details === "string" ? error.details : "";
+    const haystack = `${message} ${details}`.toLowerCase();
+
+    if (haystack.includes("legal_name")) return "legal_name";
+    if (haystack.includes("phone")) return "phone";
+
+    return null;
 }
 
 function generateTempPassword(): string {
@@ -186,21 +208,28 @@ export async function updateTenantTaxId(id: string, taxId: string): Promise<void
 
 export async function updateTenant(
     id: string,
-    payload: {
-        name: string;
-        legal_name: string | null;
-        tax_id: string | null;
-        phone: string | null;
-        type: TenantType;
-        cloud_sync: boolean;
-    },
+    payload: TenantUpdatePayload,
 ): Promise<void> {
-    const { error } = await supabaseAdmin
-        .from("tenants")
-        .update(payload)
-        .eq("id", id);
+    const nextPayload: Partial<TenantUpdatePayload> = { ...payload };
 
-    if (error) throw error;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const { error } = await supabaseAdmin
+            .from("tenants")
+            .update(nextPayload)
+            .eq("id", id);
+
+        if (!error) return;
+
+        const missingColumn = parseMissingTenantColumn(error);
+        if (missingColumn && missingColumn in nextPayload) {
+            delete nextPayload[missingColumn];
+            continue;
+        }
+
+        throw error;
+    }
+
+    throw new Error("Tenant update failed after retrying without optional columns.");
 }
 
 export async function getDistributors(): Promise<Distributor[]> {
