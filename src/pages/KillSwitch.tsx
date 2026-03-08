@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Skull, AlertTriangle, Key, ShieldAlert, Loader2 } from 'lucide-react';
 import { tenantService } from '../lib/tenantService';
+import { deriveProductsFromTenant, getActiveProductLabels, getTenantTypeLabel } from '../lib/tenantProducts';
 import type { Tenant } from '../types';
 
 // Version: 1.0.2 - Force redeploy to sync real data and remove demo residuals
@@ -83,13 +84,22 @@ export const KillSwitch: React.FC = () => {
                             <div className="p-4 space-y-3">
                                 <div className="flex justify-between text-xs">
                                     <span className="text-slate-500 uppercase tracking-wider font-semibold">Tipo</span>
-                                    <span className="font-bold text-slate-700 uppercase">{tenant.type}</span>
+                                    <span className="font-bold text-slate-700 uppercase">{getTenantTypeLabel(tenant.type)}</span>
                                 </div>
                                 <div className="flex justify-between text-xs">
                                     <span className="text-slate-500 uppercase tracking-wider font-semibold">Respaldo Cloud</span>
                                     <span className={`font-bold ${tenant.cloud_sync ? 'text-emerald-600' : 'text-slate-400'}`}>
                                         {tenant.cloud_sync ? 'HABILITADO' : 'DESACTIVADO'}
                                     </span>
+                                </div>
+                                <div className="pt-2 border-t border-slate-50">
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {getActiveProductLabels(deriveProductsFromTenant(tenant.type, tenant.cloud_sync)).map((label) => (
+                                            <span key={label} className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-wide">
+                                                {label}
+                                            </span>
+                                        ))}
+                                    </div>
                                 </div>
                                 <div className="flex justify-between text-xs pt-2 border-t border-slate-50">
                                     <span className="text-slate-400 italic">Estado de Seguridad</span>

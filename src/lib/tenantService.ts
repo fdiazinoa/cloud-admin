@@ -191,7 +191,7 @@ export async function updateTenant(
         legal_name: string | null;
         tax_id: string | null;
         phone: string | null;
-        type: "full" | "pos_only";
+        type: TenantType;
         cloud_sync: boolean;
     },
 ): Promise<void> {
