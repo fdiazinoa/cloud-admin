@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS landlord.distributors (
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS type landlord.tenant_type DEFAULT 'full';
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS cloud_sync BOOLEAN DEFAULT true;
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false;
+ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS legal_name VARCHAR(255);
+ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255);
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS city VARCHAR(120);
