@@ -1,7 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Power, Edit3, Loader2, X, Monitor, Wifi, WifiOff, Server, AlertTriangle } from 'lucide-react';
-import type { Distributor, Tenant, TenantTerminalSnapshot, TenantType } from '../types';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle } from 'lucide-react';
+import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
+import { TenantProductsModal } from '../components/TenantProductsModal';
+import {
+    deriveProductsFromTenant,
+    deriveTenantConfigFromProducts,
+    getActiveProductLabels,
+    getDefaultTenantProducts,
+    getTenantTypeLabel,
+    type TenantProductSelection
+} from '../lib/tenantProducts';
 
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
@@ -13,6 +22,10 @@ export const Tenants: React.FC = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+    const [isCreateProductsModalOpen, setIsCreateProductsModalOpen] = useState(false);
+    const [isEditProductsModalOpen, setIsEditProductsModalOpen] = useState(false);
+    const [createProductsModalVersion, setCreateProductsModalVersion] = useState(0);
+    const [editProductsModalVersion, setEditProductsModalVersion] = useState(0);
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
@@ -32,16 +45,14 @@ export const Tenants: React.FC = () => {
         city: '',
         capturedByDistributorId: '',
         servicedByDistributorId: '',
-        type: 'full' as TenantType,
-        cloudSync: true,
+        products: getDefaultTenantProducts() as TenantProductSelection,
     });
     const [editFormData, setEditFormData] = useState({
         name: '',
         legalName: '',
         taxId: '',
         phone: '',
-        type: 'full' as TenantType,
-        cloudSync: true,
+        products: getDefaultTenantProducts() as TenantProductSelection,
     });
 
     const getErrorMessage = (error: unknown) => {
@@ -114,11 +125,33 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const closeCreateModal = () => {
+        setIsModalOpen(false);
+        setIsCreateProductsModalOpen(false);
+    };
+
+    const closeEditModal = () => {
+        setIsEditModalOpen(false);
+        setIsEditProductsModalOpen(false);
+        setEditingTenant(null);
+    };
+
+    const openCreateProductsModal = () => {
+        setCreateProductsModalVersion((current) => current + 1);
+        setIsCreateProductsModalOpen(true);
+    };
+
+    const openEditProductsModal = () => {
+        setEditProductsModalVersion((current) => current + 1);
+        setIsEditProductsModalOpen(true);
+    };
+
     const handleCreateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
         try {
             const slug = formData.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+            const productConfig = deriveTenantConfigFromProducts(formData.products);
 
             const { tenantId, tempPassword } = await tenantService.createTenant({
                 name: formData.name,
@@ -130,8 +163,8 @@ export const Tenants: React.FC = () => {
                 capturedByDistributorId: formData.capturedByDistributorId || undefined,
                 servicedByDistributorId: formData.servicedByDistributorId || undefined,
                 plan: 'TRIAL',
-                type: formData.type,
-                cloudSync: formData.cloudSync,
+                type: productConfig.type,
+                cloudSync: productConfig.cloudSync,
             });
 
             if (formData.taxId.trim()) {
@@ -152,10 +185,9 @@ export const Tenants: React.FC = () => {
                 city: '',
                 capturedByDistributorId: '',
                 servicedByDistributorId: '',
-                type: 'full',
-                cloudSync: true,
+                products: getDefaultTenantProducts(),
             });
-            setIsModalOpen(false);
+            closeCreateModal();
             await fetchTenants();
         } catch (err: unknown) {
             console.error('Error provisioning tenant:', err);
@@ -177,15 +209,9 @@ export const Tenants: React.FC = () => {
             legalName: tenant.legal_name || '',
             taxId: tenant.tax_id || '',
             phone: tenant.phone || '',
-            type: tenant.type || 'full',
-            cloudSync: tenant.cloud_sync ?? true,
+            products: deriveProductsFromTenant(tenant.type, tenant.cloud_sync),
         });
         setIsEditModalOpen(true);
-    };
-
-    const closeEditModal = () => {
-        setIsEditModalOpen(false);
-        setEditingTenant(null);
     };
 
     const openTerminalModal = async (tenant: Tenant) => {
@@ -210,20 +236,21 @@ export const Tenants: React.FC = () => {
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
     };
-
     const handleUpdateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingTenant) return;
 
         setIsEditSubmitting(true);
         try {
+            const productConfig = deriveTenantConfigFromProducts(editFormData.products);
+
             await tenantService.updateTenant(editingTenant.id, {
                 name: editFormData.name.trim(),
                 legal_name: normalizeOptional(editFormData.legalName),
                 tax_id: normalizeOptional(editFormData.taxId),
                 phone: normalizeOptional(editFormData.phone),
-                type: editFormData.type,
-                cloud_sync: editFormData.cloudSync,
+                type: productConfig.type,
+                cloud_sync: productConfig.cloudSync,
             });
             closeEditModal();
             await fetchTenants();
@@ -244,6 +271,31 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const renderProductSummary = (products: TenantProductSelection) => {
+        const labels = getActiveProductLabels(products);
+        let solutionLabel = 'Selecciona productos';
+
+        try {
+            solutionLabel = getTenantTypeLabel(deriveTenantConfigFromProducts(products).type);
+        } catch {
+            solutionLabel = 'Selecciona al menos un producto principal';
+        }
+
+        return (
+            <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                    {labels.map((label) => (
+                        <span key={label} className="px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-black uppercase tracking-wide border border-blue-100">
+                            {label}
+                        </span>
+                    ))}
+                </div>
+                <p className="text-xs text-slate-500">
+                    Solucion base: <span className="font-bold text-slate-700">{solutionLabel}</span>
+                </p>
+            </div>
+        );
+    };
     const formatDateTime = (value?: string | null) => {
         if (!value) return 'N/D';
         const parsed = new Date(value);
@@ -399,7 +451,6 @@ export const Tenants: React.FC = () => {
     const masterTerminalCount = tenantTerminals.filter((terminal) => terminal.registry?.is_primary).length;
     const clientTerminalCount = tenantTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
     const publishedEndpointCount = tenantTerminals.filter((terminal) => Boolean(terminal.registry)).length;
-
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -481,6 +532,13 @@ export const Tenants: React.FC = () => {
                                 <td className="px-6 py-4">
                                     <div className="font-bold text-slate-800">{tenant.name}</div>
                                     <div className="text-xs text-slate-400 font-mono mt-0.5">{tenant.id}</div>
+                                    <div className="flex flex-wrap gap-1.5 mt-2">
+                                        {getActiveProductLabels(deriveProductsFromTenant(tenant.type, tenant.cloud_sync)).map((label) => (
+                                            <span key={label} className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-wide">
+                                                {label}
+                                            </span>
+                                        ))}
+                                    </div>
                                 </td>
                                 <td className="px-6 py-4 font-mono text-slate-600">{tenant.tax_id || 'N/A'}</td>
                                 <td className="px-6 py-4">
@@ -527,7 +585,7 @@ export const Tenants: React.FC = () => {
                     <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                             <h3 className="font-black text-lg text-slate-800">Aprovisionar Nueva Empresa</h3>
-                            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700 transition-colors">
+                            <button onClick={closeCreateModal} className="text-slate-400 hover:text-slate-700 transition-colors">
                                 <X size={20} />
                             </button>
                         </div>
@@ -650,37 +708,30 @@ export const Tenants: React.FC = () => {
                                 </p>
                             )}
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Solución</label>
-                                    <select
-                                        value={formData.type}
-                                        onChange={e => setFormData({ ...formData, type: e.target.value as TenantType })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-sm font-black text-slate-800">Productos Activos</p>
+                                        <p className="text-xs text-slate-500 mt-1">Define la combinación inicial de productos y addons para este tenant.</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={openCreateProductsModal}
+                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-700 hover:border-blue-200 hover:text-blue-700 transition-colors"
                                     >
-                                        <option value="full">MALL POS + Cloud ERP</option>
-                                        <option value="pos_only">Solo MALL POS</option>
-                                    </select>
+                                        <Boxes size={16} />
+                                        Gestionar Productos
+                                    </button>
                                 </div>
-                                <div className="flex items-center pt-7">
-                                    <label className="flex items-center gap-3 cursor-pointer group">
-                                        <div className="relative flex items-center justify-center">
-                                            <input
-                                                type="checkbox"
-                                                checked={formData.cloudSync}
-                                                onChange={e => setFormData({ ...formData, cloudSync: e.target.checked })}
-                                                className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors"
-                                            />
-                                        </div>
-                                        <span className="text-sm font-bold text-slate-700 select-none group-hover:text-blue-700 transition-colors">Activar Respaldo Cloud</span>
-                                    </label>
+                                <div className="mt-4">
+                                    {renderProductSummary(formData.products)}
                                 </div>
                             </div>
 
                             <div className="pt-4 flex gap-3">
                                 <button
                                     type="button"
-                                    onClick={() => setIsModalOpen(false)}
+                                    onClick={closeCreateModal}
                                     className="flex-1 px-4 py-3 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl font-bold transition-colors"
                                 >
                                     Cancelar
@@ -970,28 +1021,23 @@ export const Tenants: React.FC = () => {
                                 <p className="text-xs text-slate-500 mt-1">El email de acceso se mantiene fijo para no desincronizar autenticación.</p>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Solución</label>
-                                    <select
-                                        value={editFormData.type}
-                                        onChange={e => setEditFormData({ ...editFormData, type: e.target.value as TenantType })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-sm font-black text-slate-800">Productos Activos</p>
+                                        <p className="text-xs text-slate-500 mt-1">Activa o desactiva productos del tenant sin mezclarlo con los datos de empresa.</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={openEditProductsModal}
+                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-700 hover:border-blue-200 hover:text-blue-700 transition-colors"
                                     >
-                                        <option value="full">MALL POS + Cloud ERP</option>
-                                        <option value="pos_only">Solo MALL POS</option>
-                                    </select>
+                                        <Boxes size={16} />
+                                        Gestionar Productos
+                                    </button>
                                 </div>
-                                <div className="flex items-center pt-7">
-                                    <label className="flex items-center gap-3 cursor-pointer group">
-                                        <input
-                                            type="checkbox"
-                                            checked={editFormData.cloudSync}
-                                            onChange={e => setEditFormData({ ...editFormData, cloudSync: e.target.checked })}
-                                            className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors"
-                                        />
-                                        <span className="text-sm font-bold text-slate-700 select-none group-hover:text-blue-700 transition-colors">Activar Respaldo Cloud</span>
-                                    </label>
+                                <div className="mt-4">
+                                    {renderProductSummary(editFormData.products)}
                                 </div>
                             </div>
 
@@ -1015,6 +1061,31 @@ export const Tenants: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            <TenantProductsModal
+                key={`create-products-${createProductsModalVersion}`}
+                isOpen={isCreateProductsModalOpen}
+                title="Productos Iniciales del Tenant"
+                initialProducts={formData.products}
+                onClose={() => setIsCreateProductsModalOpen(false)}
+                onSave={(products) => {
+                    setFormData((current) => ({ ...current, products }));
+                    setIsCreateProductsModalOpen(false);
+                }}
+            />
+
+            <TenantProductsModal
+                key={`edit-products-${editingTenant?.id ?? 'none'}-${editProductsModalVersion}`}
+                isOpen={isEditProductsModalOpen}
+                title="Administrar Productos del Tenant"
+                tenantName={editingTenant?.name}
+                initialProducts={editFormData.products}
+                onClose={() => setIsEditProductsModalOpen(false)}
+                onSave={(products) => {
+                    setEditFormData((current) => ({ ...current, products }));
+                    setIsEditProductsModalOpen(false);
+                }}
+            />
         </div>
     );
 };
