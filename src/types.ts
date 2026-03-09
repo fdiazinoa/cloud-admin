@@ -72,7 +72,15 @@ export interface TenantTerminalSnapshot {
     is_active: boolean;
     last_checkin_at?: string | null;
     created_at?: string | null;
+    registry_history_count?: number;
+    registry_stale_count?: number;
     registry?: TenantTerminalRegistryEntry | null;
+}
+
+export interface TenantRegistryCleanupResult {
+    removed: number;
+    kept: number;
+    logical_terminals: number;
 }
 
 export interface BillingPlan {

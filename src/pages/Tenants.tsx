@@ -31,6 +31,7 @@ export const Tenants: React.FC = () => {
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
+    const [isRegistryCleanupRunning, setIsRegistryCleanupRunning] = useState(false);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
         tempPassword: string;
@@ -214,6 +215,16 @@ export const Tenants: React.FC = () => {
         setIsEditModalOpen(true);
     };
 
+    const loadTenantTerminals = async (tenant: Tenant) => {
+        try {
+            const data = await tenantService.getTenantTerminalOverview(tenant.id);
+            setTenantTerminals(data);
+        } catch (err) {
+            console.error('Error fetching tenant terminals:', err);
+            alert('No se pudieron cargar las terminales de este tenant.');
+        }
+    };
+
     const openTerminalModal = async (tenant: Tenant) => {
         setSelectedTenantForTerminals(tenant);
         setTenantTerminals([]);
@@ -221,11 +232,7 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalLoading(true);
 
         try {
-            const data = await tenantService.getTenantTerminalOverview(tenant.id);
-            setTenantTerminals(data);
-        } catch (err) {
-            console.error('Error fetching tenant terminals:', err);
-            alert('No se pudieron cargar las terminales de este tenant.');
+            await loadTenantTerminals(tenant);
         } finally {
             setIsTerminalModalLoading(false);
         }
@@ -235,6 +242,26 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalOpen(false);
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
+    };
+
+    const handleRegistryCleanup = async () => {
+        if (!selectedTenantForTerminals) return;
+
+        setIsRegistryCleanupRunning(true);
+        try {
+            const result = await tenantService.cleanupTenantTerminalRegistry(selectedTenantForTerminals.id);
+            await loadTenantTerminals(selectedTenantForTerminals);
+            alert(
+                result.removed > 0
+                    ? `Se eliminaron ${result.removed} registros obsoletos. Quedaron ${result.kept} terminal(es) lógicas activas.`
+                    : 'No se encontraron registros obsoletos para limpiar.'
+            );
+        } catch (err) {
+            console.error('Error cleaning tenant terminal registry:', err);
+            alert('No se pudo limpiar el historial técnico del tenant.');
+        } finally {
+            setIsRegistryCleanupRunning(false);
+        }
     };
     const handleUpdateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -360,13 +387,10 @@ export const Tenants: React.FC = () => {
     })();
 
     const referenceVersionKey = referenceVersionCandidate?.key || '';
-    const outOfVersionCount = tenantTerminals.filter((terminal) => {
-        const terminalVersionKey = getApkVersionKey(terminal);
-        return Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
-    }).length;
     const missingVersionCount = tenantTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
     const onlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
     const offlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
+    const staleRegistryCount = tenantTerminals.reduce((sum, terminal) => sum + (terminal.registry_stale_count || 0), 0);
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -676,9 +700,20 @@ export const Tenants: React.FC = () => {
                                 </p>
                                 <p className="text-xs text-slate-400 font-mono mt-1">{selectedTenantForTerminals.id}</p>
                             </div>
-                            <button type="button" onClick={closeTerminalModal} className="text-slate-400 hover:text-slate-700 transition-colors">
-                                <X size={20} />
-                            </button>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => void handleRegistryCleanup()}
+                                    disabled={isRegistryCleanupRunning || staleRegistryCount === 0}
+                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-slate-700 transition-colors hover:border-amber-200 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {isRegistryCleanupRunning ? <Loader2 size={14} className="animate-spin" /> : null}
+                                    Limpiar Historial
+                                </button>
+                                <button type="button" onClick={closeTerminalModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
                         </div>
 
                         <div className="p-6 overflow-y-auto space-y-6">
@@ -692,8 +727,8 @@ export const Tenants: React.FC = () => {
                                     <p className="mt-2 text-3xl font-black text-emerald-700">{onlineTerminalCount}</p>
                                 </div>
                                 <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Fuera de versión</p>
-                                    <p className="mt-2 text-3xl font-black text-amber-700">{outOfVersionCount}</p>
+                                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Historial obsoleto</p>
+                                    <p className="mt-2 text-3xl font-black text-amber-700">{staleRegistryCount}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Endpoints Offline / sin reporte</p>
@@ -710,6 +745,11 @@ export const Tenants: React.FC = () => {
                                         ? <>Versión de referencia: <span className="font-bold">{referenceVersionCandidate.label}</span> reportada por <span className="font-bold">{referenceVersionCandidate.source}</span>.</>
                                         : <>Aún no hay versión de APK reportada por las terminales de este tenant.</>}
                                     {missingVersionCount > 0 ? <> <span className="font-bold">{missingVersionCount}</span> terminal(es) todavía no reportan versión.</> : null}
+                                </p>
+                                <p className="mt-2">
+                                    {staleRegistryCount > 0
+                                        ? <>Hay <span className="font-bold">{staleRegistryCount}</span> publicación(es) viejas en el registry. Usa <span className="font-bold">Limpiar Historial</span> para conservar solo el estado actual por terminal lógica.</>
+                                        : <>El registry técnico ya está limpio para este tenant.</>}
                                 </p>
                             </div>
 
@@ -784,6 +824,12 @@ export const Tenants: React.FC = () => {
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">IPs Reportadas</p>
                                                         <p className="mt-1 text-slate-700 font-mono break-all">
                                                             {terminal.registry?.local_ips?.length ? terminal.registry.local_ips.join(', ') : 'N/D'}
+                                                        </p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Historial técnico</p>
+                                                        <p className="mt-1 text-slate-700">
+                                                            {terminal.registry_history_count || 0} publicación(es) registradas · {terminal.registry_stale_count || 0} obsoleta(s)
                                                         </p>
                                                     </div>
                                                     <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">

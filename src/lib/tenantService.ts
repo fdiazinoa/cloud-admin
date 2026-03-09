@@ -2,6 +2,7 @@ import { supabase, supabaseAdmin } from "./supabase";
 import type {
     Distributor,
     Tenant,
+    TenantRegistryCleanupResult,
     TenantTerminalRegistryEntry,
     TenantTerminalSnapshot,
     TenantType,
@@ -32,6 +33,57 @@ function normalizeOptional(value?: string): string | null {
     if (!value) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+}
+
+function getRegistryRowLogicalKey(row: TenantTerminalRegistryEntry): string {
+    return String(row.terminal_id || row.terminal_name || row.device_id || row.id || "").trim();
+}
+
+function getRegistryRowRecency(row: TenantTerminalRegistryEntry): number {
+    const candidate = row.last_seen_at || row.updated_at || row.created_at || null;
+    const parsed = candidate ? new Date(candidate).getTime() : 0;
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function collapseRegistryRows(rows: TenantTerminalRegistryEntry[]) {
+    const ordered = [...rows].sort((left, right) => getRegistryRowRecency(right) - getRegistryRowRecency(left));
+    const collapsed = new Map<string, {
+        row: TenantTerminalRegistryEntry;
+        historyCount: number;
+        staleIds: string[];
+    }>();
+
+    for (const row of ordered) {
+        const logicalKey = getRegistryRowLogicalKey(row);
+        if (!logicalKey) continue;
+
+        const existing = collapsed.get(logicalKey);
+        if (!existing) {
+            collapsed.set(logicalKey, {
+                row: {
+                    ...row,
+                    local_ips: Array.from(new Set((row.local_ips || []).filter(Boolean))),
+                },
+                historyCount: 1,
+                staleIds: [],
+            });
+            continue;
+        }
+
+        existing.historyCount += 1;
+        existing.staleIds.push(row.id);
+        existing.row = {
+            ...existing.row,
+            local_ips: Array.from(
+                new Set([
+                    ...(existing.row.local_ips || []),
+                    ...(row.local_ips || []),
+                ].filter(Boolean))
+            ),
+        };
+    }
+
+    return Array.from(collapsed.values());
 }
 
 function generateTempPassword(): string {
@@ -251,21 +303,24 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
     }
 
-    const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
-    const registryByDeviceId = new Map<string, TenantTerminalRegistryEntry>();
+    const collapsedRegistryRows = collapseRegistryRows(registryRows);
+    const registryByTerminalId = new Map<string, (typeof collapsedRegistryRows)[number]>();
+    const registryByDeviceId = new Map<string, (typeof collapsedRegistryRows)[number]>();
     const matchedRegistryIds = new Set<string>();
 
-    for (const row of registryRows) {
+    for (const entry of collapsedRegistryRows) {
+        const row = entry.row;
         if (row.terminal_id && !registryByTerminalId.has(row.terminal_id)) {
-            registryByTerminalId.set(row.terminal_id, row);
+            registryByTerminalId.set(row.terminal_id, entry);
         }
         if (row.device_id && !registryByDeviceId.has(row.device_id)) {
-            registryByDeviceId.set(row.device_id, row);
+            registryByDeviceId.set(row.device_id, entry);
         }
     }
 
     const snapshots: TenantTerminalSnapshot[] = ((terminalsRes.data as Terminal[]) || []).map((terminal) => {
-        const registry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminal.device_token) || null;
+        const registryEntry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminal.device_token);
+        const registry = registryEntry?.row || null;
         if (registry?.id) {
             matchedRegistryIds.add(registry.id);
         }
@@ -279,11 +334,14 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             is_active: Boolean(terminal.is_active),
             last_checkin_at: terminal.last_checkin_at || null,
             created_at: terminal.created_at || null,
+            registry_history_count: registryEntry?.historyCount || (registry ? 1 : 0),
+            registry_stale_count: registryEntry?.staleIds.length || 0,
             registry,
         };
     });
 
-    for (const row of registryRows) {
+    for (const entry of collapsedRegistryRows) {
+        const row = entry.row;
         if (matchedRegistryIds.has(row.id)) continue;
 
         snapshots.push({
@@ -295,11 +353,42 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             is_active: (row.status || "").toUpperCase() === "ONLINE",
             last_checkin_at: row.last_seen_at || null,
             created_at: row.created_at || null,
+            registry_history_count: entry.historyCount,
+            registry_stale_count: entry.staleIds.length,
             registry: row,
         });
     }
 
     return snapshots;
+}
+
+export async function cleanupTenantTerminalRegistry(tenantId: string): Promise<TenantRegistryCleanupResult> {
+    const { data, error } = await supabaseAdmin
+        .from("tenant_server_registry")
+        .select("*")
+        .eq("tenant_id", tenantId)
+        .order("last_seen_at", { ascending: false });
+
+    if (error) throw error;
+
+    const registryRows = (data as TenantTerminalRegistryEntry[]) || [];
+    const collapsedRegistryRows = collapseRegistryRows(registryRows);
+    const staleIds = collapsedRegistryRows.flatMap((entry) => entry.staleIds);
+
+    if (staleIds.length > 0) {
+        const { error: deleteError } = await supabaseAdmin
+            .from("tenant_server_registry")
+            .delete()
+            .in("id", staleIds);
+
+        if (deleteError) throw deleteError;
+    }
+
+    return {
+        removed: staleIds.length,
+        kept: collapsedRegistryRows.length,
+        logical_terminals: collapsedRegistryRows.length,
+    };
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
@@ -350,6 +439,7 @@ export const tenantService = {
     updateTenant,
     getDistributors,
     getTenantTerminalOverview,
+    cleanupTenantTerminalRegistry,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
