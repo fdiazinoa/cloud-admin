@@ -257,11 +257,53 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         throw terminalsRes.error;
     }
 
+    const collapseRegistryRows = (rows: TenantTerminalRegistryEntry[]) => {
+        const collapsed = new Map<string, TenantTerminalRegistryEntry>();
+
+        for (const row of rows) {
+            const logicalKey = (row.terminal_id || row.terminal_name || row.device_id || row.id || "").trim();
+            if (!logicalKey) continue;
+
+            const existing = collapsed.get(logicalKey);
+            if (!existing) {
+                collapsed.set(logicalKey, {
+                    ...row,
+                    local_ips: Array.from(new Set((row.local_ips || []).filter(Boolean))),
+                });
+                continue;
+            }
+
+            const mergedIps = Array.from(
+                new Set([
+                    ...(existing.local_ips || []),
+                    existing.local_ip || '',
+                    ...(row.local_ips || []),
+                    row.local_ip || '',
+                ].filter(Boolean))
+            );
+
+            collapsed.set(logicalKey, {
+                ...existing,
+                local_ips: mergedIps,
+                local_ip: existing.local_ip || row.local_ip || null,
+                status: existing.status || row.status || null,
+                app_version: existing.app_version || row.app_version || null,
+                app_version_code: existing.app_version_code || row.app_version_code || null,
+                endpoint_url: existing.endpoint_url || row.endpoint_url || null,
+                hostname: existing.hostname || row.hostname || null,
+                updated_at: existing.updated_at || row.updated_at || null,
+            });
+        }
+
+        return Array.from(collapsed.values());
+    };
+
+    const uniqueRegistryRows = collapseRegistryRows(registryRows);
     const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
     const registryByDeviceId = new Map<string, TenantTerminalRegistryEntry>();
     const matchedRegistryIds = new Set<string>();
 
-    for (const row of registryRows) {
+    for (const row of uniqueRegistryRows) {
         if (row.terminal_id && !registryByTerminalId.has(row.terminal_id)) {
             registryByTerminalId.set(row.terminal_id, row);
         }
@@ -299,7 +341,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         };
     });
 
-    for (const row of registryRows) {
+    for (const row of uniqueRegistryRows) {
         if (matchedRegistryIds.has(row.id)) continue;
 
         snapshots.push({
