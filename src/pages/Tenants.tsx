@@ -13,6 +13,7 @@ import {
 } from '../lib/tenantProducts';
 
 export const Tenants: React.FC = () => {
+    const TERMINAL_ONLINE_WINDOW_MS = 2 * 60 * 1000;
     const [searchTerm, setSearchTerm] = useState('');
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const [distributors, setDistributors] = useState<Distributor[]>([]);
@@ -330,9 +331,26 @@ export const Tenants: React.FC = () => {
         return parsed.toLocaleString('es-DO');
     };
 
+    const hasFreshTerminalHeartbeat = (terminal: TenantTerminalSnapshot) => {
+        const candidateTimestamp =
+            terminal.registry?.last_seen_at
+            || terminal.last_checkin_at
+            || terminal.created_at
+            || null;
+
+        if (!candidateTimestamp) return false;
+
+        const parsedTimestamp = new Date(candidateTimestamp).getTime();
+        if (!Number.isFinite(parsedTimestamp)) return false;
+
+        return (Date.now() - parsedTimestamp) <= TERMINAL_ONLINE_WINDOW_MS;
+    };
+
     const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
         const registryStatus = (terminal.registry?.status || '').toUpperCase();
-        if (registryStatus === 'ONLINE') return 'ONLINE';
+        if (registryStatus === 'ONLINE') {
+            return hasFreshTerminalHeartbeat(terminal) ? 'ONLINE' : 'OFFLINE';
+        }
         if (registryStatus === 'OFFLINE') return 'OFFLINE';
         return terminal.is_active ? 'ACTIVA' : 'INACTIVA';
     };
