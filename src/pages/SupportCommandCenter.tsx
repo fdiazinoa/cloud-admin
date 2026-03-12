@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseAdmin } from '../lib/supabase';
 
 interface TechnicalContext {
     app_version?: string;
@@ -50,7 +50,8 @@ const SupportCommandCenter: React.FC = () => {
         let mounted = true;
 
         const fetchTickets = async () => {
-            const { data, error } = await supabase.from('support_tickets')
+            console.log("🛠️ Admin: Fetching tickets via supabaseAdmin...");
+            const { data, error } = await supabaseAdmin.from('support_tickets')
                 .select(`
                     *,
                     tenants (
@@ -60,27 +61,29 @@ const SupportCommandCenter: React.FC = () => {
                 .order('created_at', { ascending: false });
 
             if (!error && data && mounted) {
+                console.log("✅ Admin: Fetched tickets successfully", data.length);
                 const mappedTickets = data.map(t => ({
                     ...t,
                     tenant_name: t.tenants?.name || 'Unknown Tenant'
                 }));
                 setTickets(mappedTickets);
             } else if (error) {
-                console.error("Error fetching tickets", error);
+                console.error("❌ Admin: Error fetching tickets", error);
             }
         };
 
         fetchTickets();
 
-        const channel = supabase.channel('tickets_global')
+        const channel = supabaseAdmin.channel('tickets_global')
             .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_tickets' }, () => {
+                console.log("🛠️ Admin: Realtime event on support_tickets");
                 fetchTickets();
             })
             .subscribe();
 
         return () => {
             mounted = false;
-            supabase.removeChannel(channel);
+            supabaseAdmin.removeChannel(channel);
         };
     }, []);
 
@@ -91,7 +94,7 @@ const SupportCommandCenter: React.FC = () => {
         let mounted = true;
 
         const fetchMessages = async () => {
-            const { data, error } = await supabase.from('ticket_messages')
+            const { data, error } = await supabaseAdmin.from('ticket_messages')
                 .select('*')
                 .eq('ticket_id', ticketId)
                 .order('created_at', { ascending: true });
@@ -100,7 +103,7 @@ const SupportCommandCenter: React.FC = () => {
 
         fetchMessages();
 
-        const msgChannel = supabase.channel(`messages_${ticketId}`)
+        const msgChannel = supabaseAdmin.channel(`messages_${ticketId}`)
             .on('postgres_changes', {
                 event: 'INSERT',
                 schema: 'landlord',
@@ -115,7 +118,7 @@ const SupportCommandCenter: React.FC = () => {
 
         return () => {
             mounted = false;
-            supabase.removeChannel(msgChannel);
+            supabaseAdmin.removeChannel(msgChannel);
         };
     }, [selectedTicket?.id]);
 
@@ -128,7 +131,7 @@ const SupportCommandCenter: React.FC = () => {
         const txt = replyText.trim();
         setReplyText('');
 
-        await supabase.from('ticket_messages').insert({
+        await supabaseAdmin.from('ticket_messages').insert({
             ticket_id: selectedTicket.id,
             message: txt,
             sender_type: 'Admin'
@@ -137,7 +140,7 @@ const SupportCommandCenter: React.FC = () => {
 
     const updateStatus = async (newStatus: string) => {
         if (!selectedTicket) return;
-        await supabase.from('support_tickets').update({ status: newStatus }).eq('id', selectedTicket.id);
+        await supabaseAdmin.from('support_tickets').update({ status: newStatus }).eq('id', selectedTicket.id);
         setSelectedTicket({ ...selectedTicket, status: newStatus });
     };
 
