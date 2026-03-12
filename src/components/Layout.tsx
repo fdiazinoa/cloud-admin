@@ -1,11 +1,12 @@
 import React from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, ShieldAlert, BadgeDollarSign, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, ShieldAlert, BadgeDollarSign, LogOut, Headset } from 'lucide-react';
 
 const navItems = [
     { path: '/', label: 'Global Dashboard', icon: LayoutDashboard },
     { path: '/tenants', label: 'Gestión de Tenants', icon: Users },
     { path: '/plans', label: 'Planes SaaS', icon: BadgeDollarSign },
+    { path: '/support', label: 'Helpdesk & Soporte', icon: Headset },
     { path: '/kill-switch', label: 'Kill Switch', icon: ShieldAlert },
 ];
 
@@ -57,7 +58,7 @@ export const Layout: React.FC = () => {
                         <span className="text-sm font-medium text-slate-600">admin@clicpos.com</span>
                     </div>
                 </header>
-                <div className="flex-1 overflow-auto p-8">
+                <div className="flex-1 overflow-auto p-0">
                     <Outlet />
                 </div>
             </main>
