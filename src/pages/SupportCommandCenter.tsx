@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { supabase, supabaseAdmin } from '../lib/supabase';
+import { supabaseAdmin } from '../lib/supabase';
 
 interface TechnicalContext {
     app_version?: string;
