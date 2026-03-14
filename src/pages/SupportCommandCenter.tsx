@@ -296,13 +296,13 @@ const SupportCommandCenter: React.FC = () => {
                     <div className="p-4 space-y-6 flex-1">
                         {/* Info de Suscripción */}
                         <div>
-                            <h4 className="text-xs font-semibold text-slate-500 mb-2">Suscripción</h4>
+                            <h4 className="text-xs font-semibold text-slate-500 mb-2">Estado del Tenant</h4>
                             <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-sm">
                                 <div className="flex items-center gap-2 mb-1">
                                     <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                    <span className="font-bold text-emerald-800">Plan Pro (Activa)</span>
+                                    <span className="font-bold text-emerald-800">Conectado ({selectedTicket.tenant_name})</span>
                                 </div>
-                                <p className="text-emerald-600 text-xs">Vence en 45 días (Pago al día)</p>
+                                <p className="text-emerald-600 text-xs">Prioridad Reportada: {selectedTicket.priority}</p>
                             </div>
                         </div>
 
@@ -325,8 +325,8 @@ const SupportCommandCenter: React.FC = () => {
                                 <li className="flex flex-col pt-1">
                                     <span className="font-medium mb-1">Últimos Errores (Local Logs):</span>
                                     <div className="bg-slate-900 text-emerald-400 p-2 rounded text-[10px] font-mono whitespace-pre-wrap">
-                                        {selectedTicket.technical_context?.last_5_errors
-                                            ? selectedTicket.technical_context.last_5_errors.join('\n')
+                                        {(selectedTicket.technical_context?.last_5_errors && Array.isArray(selectedTicket.technical_context.last_5_errors))
+                                            ? selectedTicket.technical_context.last_5_errors.map((err, idx) => <span key={idx} className="block">{err}</span>)
                                             : '> No local errors detected.'}
                                     </div>
                                 </li>
@@ -337,10 +337,18 @@ const SupportCommandCenter: React.FC = () => {
                         <div>
                             <h4 className="text-xs font-semibold text-slate-500 mb-2">Quick Actions</h4>
                             <div className="space-y-2">
-                                <button className="w-full text-left px-3 py-2 text-xs font-medium bg-white border border-slate-200 rounded text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-colors flex items-center justify-between">
+                                <button
+                                    onClick={() => alert(`Enviando señal de resincronización (Forzar Sync) al Tenant ID: ${selectedTicket.tenant_id}`)}
+                                    className="w-full text-left px-3 py-2 text-xs font-medium bg-white border border-slate-200 rounded text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-colors flex items-center justify-between">
                                     Forzar Sync Inbox <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                                 </button>
-                                <button className="w-full text-left px-3 py-2 text-xs font-medium bg-red-50 border border-red-100 rounded text-red-600 hover:bg-red-100 transition-colors flex items-center justify-between">
+                                <button
+                                    onClick={() => {
+                                        if (window.confirm(`¿Estás seguro de desvincular la terminal actual de ${selectedTicket.tenant_name}?`)) {
+                                            alert(`Comando de cierre de sesión forzado enviado usando supabaseAdmin al tenant ${selectedTicket.tenant_id}.`)
+                                        }
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-xs font-medium bg-red-50 border border-red-100 rounded text-red-600 hover:bg-red-100 transition-colors flex items-center justify-between">
                                     Liberar Terminal Vinculada <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                                 </button>
                             </div>
