@@ -1,5 +1,12 @@
 import { supabase, supabaseAdmin } from "./supabase";
-import type { Distributor, Tenant, TenantType } from "../types";
+import type {
+    Distributor,
+    Tenant,
+    TenantTerminalRegistryEntry,
+    TenantTerminalSnapshot,
+    TenantType,
+    Terminal,
+} from "../types";
 
 export interface DashboardStats {
     activeTenants: number;
@@ -21,15 +28,34 @@ interface CreateTenantInput {
     cloudSync?: boolean;
 }
 
+type TenantUpdatePayload = {
+    name: string;
+    legal_name: string | null;
+    tax_id: string | null;
+    phone: string | null;
+    type: TenantType;
+    cloud_sync: boolean;
+};
+
 function normalizeOptional(value?: string): string | null {
     if (!value) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
 }
 
-/**
- * Generate a random temporary password (12‑16 characters, alphanumeric).
- */
+function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | null {
+    if (!error || typeof error !== "object") return null;
+
+    const message = "message" in error && typeof error.message === "string" ? error.message : "";
+    const details = "details" in error && typeof error.details === "string" ? error.details : "";
+    const haystack = `${message} ${details}`.toLowerCase();
+
+    if (haystack.includes("legal_name")) return "legal_name";
+    if (haystack.includes("phone")) return "phone";
+
+    return null;
+}
+
 function generateTempPassword(): string {
     const length = 14;
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -40,10 +66,6 @@ function generateTempPassword(): string {
     return pwd;
 }
 
-/**
- * Create a new tenant in the landlord schema and provision an isolated schema.
- * Returns the tenant UUID and the temporary password (to be sent by email).
- */
 export async function createTenant({
     name,
     slug,
@@ -186,21 +208,28 @@ export async function updateTenantTaxId(id: string, taxId: string): Promise<void
 
 export async function updateTenant(
     id: string,
-    payload: {
-        name: string;
-        legal_name: string | null;
-        tax_id: string | null;
-        phone: string | null;
-        type: "full" | "pos_only";
-        cloud_sync: boolean;
-    },
+    payload: TenantUpdatePayload,
 ): Promise<void> {
-    const { error } = await supabaseAdmin
-        .from("tenants")
-        .update(payload)
-        .eq("id", id);
+    const nextPayload: Partial<TenantUpdatePayload> = { ...payload };
 
-    if (error) throw error;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const { error } = await supabaseAdmin
+            .from("tenants")
+            .update(nextPayload)
+            .eq("id", id);
+
+        if (!error) return;
+
+        const missingColumn = parseMissingTenantColumn(error);
+        if (missingColumn && missingColumn in nextPayload) {
+            delete nextPayload[missingColumn];
+            continue;
+        }
+
+        throw error;
+    }
+
+    throw new Error("Tenant update failed after retrying without optional columns.");
 }
 
 export async function getDistributors(): Promise<Distributor[]> {
@@ -220,6 +249,106 @@ export async function getDistributors(): Promise<Distributor[]> {
     }
 
     return (data as Distributor[]) || [];
+}
+
+export async function getTenantTerminalOverview(tenantId: string): Promise<TenantTerminalSnapshot[]> {
+    const [terminalsRes, registryRes] = await Promise.all([
+        supabaseAdmin
+            .schema("public")
+            .from("terminals")
+            .select("*")
+            .eq("tenant_id", tenantId),
+        supabaseAdmin
+            .from("tenant_server_registry")
+            .select("*")
+            .eq("tenant_id", tenantId)
+            .order("last_seen_at", { ascending: false }),
+    ]);
+
+    const terminalRows: Terminal[] = [];
+    if (terminalsRes.error) {
+        console.warn("Tenant terminal catalog unavailable, falling back to registry data:", terminalsRes.error);
+    } else {
+        terminalRows.push(...((terminalsRes.data as Terminal[]) || []));
+    }
+
+    let registryRows: TenantTerminalRegistryEntry[] = [];
+    if (registryRes.error) {
+        const code = (registryRes.error as { code?: string }).code;
+        if (code !== "42P01") {
+            console.warn("Tenant server registry unavailable, falling back to catalog data:", registryRes.error);
+        }
+    } else {
+        registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
+    }
+
+    if (terminalsRes.error && registryRes.error) {
+        throw terminalsRes.error;
+    }
+
+    const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
+    const registryByDeviceId = new Map<string, TenantTerminalRegistryEntry>();
+    const matchedRegistryIds = new Set<string>();
+
+    for (const row of registryRows) {
+        if (row.terminal_id && !registryByTerminalId.has(row.terminal_id)) {
+            registryByTerminalId.set(row.terminal_id, row);
+        }
+        if (row.device_id && !registryByDeviceId.has(row.device_id)) {
+            registryByDeviceId.set(row.device_id, row);
+        }
+    }
+
+    const snapshots: TenantTerminalSnapshot[] = terminalRows.map((terminal) => {
+        const deviceToken =
+            terminal.device_token
+            || terminal.device_id
+            || terminal.current_device_id
+            || null;
+        const terminalName =
+            terminal.name
+            || terminal.terminal_name
+            || terminal.label
+            || terminal.id;
+        const registry = registryByTerminalId.get(terminal.id) || (deviceToken ? registryByDeviceId.get(deviceToken) : null) || null;
+        if (registry?.id) {
+            matchedRegistryIds.add(registry.id);
+        }
+
+        return {
+            id: terminal.id,
+            tenant_id: terminal.tenant_id,
+            terminal_id: terminal.id,
+            name: terminalName,
+            device_token: deviceToken,
+            is_active: terminal.is_active ?? terminal.active ?? true,
+            last_checkin_at: terminal.last_checkin_at || terminal.last_seen_at || terminal.updated_at || null,
+            created_at: terminal.created_at || null,
+            registry,
+        };
+    });
+
+    for (const row of registryRows) {
+        if (matchedRegistryIds.has(row.id)) continue;
+
+        snapshots.push({
+            id: row.id,
+            tenant_id: row.tenant_id,
+            terminal_id: row.terminal_id || null,
+            name: row.terminal_name || row.terminal_id || row.device_id || "Terminal sin catálogo",
+            device_token: row.device_id || null,
+            is_active: (row.status || "").toUpperCase() === "ONLINE",
+            last_checkin_at: row.last_seen_at || null,
+            created_at: row.created_at || null,
+            registry: row,
+        });
+    }
+
+    return snapshots.sort((a, b) => {
+        const aTime = new Date(a.last_checkin_at || a.created_at || 0).getTime();
+        const bTime = new Date(b.last_checkin_at || b.created_at || 0).getTime();
+        return bTime - aTime;
+    });
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
@@ -245,9 +374,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     };
 }
 
-/**
- * Suspend a tenant (update status).
- */
 export async function suspendTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
@@ -256,9 +382,6 @@ export async function suspendTenant(id: string): Promise<void> {
     if (error) throw error;
 }
 
-/**
- * Reactivate a tenant.
- */
 export async function reactivateTenant(id: string): Promise<void> {
     const { error } = await supabaseAdmin
         .from("tenants")
@@ -275,6 +398,7 @@ export const tenantService = {
     updateTenantTaxId,
     updateTenant,
     getDistributors,
+    getTenantTerminalOverview,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,

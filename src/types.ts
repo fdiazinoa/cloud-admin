@@ -1,5 +1,5 @@
 export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL';
-export type TenantType = 'full' | 'pos_only';
+export type TenantType = 'full' | 'pos_only' | 'erp_only';
 
 export interface Tenant {
     id: string;
@@ -35,11 +35,51 @@ export interface Distributor {
 export interface Terminal {
     id: string;
     tenant_id: string;
-    device_token: string;
+    device_token?: string | null;
+    device_id?: string | null;
+    current_device_id?: string | null;
+    name?: string | null;
+    terminal_name?: string | null;
+    label?: string | null;
+    is_active?: boolean | null;
+    active?: boolean | null;
+    last_checkin_at?: string | null;
+    last_seen_at?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface TenantTerminalRegistryEntry {
+    id: string;
+    tenant_id: string;
+    device_id?: string | null;
+    terminal_id?: string | null;
+    terminal_name?: string | null;
+    hostname?: string | null;
+    protocol?: string | null;
+    port?: number | null;
+    local_ip?: string | null;
+    local_ips?: string[];
+    endpoint_url?: string | null;
+    app_version?: string | null;
+    app_version_code?: number | null;
+    is_primary?: boolean | null;
+    status?: string | null;
+    last_seen_at?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface TenantTerminalSnapshot {
+    id: string;
+    tenant_id: string;
+    terminal_id?: string | null;
     name: string;
+    device_token?: string | null;
     is_active: boolean;
-    last_checkin_at?: string;
-    created_at: string;
+    last_checkin_at?: string | null;
+    created_at?: string | null;
+    registry?: TenantTerminalRegistryEntry | null;
 }
 
 export interface BillingPlan {

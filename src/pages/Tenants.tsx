@@ -1,8 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Power, Edit3, Loader2, X } from 'lucide-react';
-import type { Distributor, Tenant, TenantType } from '../types';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle } from 'lucide-react';
+import type { Distributor, Tenant, TenantType, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
+import { TenantProductsModal } from '../components/TenantProductsModal';
+import {
+    deriveProductsFromTenant,
+    deriveTenantConfigFromProducts,
+    getActiveProductLabels,
+    getDefaultTenantProducts,
+    getTenantTypeLabel,
+    type TenantProductSelection
+} from '../lib/tenantProducts';
 
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
@@ -14,7 +23,15 @@ export const Tenants: React.FC = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isEditSubmitting, setIsEditSubmitting] = useState(false);
+    const [isCreateProductsModalOpen, setIsCreateProductsModalOpen] = useState(false);
+    const [isEditProductsModalOpen, setIsEditProductsModalOpen] = useState(false);
+    const [createProductsModalVersion, setCreateProductsModalVersion] = useState(0);
+    const [editProductsModalVersion, setEditProductsModalVersion] = useState(0);
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
+    const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
+    const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
+    const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
+    const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
         tempPassword: string;
@@ -29,16 +46,14 @@ export const Tenants: React.FC = () => {
         city: '',
         capturedByDistributorId: '',
         servicedByDistributorId: '',
-        type: 'full' as TenantType,
-        cloudSync: true,
+        products: getDefaultTenantProducts() as TenantProductSelection,
     });
     const [editFormData, setEditFormData] = useState({
         name: '',
         legalName: '',
         taxId: '',
         phone: '',
-        type: 'full' as TenantType,
-        cloudSync: true,
+        products: getDefaultTenantProducts() as TenantProductSelection,
     });
 
     const getErrorMessage = (error: unknown) => {
@@ -47,10 +62,18 @@ export const Tenants: React.FC = () => {
         if (
             typeof error === 'object'
             && error !== null
-            && 'error_description' in error
-            && typeof error.error_description === 'string'
+            && 'message' in error
+            && typeof (error as { message?: unknown }).message === 'string'
         ) {
-            return error.error_description;
+            return (error as { message: string }).message;
+        }
+        if (
+            typeof error === 'object'
+            && error !== null
+            && 'error_description' in error
+            && typeof (error as { error_description?: unknown }).error_description === 'string'
+        ) {
+            return (error as { error_description: string }).error_description;
         }
         return 'Error desconocido';
     };
@@ -122,11 +145,33 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const closeCreateModal = () => {
+        setIsModalOpen(false);
+        setIsCreateProductsModalOpen(false);
+    };
+
+    const closeEditModal = () => {
+        setIsEditModalOpen(false);
+        setIsEditProductsModalOpen(false);
+        setEditingTenant(null);
+    };
+
+    const openCreateProductsModal = () => {
+        setCreateProductsModalVersion((current) => current + 1);
+        setIsCreateProductsModalOpen(true);
+    };
+
+    const openEditProductsModal = () => {
+        setEditProductsModalVersion((current) => current + 1);
+        setIsEditProductsModalOpen(true);
+    };
+
     const handleCreateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
         try {
             const slug = formData.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+            const productConfig = deriveTenantConfigFromProducts(formData.products);
 
             const { tenantId, tempPassword } = await tenantService.createTenant({
                 name: formData.name,
@@ -138,8 +183,8 @@ export const Tenants: React.FC = () => {
                 capturedByDistributorId: formData.capturedByDistributorId || undefined,
                 servicedByDistributorId: formData.servicedByDistributorId || undefined,
                 plan: 'TRIAL',
-                type: formData.type,
-                cloudSync: formData.cloudSync,
+                type: productConfig.type,
+                cloudSync: productConfig.cloudSync,
             });
 
             if (formData.taxId.trim()) {
@@ -160,10 +205,9 @@ export const Tenants: React.FC = () => {
                 city: '',
                 capturedByDistributorId: '',
                 servicedByDistributorId: '',
-                type: 'full',
-                cloudSync: true,
+                products: getDefaultTenantProducts(),
             });
-            setIsModalOpen(false);
+            closeCreateModal();
             await fetchTenants();
         } catch (err: unknown) {
             console.error('Error provisioning tenant:', err);
@@ -185,30 +229,48 @@ export const Tenants: React.FC = () => {
             legalName: tenant.legal_name || '',
             taxId: tenant.tax_id || '',
             phone: tenant.phone || '',
-            type: tenant.type || 'full',
-            cloudSync: tenant.cloud_sync ?? true,
+            products: deriveProductsFromTenant(tenant.type, tenant.cloud_sync),
         });
         setIsEditModalOpen(true);
     };
 
-    const closeEditModal = () => {
-        setIsEditModalOpen(false);
-        setEditingTenant(null);
+    const openTerminalModal = async (tenant: Tenant) => {
+        setSelectedTenantForTerminals(tenant);
+        setTenantTerminals([]);
+        setIsTerminalModalOpen(true);
+        setIsTerminalModalLoading(true);
+
+        try {
+            const data = await tenantService.getTenantTerminalOverview(tenant.id);
+            setTenantTerminals(data);
+        } catch (err) {
+            console.error('Error fetching tenant terminals:', err);
+            alert('No se pudieron cargar las terminales de este tenant.');
+        } finally {
+            setIsTerminalModalLoading(false);
+        }
     };
 
+    const closeTerminalModal = () => {
+        setIsTerminalModalOpen(false);
+        setSelectedTenantForTerminals(null);
+        setTenantTerminals([]);
+    };
     const handleUpdateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingTenant) return;
 
         setIsEditSubmitting(true);
         try {
+            const productConfig = deriveTenantConfigFromProducts(editFormData.products);
+
             await tenantService.updateTenant(editingTenant.id, {
                 name: editFormData.name.trim(),
                 legal_name: normalizeOptional(editFormData.legalName),
                 tax_id: normalizeOptional(editFormData.taxId),
                 phone: normalizeOptional(editFormData.phone),
-                type: editFormData.type,
-                cloud_sync: editFormData.cloudSync,
+                type: productConfig.type,
+                cloud_sync: productConfig.cloudSync,
             });
             closeEditModal();
             await fetchTenants();
@@ -229,6 +291,186 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const renderProductSummary = (products: TenantProductSelection) => {
+        const labels = getActiveProductLabels(products);
+        let solutionLabel = 'Selecciona productos';
+
+        try {
+            solutionLabel = getTenantTypeLabel(deriveTenantConfigFromProducts(products).type);
+        } catch {
+            solutionLabel = 'Selecciona al menos un producto principal';
+        }
+
+        return (
+            <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                    {labels.map((label) => (
+                        <span key={label} className="px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-black uppercase tracking-wide border border-blue-100">
+                            {label}
+                        </span>
+                    ))}
+                </div>
+                <p className="text-xs text-slate-500">
+                    Solucion base: <span className="font-bold text-slate-700">{solutionLabel}</span>
+                </p>
+            </div>
+        );
+    };
+    const formatDateTime = (value?: string | null) => {
+        if (!value) return 'N/D';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return 'N/D';
+        return parsed.toLocaleString('es-DO');
+    };
+
+    const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
+        const registryStatus = (terminal.registry?.status || '').toUpperCase();
+        if (registryStatus === 'ONLINE') return 'ONLINE';
+        if (registryStatus === 'OFFLINE') return 'OFFLINE';
+        return terminal.is_active ? 'ACTIVA' : 'INACTIVA';
+    };
+
+    const getApkVersionKey = (terminal: TenantTerminalSnapshot) => {
+        const version = terminal.registry?.app_version?.trim() || '';
+        const versionCode = terminal.registry?.app_version_code ? String(terminal.registry.app_version_code) : '';
+        if (!version && !versionCode) return '';
+        return `${version}::${versionCode}`;
+    };
+
+    const formatApkVersion = (terminal: TenantTerminalSnapshot) => {
+        const version = terminal.registry?.app_version?.trim() || '';
+        const versionCode = terminal.registry?.app_version_code;
+        if (!version && !versionCode) return 'N/D';
+        if (version && versionCode) return `APK v${version} (${versionCode})`;
+        if (version) return `APK v${version}`;
+        return `Build ${versionCode}`;
+    };
+
+    const referenceVersionCandidate = (() => {
+        const primary = tenantTerminals.find((terminal) => terminal.registry?.is_primary && getApkVersionKey(terminal));
+        if (primary) {
+            return {
+                key: getApkVersionKey(primary),
+                label: formatApkVersion(primary),
+                source: primary.name,
+            };
+        }
+
+        const versionCounter = new Map<string, { count: number; label: string; source: string }>();
+        for (const terminal of tenantTerminals) {
+            const key = getApkVersionKey(terminal);
+            if (!key) continue;
+
+            const current = versionCounter.get(key);
+            versionCounter.set(key, {
+                count: (current?.count || 0) + 1,
+                label: current?.label || formatApkVersion(terminal),
+                source: current?.source || terminal.name,
+            });
+        }
+
+        const mostCommonVersion = Array.from(versionCounter.entries()).sort((a, b) => b[1].count - a[1].count)[0];
+        return mostCommonVersion
+            ? {
+                key: mostCommonVersion[0],
+                label: mostCommonVersion[1].label,
+                source: mostCommonVersion[1].source,
+            }
+            : null;
+    })();
+
+    const referenceVersionKey = referenceVersionCandidate?.key || '';
+    const outOfVersionCount = tenantTerminals.filter((terminal) => {
+        const terminalVersionKey = getApkVersionKey(terminal);
+        return Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
+    }).length;
+    const missingVersionCount = tenantTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
+
+    const normalizeIp = (value?: string | null) => (value || '').trim();
+
+    const parseEndpointHost = (value?: string | null) => {
+        const rawValue = (value || '').trim();
+        if (!rawValue) return null;
+
+        try {
+            const normalized = rawValue.includes('://') ? rawValue : `http://${rawValue}`;
+            const parsed = new URL(normalized);
+            return parsed.hostname || null;
+        } catch {
+            return null;
+        }
+    };
+
+    const isIpv4 = (value: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(value);
+
+    const isPrivateLanIp = (value: string) => {
+        if (!isIpv4(value)) return false;
+        if (value.startsWith('10.')) return true;
+        if (value.startsWith('192.168.')) return true;
+
+        const [firstOctet, secondOctet] = value.split('.').map((part) => Number(part));
+        return firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31;
+    };
+
+    const isLikelyVirtualIp = (value: string) => {
+        if (!isIpv4(value)) return false;
+
+        return (
+            value.startsWith('127.')
+            || value.startsWith('169.254.')
+            || value.startsWith('10.0.2.')
+            || value.startsWith('10.0.3.')
+            || value === '10.0.2.2'
+            || value === '10.0.3.2'
+            || value.startsWith('192.168.56.')
+            || value.startsWith('192.168.58.')
+            || value.startsWith('192.168.59.')
+            || value.startsWith('192.168.122.')
+            || value === '192.168.64.1'
+        );
+    };
+
+    const getReportedIps = (terminal: TenantTerminalSnapshot) => {
+        const endpointHost = parseEndpointHost(terminal.registry?.endpoint_url);
+        return Array.from(
+            new Set(
+                [
+                    terminal.registry?.local_ip,
+                    ...(terminal.registry?.local_ips || []),
+                    endpointHost,
+                ]
+                    .map((value) => normalizeIp(value))
+                    .filter(Boolean)
+            )
+        );
+    };
+
+    const getLanIps = (terminal: TenantTerminalSnapshot) =>
+        getReportedIps(terminal).filter((ip) => isPrivateLanIp(ip) && !isLikelyVirtualIp(ip));
+
+    const getDiscardedIps = (terminal: TenantTerminalSnapshot) =>
+        getReportedIps(terminal).filter((ip) => !getLanIps(terminal).includes(ip));
+
+    const getPreferredLanIp = (terminal: TenantTerminalSnapshot) => {
+        const endpointHost = normalizeIp(parseEndpointHost(terminal.registry?.endpoint_url));
+        if (endpointHost && getLanIps(terminal).includes(endpointHost)) return endpointHost;
+
+        const primaryIp = normalizeIp(terminal.registry?.local_ip);
+        if (primaryIp && getLanIps(terminal).includes(primaryIp)) return primaryIp;
+
+        return getLanIps(terminal)[0] || primaryIp || endpointHost || 'N/D';
+    };
+
+    const getRoleLabel = (terminal: TenantTerminalSnapshot) => {
+        if (terminal.registry?.is_primary) return 'Server Master';
+        if (terminal.registry) return 'Cliente con endpoint';
+        return 'Cliente / catálogo';
+    };
+    const onlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
+    const offlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
+    const masterTerminalCount = tenantTerminals.filter((terminal) => terminal.registry?.is_primary).length;
+    const clientTerminalCount = tenantTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
+    const publishedEndpointCount = tenantTerminals.filter((terminal) => Boolean(terminal.registry)).length;
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -310,6 +552,13 @@ export const Tenants: React.FC = () => {
                                 <td className="px-6 py-4">
                                     <div className="font-bold text-slate-800">{tenant.name}</div>
                                     <div className="text-xs text-slate-400 font-mono mt-0.5">{tenant.id}</div>
+                                    <div className="flex flex-wrap gap-1.5 mt-2">
+                                        {getActiveProductLabels(deriveProductsFromTenant(tenant.type, tenant.cloud_sync)).map((label) => (
+                                            <span key={label} className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-wide">
+                                                {label}
+                                            </span>
+                                        ))}
+                                    </div>
                                 </td>
                                 <td className="px-6 py-4 font-mono text-slate-600">{tenant.tax_id || 'N/A'}</td>
                                 <td className="px-6 py-4">
@@ -320,6 +569,14 @@ export const Tenants: React.FC = () => {
                                 <td className="px-6 py-4 text-center">{getStatusBadge(tenant.status)}</td>
                                 <td className="px-6 py-4 text-right">
                                     <div className="flex justify-end gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => void openTerminalModal(tenant)}
+                                            className="p-2 text-slate-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
+                                            title="Ver terminales"
+                                        >
+                                            <Monitor size={18} />
+                                        </button>
                                         <button
                                             type="button"
                                             onClick={() => openEditModal(tenant)}
@@ -348,7 +605,7 @@ export const Tenants: React.FC = () => {
                     <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
                         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                             <h3 className="font-black text-lg text-slate-800">Aprovisionar Nueva Empresa</h3>
-                            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-700 transition-colors">
+                            <button onClick={closeCreateModal} className="text-slate-400 hover:text-slate-700 transition-colors">
                                 <X size={20} />
                             </button>
                         </div>
@@ -471,37 +728,30 @@ export const Tenants: React.FC = () => {
                                 </p>
                             )}
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Solución</label>
-                                    <select
-                                        value={formData.type}
-                                        onChange={e => setFormData({ ...formData, type: e.target.value as TenantType })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-sm font-black text-slate-800">Productos Activos</p>
+                                        <p className="text-xs text-slate-500 mt-1">Define la combinación inicial de productos y addons para este tenant.</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={openCreateProductsModal}
+                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-700 hover:border-blue-200 hover:text-blue-700 transition-colors"
                                     >
-                                        <option value="full">MALL POS + Cloud ERP</option>
-                                        <option value="pos_only">Solo MALL POS</option>
-                                    </select>
+                                        <Boxes size={16} />
+                                        Gestionar Productos
+                                    </button>
                                 </div>
-                                <div className="flex items-center pt-7">
-                                    <label className="flex items-center gap-3 cursor-pointer group">
-                                        <div className="relative flex items-center justify-center">
-                                            <input
-                                                type="checkbox"
-                                                checked={formData.cloudSync}
-                                                onChange={e => setFormData({ ...formData, cloudSync: e.target.checked })}
-                                                className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors"
-                                            />
-                                        </div>
-                                        <span className="text-sm font-bold text-slate-700 select-none group-hover:text-blue-700 transition-colors">Activar Respaldo Cloud</span>
-                                    </label>
+                                <div className="mt-4">
+                                    {renderProductSummary(formData.products)}
                                 </div>
                             </div>
 
                             <div className="pt-4 flex gap-3">
                                 <button
                                     type="button"
-                                    onClick={() => setIsModalOpen(false)}
+                                    onClick={closeCreateModal}
                                     className="flex-1 px-4 py-3 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl font-bold transition-colors"
                                 >
                                     Cancelar
@@ -515,6 +765,212 @@ export const Tenants: React.FC = () => {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {isTerminalModalOpen && selectedTenantForTerminals && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div>
+                                <h3 className="font-black text-lg text-slate-800">Terminales Activas del Tenant</h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    {selectedTenantForTerminals.name} · {selectedTenantForTerminals.email}
+                                </p>
+                                <p className="text-xs text-slate-400 font-mono mt-1">{selectedTenantForTerminals.id}</p>
+                            </div>
+                            <button type="button" onClick={closeTerminalModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Terminales listadas</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{tenantTerminals.length}</p>
+                                </div>
+                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Endpoints Online</p>
+                                    <p className="mt-2 text-3xl font-black text-emerald-700">{onlineTerminalCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Fuera de versión</p>
+                                    <p className="mt-2 text-3xl font-black text-amber-700">{outOfVersionCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Clientes / cajas</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{clientTerminalCount}</p>
+                                </div>
+                            </div>
+
+                            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                <p>
+                                    Esta vista combina el catálogo de terminales del tenant con el registry de endpoints publicados en cloud. La máscara de red aún no se persiste, por eso se muestra como <span className="font-bold">N/D</span>.
+                                </p>
+                                <p className="mt-2">
+                                    Use <span className="font-bold">IP LAN recomendada</span> o <span className="font-bold">Endpoint publicado</span> para conectar nuevas cajas. Las IPs virtuales o de emulador se separan como descartadas.
+                                </p>
+                                <p className="mt-2">
+                                    {referenceVersionCandidate
+                                        ? <>Versión de referencia: <span className="font-bold">{referenceVersionCandidate.label}</span> reportada por <span className="font-bold">{referenceVersionCandidate.source}</span>.</>
+                                        : <>Aún no hay versión de APK reportada por las terminales de este tenant.</>}
+                                    {missingVersionCount > 0 ? <> <span className="font-bold">{missingVersionCount}</span> terminal(es) todavía no reportan versión.</> : null}
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-violet-700">Server master</p>
+                                    <p className="mt-2 text-3xl font-black text-violet-700">{masterTerminalCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Con endpoint cloud</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{publishedEndpointCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Offline / sin reporte</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{Math.max(tenantTerminals.length - onlineTerminalCount, offlineTerminalCount)}</p>
+                                </div>
+                            </div>
+
+                            {isTerminalModalLoading ? (
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500 flex items-center justify-center gap-3">
+                                    <Loader2 className="animate-spin text-violet-500" size={20} />
+                                    Cargando terminales...
+                                </div>
+                            ) : tenantTerminals.length === 0 ? (
+                                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500">
+                                    No hay terminales ni endpoints reportados para este tenant.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                    {tenantTerminals.map((terminal) => {
+                                        const statusLabel = getRegistryStatusLabel(terminal);
+                                        const isOnline = statusLabel === 'ONLINE';
+                                        const terminalVersionKey = getApkVersionKey(terminal);
+                                        const isOutOfVersion = Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
+                                        const hasVersion = Boolean(terminalVersionKey);
+                                        const lanIps = getLanIps(terminal);
+                                        const discardedIps = getDiscardedIps(terminal);
+
+                                        return (
+                                            <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
+                                                <div className="flex items-start justify-between gap-4">
+                                                    <div className="min-w-0">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className={`rounded-2xl p-3 ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                                {isOnline ? <Wifi size={18} /> : <WifiOff size={18} />}
+                                                            </div>
+                                                            <div>
+                                                                <h4 className="font-black text-slate-800 truncate">{terminal.name}</h4>
+                                                                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                                                                    Terminal ID: {terminal.terminal_id || 'N/D'}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex flex-col items-end gap-2">
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                            {statusLabel}
+                                                        </span>
+                                                        <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase ${
+                                                            isOutOfVersion
+                                                                ? 'bg-amber-100 text-amber-700'
+                                                                : hasVersion
+                                                                    ? 'bg-blue-100 text-blue-700'
+                                                                    : 'bg-slate-100 text-slate-500'
+                                                        }`}>
+                                                            {isOutOfVersion ? 'Fuera de versión' : hasVersion ? 'Versión reportada' : 'Sin versión'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Device Token</p>
+                                                        <p className="mt-1 text-slate-700 font-mono break-all">{terminal.device_token || terminal.registry?.device_id || 'N/D'}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Hostname</p>
+                                                        <p className="mt-1 text-slate-700">{terminal.registry?.hostname || 'N/D'}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-emerald-50 px-4 py-3 border border-emerald-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">IP LAN recomendada</p>
+                                                        <p className="mt-1 text-slate-700 font-mono">{getPreferredLanIp(terminal)}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Mask / Subred</p>
+                                                        <p className="mt-1 text-slate-700">N/D</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">IPs LAN válidas</p>
+                                                        <p className="mt-1 text-slate-700 font-mono break-all">
+                                                            {lanIps.length ? lanIps.join(', ') : 'N/D'}
+                                                        </p>
+                                                    </div>
+                                                    {discardedIps.length > 0 && (
+                                                        <div className="rounded-2xl bg-amber-50 px-4 py-3 border border-amber-100 md:col-span-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">IPs descartadas / virtuales</p>
+                                                            <p className="mt-1 text-slate-700 font-mono break-all">
+                                                                {discardedIps.join(', ')}
+                                                            </p>
+                                                        </div>
+                                                    )}
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Endpoint Publicado</p>
+                                                        <p className="mt-1 text-slate-700 font-mono break-all">{terminal.registry?.endpoint_url || 'N/D'}</p>
+                                                    </div>
+                                                    <div className={`rounded-2xl px-4 py-3 border md:col-span-2 ${
+                                                        isOutOfVersion
+                                                            ? 'border-amber-200 bg-amber-50'
+                                                            : 'border-slate-100 bg-slate-50'
+                                                    }`}>
+                                                        <div className="flex items-start justify-between gap-3">
+                                                            <div>
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Versión APK</p>
+                                                                <p className="mt-1 text-slate-700 font-mono">{formatApkVersion(terminal)}</p>
+                                                            </div>
+                                                            {isOutOfVersion ? (
+                                                                <div className="flex items-center gap-2 text-amber-700 text-xs font-bold uppercase">
+                                                                    <AlertTriangle size={14} />
+                                                                    Desfasada
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
+                                                        {isOutOfVersion && referenceVersionCandidate ? (
+                                                            <p className="mt-2 text-xs text-amber-700">
+                                                                Debe alinearse con <span className="font-bold">{referenceVersionCandidate.label}</span>.
+                                                            </p>
+                                                        ) : null}
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rol</p>
+                                                        <div className="mt-1 flex items-center gap-2 text-slate-700">
+                                                            <Server size={14} className="text-violet-500" />
+                                                            <span>{getRoleLabel(terminal)}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Último Heartbeat</p>
+                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.registry?.last_seen_at)}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Último Check-in</p>
+                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.last_checkin_at)}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Creada</p>
+                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.created_at)}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}
@@ -585,28 +1041,23 @@ export const Tenants: React.FC = () => {
                                 <p className="text-xs text-slate-500 mt-1">El email de acceso se mantiene fijo para no desincronizar autenticación.</p>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de Solución</label>
-                                    <select
-                                        value={editFormData.type}
-                                        onChange={e => setEditFormData({ ...editFormData, type: e.target.value as TenantType })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                    <div>
+                                        <p className="text-sm font-black text-slate-800">Productos Activos</p>
+                                        <p className="text-xs text-slate-500 mt-1">Activa o desactiva productos del tenant sin mezclarlo con los datos de empresa.</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={openEditProductsModal}
+                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-700 hover:border-blue-200 hover:text-blue-700 transition-colors"
                                     >
-                                        <option value="full">MALL POS + Cloud ERP</option>
-                                        <option value="pos_only">Solo MALL POS</option>
-                                    </select>
+                                        <Boxes size={16} />
+                                        Gestionar Productos
+                                    </button>
                                 </div>
-                                <div className="flex items-center pt-7">
-                                    <label className="flex items-center gap-3 cursor-pointer group">
-                                        <input
-                                            type="checkbox"
-                                            checked={editFormData.cloudSync}
-                                            onChange={e => setEditFormData({ ...editFormData, cloudSync: e.target.checked })}
-                                            className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 transition-colors"
-                                        />
-                                        <span className="text-sm font-bold text-slate-700 select-none group-hover:text-blue-700 transition-colors">Activar Respaldo Cloud</span>
-                                    </label>
+                                <div className="mt-4">
+                                    {renderProductSummary(editFormData.products)}
                                 </div>
                             </div>
 
@@ -630,6 +1081,31 @@ export const Tenants: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            <TenantProductsModal
+                key={`create-products-${createProductsModalVersion}`}
+                isOpen={isCreateProductsModalOpen}
+                title="Productos Iniciales del Tenant"
+                initialProducts={formData.products}
+                onClose={() => setIsCreateProductsModalOpen(false)}
+                onSave={(products) => {
+                    setFormData((current) => ({ ...current, products }));
+                    setIsCreateProductsModalOpen(false);
+                }}
+            />
+
+            <TenantProductsModal
+                key={`edit-products-${editingTenant?.id ?? 'none'}-${editProductsModalVersion}`}
+                isOpen={isEditProductsModalOpen}
+                title="Administrar Productos del Tenant"
+                tenantName={editingTenant?.name}
+                initialProducts={editFormData.products}
+                onClose={() => setIsEditProductsModalOpen(false)}
+                onSave={(products) => {
+                    setEditFormData((current) => ({ ...current, products }));
+                    setIsEditProductsModalOpen(false);
+                }}
+            />
         </div>
     );
 };

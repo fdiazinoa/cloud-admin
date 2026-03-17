@@ -3,7 +3,23 @@
 -- 2) Esquema de distribuidores (captacion y servicio)
 
 DO $$ BEGIN
-    CREATE TYPE landlord.tenant_type AS ENUM ('full', 'pos_only');
+    CREATE TYPE landlord.tenant_type AS ENUM ('full', 'pos_only', 'erp_only');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace
+        JOIN pg_enum e ON e.enumtypid = t.oid
+        WHERE n.nspname = 'landlord'
+          AND t.typname = 'tenant_type'
+          AND e.enumlabel = 'erp_only'
+    ) THEN
+        ALTER TYPE landlord.tenant_type ADD VALUE 'erp_only';
+    END IF;
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
@@ -22,6 +38,8 @@ CREATE TABLE IF NOT EXISTS landlord.distributors (
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS type landlord.tenant_type DEFAULT 'full';
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS cloud_sync BOOLEAN DEFAULT true;
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false;
+ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS legal_name VARCHAR(255);
+ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS phone VARCHAR(50);
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS contact_name VARCHAR(255);
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255);
 ALTER TABLE landlord.tenants ADD COLUMN IF NOT EXISTS city VARCHAR(120);
