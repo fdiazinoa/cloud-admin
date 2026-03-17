@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Power, Edit3, Loader2, X } from 'lucide-react';
 import type { Distributor, Tenant, TenantType } from '../types';
 import { tenantService } from '../lib/tenantService';
@@ -54,10 +55,21 @@ export const Tenants: React.FC = () => {
         return 'Error desconocido';
     };
 
+    const [searchParams] = useSearchParams();
+
     useEffect(() => {
         void fetchTenants();
         void fetchDistributors();
-    }, []);
+
+        if (searchParams.get('create') === 'true') {
+            setIsModalOpen(true);
+            // Optional: clear the param so it doesn't re-open on refresh if desired, 
+            // but usually it's fine. If we want to clear:
+            // const newParams = new URLSearchParams(searchParams);
+            // newParams.delete('create');
+            // setSearchParams(newParams, { replace: true });
+        }
+    }, [searchParams]);
 
     const fetchTenants = async () => {
         setLoading(true);
