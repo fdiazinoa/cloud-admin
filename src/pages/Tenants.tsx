@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle } from 'lucide-react';
-import type { Distributor, Tenant, TenantType, TenantTerminalSnapshot } from '../types';
+import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import {
