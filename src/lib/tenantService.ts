@@ -457,7 +457,8 @@ export async function reactivateTenant(id: string): Promise<void> {
 
 export async function toggleTerminalActiveStatus(terminalId: string, isActive: boolean): Promise<void> {
     const { data: terminal, error: getErr } = await supabaseAdmin
-        .from("terminals")
+        .schema("public")
+        .from("erp_terminals")
         .select("config")
         .eq("id", terminalId)
         .single();
@@ -468,7 +469,8 @@ export async function toggleTerminalActiveStatus(terminalId: string, isActive: b
     config.is_active = isActive;
 
     const { error: setErr } = await supabaseAdmin
-        .from("terminals")
+        .schema("public")
+        .from("erp_terminals")
         .update({ config })
         .eq("id", terminalId);
     
