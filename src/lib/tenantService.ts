@@ -361,7 +361,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             terminal_id: primaryTerminal.id,
             name: terminalName,
             device_token: deviceToken,
-            is_active: primaryTerminal.is_active ?? primaryTerminal.active ?? true,
+            is_active: primaryTerminal.config?.is_active ?? primaryTerminal.is_active ?? primaryTerminal.active ?? true,
             last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.updated_at || null,
             created_at: primaryTerminal.created_at || null,
             registry,
@@ -455,6 +455,26 @@ export async function reactivateTenant(id: string): Promise<void> {
     if (error) throw error;
 }
 
+export async function toggleTerminalActiveStatus(terminalId: string, isActive: boolean): Promise<void> {
+    const { data: terminal, error: getErr } = await supabaseAdmin
+        .from("terminals")
+        .select("config")
+        .eq("id", terminalId)
+        .single();
+    
+    if (getErr) throw getErr;
+
+    const config = terminal.config || {};
+    config.is_active = isActive;
+
+    const { error: setErr } = await supabaseAdmin
+        .from("terminals")
+        .update({ config })
+        .eq("id", terminalId);
+    
+    if (setErr) throw setErr;
+}
+
 export const tenantService = {
     createTenant,
     verifyTenantEmail,
@@ -467,4 +487,5 @@ export const tenantService = {
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
+    toggleTerminalActiveStatus,
 };

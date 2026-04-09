@@ -256,6 +256,21 @@ export const Tenants: React.FC = () => {
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
     };
+
+    const handleToggleTerminalStatus = async (terminalId: string, currentStatus: boolean) => {
+        if (!selectedTenantForTerminals) return;
+        
+        const newStatus = !currentStatus;
+        try {
+            await tenantService.toggleTerminalActiveStatus(terminalId, newStatus);
+            setTenantTerminals(prev => 
+                prev.map(t => t.id === terminalId ? { ...t, is_active: newStatus } : t)
+            );
+        } catch (err) {
+            console.error('Error toggling terminal status:', err);
+            alert('Error al cambiar el estado de la terminal');
+        }
+    };
     const handleUpdateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingTenant) return;
@@ -877,6 +892,15 @@ export const Tenants: React.FC = () => {
                                                                 Terminal ID: {terminal.terminal_id || 'N/D'}
                                                             </p>
                                                         </div>
+                                                    </div>
+                                                    <div>
+                                                        <button 
+                                                            onClick={() => handleToggleTerminalStatus(terminal.id!, terminal.is_active !== false)}
+                                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 ${terminal.is_active !== false ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                                                            title={terminal.is_active !== false ? 'Desactivar Terminal' : 'Activar Terminal'}
+                                                        >
+                                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${terminal.is_active !== false ? 'translate-x-6' : 'translate-x-1'}`} />
+                                                        </button>
                                                     </div>
                                                 </div>
 
