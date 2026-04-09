@@ -288,16 +288,20 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         throw terminalsRes.error;
     }
 
-    const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
-    const registryByDeviceId = new Map<string, TenantTerminalRegistryEntry>();
+    const registriesByTerminalId = new Map<string, TenantTerminalRegistryEntry[]>();
+    const registriesByDeviceId = new Map<string, TenantTerminalRegistryEntry[]>();
     const matchedRegistryIds = new Set<string>();
 
     for (const row of registryRows) {
-        if (row.terminal_id && !registryByTerminalId.has(row.terminal_id)) {
-            registryByTerminalId.set(row.terminal_id, row);
+        if (row.terminal_id) {
+            const arr = registriesByTerminalId.get(row.terminal_id) || [];
+            arr.push(row);
+            registriesByTerminalId.set(row.terminal_id, arr);
         }
-        if (row.device_id && !registryByDeviceId.has(row.device_id)) {
-            registryByDeviceId.set(row.device_id, row);
+        if (row.device_id) {
+            const arr = registriesByDeviceId.get(row.device_id) || [];
+            arr.push(row);
+            registriesByDeviceId.set(row.device_id, arr);
         }
     }
 
@@ -312,9 +316,18 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             || terminal.terminal_name
             || terminal.label
             || terminal.id;
-        const registry = registryByTerminalId.get(terminal.id) || (deviceToken ? registryByDeviceId.get(deviceToken) : null) || null;
-        if (registry?.id) {
-            matchedRegistryIds.add(registry.id);
+            
+        let registries: TenantTerminalRegistryEntry[] = [];
+        if (registriesByTerminalId.has(terminal.id)) {
+            registries = registriesByTerminalId.get(terminal.id) || [];
+        } else if (deviceToken && registriesByDeviceId.has(deviceToken)) {
+            registries = registriesByDeviceId.get(deviceToken) || [];
+        }
+
+        const registry = registries.length > 0 ? registries[0] : null;
+        
+        for (const reg of registries) {
+            if (reg.id) matchedRegistryIds.add(reg.id);
         }
 
         return {
@@ -327,22 +340,33 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             last_checkin_at: terminal.last_checkin_at || terminal.last_seen_at || terminal.updated_at || null,
             created_at: terminal.created_at || null,
             registry,
+            registries,
         };
     });
 
+    const orphanedRegistriesGrouped = new Map<string, TenantTerminalRegistryEntry[]>();
+
     for (const row of registryRows) {
         if (matchedRegistryIds.has(row.id)) continue;
+        const key = row.terminal_id || row.device_id || row.id;
+        const arr = orphanedRegistriesGrouped.get(key) || [];
+        arr.push(row);
+        orphanedRegistriesGrouped.set(key, arr);
+    }
 
+    for (const arr of orphanedRegistriesGrouped.values()) {
+        const primary = arr[0];
         snapshots.push({
-            id: row.id,
-            tenant_id: row.tenant_id,
-            terminal_id: row.terminal_id || null,
-            name: row.terminal_name || row.terminal_id || row.device_id || "Terminal sin catálogo",
-            device_token: row.device_id || null,
-            is_active: (row.status || "").toUpperCase() === "ONLINE",
-            last_checkin_at: row.last_seen_at || null,
-            created_at: row.created_at || null,
-            registry: row,
+            id: primary.id,
+            tenant_id: primary.tenant_id,
+            terminal_id: primary.terminal_id || null,
+            name: primary.terminal_name || primary.terminal_id || primary.device_id || "Terminal sin catálogo",
+            device_token: primary.device_id || null,
+            is_active: (primary.status || "").toUpperCase() === "ONLINE",
+            last_checkin_at: primary.last_seen_at || null,
+            created_at: primary.created_at || null,
+            registry: primary,
+            registries: arr,
         });
     }
 
