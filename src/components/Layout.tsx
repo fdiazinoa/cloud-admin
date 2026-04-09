@@ -1,5 +1,5 @@
-import { useNavigate, NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Plus } from 'lucide-react';
+import { NavLink, Outlet } from 'react-router-dom';
+import { LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut } from 'lucide-react';
 
 const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -10,7 +10,6 @@ const navItems = [
 ];
 
 export const Layout: React.FC = () => {
-    const navigate = useNavigate();
     return (
         <div className="bg-slate-50 text-slate-900 antialiased min-h-screen flex font-['Public_Sans']">
             {/* BEGIN: Navigation Sidebar */}
@@ -74,15 +73,6 @@ export const Layout: React.FC = () => {
                                 <option value="ano">Año</option>
                             </select>
                         </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <button 
-                            onClick={() => navigate('/tenants?create=true')}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-sm shadow-indigo-200"
-                        >
-                            <Plus size={16} strokeWidth={2.5} />
-                            Crear Nueva Empresa
-                        </button>
                     </div>
                 </header>
                 {/* END: Slim Header */}
