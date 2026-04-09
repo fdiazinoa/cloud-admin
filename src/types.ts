@@ -18,6 +18,8 @@ export interface Tenant {
     serviced_by_distributor_id?: string;
     status: TenantStatus;
     email_verified?: boolean;
+    max_pos_terminals?: number;
+    max_erp_users?: number;
     created_at: string;
 }
 

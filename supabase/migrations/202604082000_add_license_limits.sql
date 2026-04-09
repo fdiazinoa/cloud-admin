@@ -1,0 +1,3 @@
+ALTER TABLE landlord.tenants 
+ADD COLUMN IF NOT EXISTS max_pos_terminals INTEGER DEFAULT 1,
+ADD COLUMN IF NOT EXISTS max_erp_users INTEGER DEFAULT 1;
