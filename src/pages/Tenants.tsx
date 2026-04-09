@@ -260,15 +260,20 @@ export const Tenants: React.FC = () => {
     const handleToggleTerminalStatus = async (terminalId: string, currentStatus: boolean) => {
         if (!selectedTenantForTerminals) return;
         
+        if (terminalId.startsWith('orphan-') || !terminalId.includes('-')) {
+            alert('No se puede cambiar el estado de una activación huérfana o sin terminal base.');
+            return;
+        }
+
         const newStatus = !currentStatus;
         try {
             await tenantService.toggleTerminalActiveStatus(terminalId, newStatus);
             setTenantTerminals(prev => 
                 prev.map(t => t.id === terminalId ? { ...t, is_active: newStatus } : t)
             );
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error toggling terminal status:', err);
-            alert('Error al cambiar el estado de la terminal');
+            alert(`Error al cambiar el estado de la terminal: ${err?.message || JSON.stringify(err)}`);
         }
     };
     const handleUpdateTenant = async (e: React.FormEvent) => {
