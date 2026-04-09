@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle } from 'lucide-react';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff } from 'lucide-react';
 import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
@@ -789,9 +789,16 @@ export const Tenants: React.FC = () => {
 
                         <div className="p-6 overflow-y-auto space-y-6">
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Terminales listadas</p>
-                                    <p className="mt-2 text-3xl font-black text-slate-800">{tenantTerminals.length}</p>
+                                <div className={`rounded-2xl border px-4 py-4 ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                                    <p className={`text-xs font-bold uppercase tracking-wider ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'text-red-700' : 'text-slate-500'}`}>Terminales listadas</p>
+                                    <p className={`mt-2 text-3xl font-black ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'text-red-700' : 'text-slate-800'}`}>
+                                        {tenantTerminals.length}
+                                        {typeof selectedTenantForTerminals.max_pos_terminals === 'number' && (
+                                            <span className={`text-sm font-bold ml-2 ${tenantTerminals.length > selectedTenantForTerminals.max_pos_terminals ? 'text-red-500' : 'text-slate-400'}`}>
+                                                / {selectedTenantForTerminals.max_pos_terminals} permitidas
+                                            </span>
+                                        )}
+                                    </p>
                                 </div>
                                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
                                     <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Endpoints Online</p>
@@ -847,124 +854,104 @@ export const Tenants: React.FC = () => {
                                     No hay terminales ni endpoints reportados para este tenant.
                                 </div>
                             ) : (
-                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 gap-6">
                                     {tenantTerminals.map((terminal) => {
                                         const statusLabel = getRegistryStatusLabel(terminal);
                                         const isOnline = statusLabel === 'ONLINE';
-                                        const terminalVersionKey = getApkVersionKey(terminal);
-                                        const isOutOfVersion = Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
-                                        const hasVersion = Boolean(terminalVersionKey);
-                                        const lanIps = getLanIps(terminal);
-                                        const discardedIps = getDiscardedIps(terminal);
-
+                                        
                                         return (
-                                            <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
-                                                <div className="flex items-start justify-between gap-4">
-                                                    <div className="min-w-0">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className={`rounded-2xl p-3 ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                                {isOnline ? <Wifi size={18} /> : <WifiOff size={18} />}
-                                                            </div>
-                                                            <div>
-                                                                <h4 className="font-black text-slate-800 truncate">{terminal.name}</h4>
-                                                                <p className="text-xs text-slate-400 font-mono mt-0.5">
-                                                                    Terminal ID: {terminal.terminal_id || 'N/D'}
-                                                                </p>
-                                                            </div>
+                                            <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
+                                                <div className="bg-slate-50 border-b border-slate-100 p-5 flex items-center justify-between">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className={`rounded-2xl p-3 ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
+                                                            {isOnline ? <Wifi size={20} /> : <WifiOff size={20} />}
                                                         </div>
-                                                    </div>
-                                                    <div className="flex flex-col items-end gap-2">
-                                                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                                                            {statusLabel}
-                                                        </span>
-                                                        <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase ${
-                                                            isOutOfVersion
-                                                                ? 'bg-amber-100 text-amber-700'
-                                                                : hasVersion
-                                                                    ? 'bg-blue-100 text-blue-700'
-                                                                    : 'bg-slate-100 text-slate-500'
-                                                        }`}>
-                                                            {isOutOfVersion ? 'Fuera de versión' : hasVersion ? 'Versión reportada' : 'Sin versión'}
-                                                        </span>
+                                                        <div>
+                                                            <div className="flex items-center gap-3">
+                                                                <h4 className="font-black text-slate-800 text-lg">{terminal.name}</h4>
+                                                                <span className={`font-bold text-xs px-2.5 py-1 rounded-lg ${
+                                                                    (terminal.registries || []).length > 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                                                                }`}>
+                                                                    {terminal.registries?.length || 0} Registro(s)
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-slate-500 font-mono mt-0.5">
+                                                                Terminal ID: {terminal.terminal_id || 'N/D'}
+                                                            </p>
+                                                        </div>
                                                     </div>
                                                 </div>
 
-                                                <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Device Token</p>
-                                                        <p className="mt-1 text-slate-700 font-mono break-all">{terminal.device_token || terminal.registry?.device_id || 'N/D'}</p>
-                                                    </div>
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Hostname</p>
-                                                        <p className="mt-1 text-slate-700">{terminal.registry?.hostname || 'N/D'}</p>
-                                                    </div>
-                                                    <div className="rounded-2xl bg-emerald-50 px-4 py-3 border border-emerald-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">IP LAN recomendada</p>
-                                                        <p className="mt-1 text-slate-700 font-mono">{getPreferredLanIp(terminal)}</p>
-                                                    </div>
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Mask / Subred</p>
-                                                        <p className="mt-1 text-slate-700">N/D</p>
-                                                    </div>
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">IPs LAN válidas</p>
-                                                        <p className="mt-1 text-slate-700 font-mono break-all">
-                                                            {lanIps.length ? lanIps.join(', ') : 'N/D'}
-                                                        </p>
-                                                    </div>
-                                                    {discardedIps.length > 0 && (
-                                                        <div className="rounded-2xl bg-amber-50 px-4 py-3 border border-amber-100 md:col-span-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700">IPs descartadas / virtuales</p>
-                                                            <p className="mt-1 text-slate-700 font-mono break-all">
-                                                                {discardedIps.join(', ')}
-                                                            </p>
-                                                        </div>
-                                                    )}
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100 md:col-span-2">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Endpoint Publicado</p>
-                                                        <p className="mt-1 text-slate-700 font-mono break-all">{terminal.registry?.endpoint_url || 'N/D'}</p>
-                                                    </div>
-                                                    <div className={`rounded-2xl px-4 py-3 border md:col-span-2 ${
-                                                        isOutOfVersion
-                                                            ? 'border-amber-200 bg-amber-50'
-                                                            : 'border-slate-100 bg-slate-50'
-                                                    }`}>
-                                                        <div className="flex items-start justify-between gap-3">
-                                                            <div>
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Versión APK</p>
-                                                                <p className="mt-1 text-slate-700 font-mono">{formatApkVersion(terminal)}</p>
-                                                            </div>
-                                                            {isOutOfVersion ? (
-                                                                <div className="flex items-center gap-2 text-amber-700 text-xs font-bold uppercase">
-                                                                    <AlertTriangle size={14} />
-                                                                    Desfasada
+                                                <div className="p-5 bg-slate-100/30">
+                                                    <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-4">Dispositivos y Activaciones Registrados</h5>
+                                                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                                        {(terminal.registries || []).map((reg, idx) => {
+                                                            const mockTerminal = { ...terminal, registry: reg };
+                                                            const rStatusLabel = getRegistryStatusLabel(mockTerminal);
+                                                            const rIsOnline = rStatusLabel === 'ONLINE';
+                                                            const rVersionKey = getApkVersionKey(mockTerminal);
+                                                            const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
+                                                            const rDiscardedIps = getDiscardedIps(mockTerminal);
+                                                            const rLanIps = getLanIps(mockTerminal);
+                                                            const rEndpointHost = reg.endpoint_url || null;
+
+                                                            return (
+                                                                <div key={reg.id || idx} className={`rounded-2xl border bg-white p-4 ${rIsOutOfVersion ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200'}`}>
+                                                                    <div className="flex items-start justify-between mb-4 gap-2">
+                                                                        <div className="flex flex-col gap-1">
+                                                                            <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Device ID / Token</p>
+                                                                            <p className="text-xs font-mono font-bold text-slate-700 break-all">{reg.device_id || terminal.device_token || 'N/D'}</p>
+                                                                        </div>
+                                                                        <div className="flex flex-col items-end gap-2 shrink-0">
+                                                                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${rIsOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                                                {rStatusLabel}
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div className="grid grid-cols-2 gap-2 text-sm">
+                                                                        <div className="rounded-xl bg-slate-50 px-3 py-2 border border-slate-100">
+                                                                            <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Hostname</p>
+                                                                            <p className="mt-0.5 text-xs text-slate-700 truncate">{reg.hostname || 'N/D'}</p>
+                                                                        </div>
+                                                                        <div className="rounded-xl bg-emerald-50 px-3 py-2 border border-emerald-100">
+                                                                            <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-700">IP Recomendada</p>
+                                                                            <p className="mt-0.5 text-xs text-emerald-900 font-mono">{getPreferredLanIp(mockTerminal)}</p>
+                                                                        </div>
+                                                                        
+                                                                        <div className="rounded-xl bg-slate-50 px-3 py-2 border border-slate-100 col-span-2">
+                                                                            <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">IPs LAN válidas</p>
+                                                                            <p className="mt-0.5 text-[11px] text-slate-700 font-mono break-all">{rLanIps.length ? rLanIps.join(', ') : 'N/D'}</p>
+                                                                        </div>
+                                                                        
+                                                                        {rEndpointHost && (
+                                                                            <div className="rounded-xl bg-slate-50 px-3 py-2 border border-slate-100 col-span-2">
+                                                                                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Endpoint Publicado</p>
+                                                                                <p className="mt-0.5 text-[11px] text-slate-700 font-mono break-all">{rEndpointHost}</p>
+                                                                            </div>
+                                                                        )}
+                                                                        
+                                                                        {rDiscardedIps.length > 0 && (
+                                                                            <div className="rounded-xl bg-amber-50 px-3 py-2 border border-amber-100 col-span-2">
+                                                                                <p className="text-[9px] font-bold uppercase tracking-wider text-amber-700">Virtual IPs</p>
+                                                                                <p className="mt-0.5 text-[11px] text-amber-900 font-mono break-all">{rDiscardedIps.join(', ')}</p>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+
+                                                                    <div className="mt-3 flex items-center justify-between pt-3 border-t border-slate-100 text-[11px] text-slate-500">
+                                                                        <div className="flex flex-col">
+                                                                            <span>v {formatApkVersion(mockTerminal)}</span>
+                                                                            {rIsOutOfVersion && <span className="text-amber-600 font-bold">Desfasado</span>}
+                                                                        </div>
+                                                                        <div className="text-right">
+                                                                            <p>Tick: {formatDateTime(reg.last_seen_at)}</p>
+                                                                            <p className="font-bold text-violet-600 mt-0.5">{getRoleLabel(mockTerminal)}</p>
+                                                                        </div>
+                                                                    </div>
                                                                 </div>
-                                                            ) : null}
-                                                        </div>
-                                                        {isOutOfVersion && referenceVersionCandidate ? (
-                                                            <p className="mt-2 text-xs text-amber-700">
-                                                                Debe alinearse con <span className="font-bold">{referenceVersionCandidate.label}</span>.
-                                                            </p>
-                                                        ) : null}
-                                                    </div>
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Rol</p>
-                                                        <div className="mt-1 flex items-center gap-2 text-slate-700">
-                                                            <Server size={14} className="text-violet-500" />
-                                                            <span>{getRoleLabel(terminal)}</span>
-                                                        </div>
-                                                    </div>
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Último Heartbeat</p>
-                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.registry?.last_seen_at)}</p>
-                                                    </div>
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Último Check-in</p>
-                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.last_checkin_at)}</p>
-                                                    </div>
-                                                    <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
-                                                        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Creada</p>
-                                                        <p className="mt-1 text-slate-700">{formatDateTime(terminal.created_at)}</p>
+                                                            );
+                                                        })}
                                                     </div>
                                                 </div>
                                             </div>

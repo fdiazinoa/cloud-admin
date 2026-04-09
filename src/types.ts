@@ -82,6 +82,7 @@ export interface TenantTerminalSnapshot {
     last_checkin_at?: string | null;
     created_at?: string | null;
     registry?: TenantTerminalRegistryEntry | null;
+    registries: TenantTerminalRegistryEntry[];
 }
 
 export interface BillingPlan {
