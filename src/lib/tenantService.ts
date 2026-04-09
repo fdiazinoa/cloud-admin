@@ -305,44 +305,69 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         }
     }
 
-    const snapshots: TenantTerminalSnapshot[] = terminalRows.map((terminal) => {
-        const deviceToken =
-            terminal.device_token
-            || terminal.device_id
-            || terminal.current_device_id
-            || null;
-        const terminalName =
-            terminal.name
-            || terminal.terminal_name
-            || terminal.label
-            || terminal.id;
-            
-        let registries: TenantTerminalRegistryEntry[] = [];
-        if (registriesByTerminalId.has(terminal.id)) {
-            registries = registriesByTerminalId.get(terminal.id) || [];
-        } else if (deviceToken && registriesByDeviceId.has(deviceToken)) {
-            registries = registriesByDeviceId.get(deviceToken) || [];
+    const groupedTerminalRows = new Map<string, any[]>();
+    for (const terminal of terminalRows) {
+        const terminalName = (terminal.name || terminal.terminal_name || terminal.label || terminal.id || "Terminal Sin Nombre").trim();
+        const groupKey = terminalName.toUpperCase();
+        const arr = groupedTerminalRows.get(groupKey) || [];
+        arr.push(terminal);
+        groupedTerminalRows.set(groupKey, arr);
+    }
+
+    const snapshots: TenantTerminalSnapshot[] = [];
+
+    for (const terminalsGroup of groupedTerminalRows.values()) {
+        // We pick the most recently created terminal row as the "primary" one for metadata
+        const primaryTerminal = terminalsGroup.reduce((newest, current) => {
+            const newestTime = new Date(newest.created_at || 0).getTime();
+            const currentTime = new Date(current.created_at || 0).getTime();
+            return currentTime > newestTime ? current : newest;
+        });
+
+        const deviceToken = primaryTerminal.device_token || primaryTerminal.device_id || primaryTerminal.current_device_id || null;
+        const terminalName = primaryTerminal.name || primaryTerminal.terminal_name || primaryTerminal.label || primaryTerminal.id;
+
+        const registriesMap = new Map<string, TenantTerminalRegistryEntry>();
+
+        for (const terminal of terminalsGroup) {
+            if (registriesByTerminalId.has(terminal.id)) {
+                for (const reg of registriesByTerminalId.get(terminal.id)!) {
+                     if (reg.id) {
+                         registriesMap.set(reg.id, reg);
+                         matchedRegistryIds.add(reg.id);
+                     }
+                }
+            }
+            const dt = terminal.device_token || terminal.device_id || terminal.current_device_id;
+            if (dt && registriesByDeviceId.has(dt)) {
+                for (const reg of registriesByDeviceId.get(dt)!) {
+                     if (reg.id) {
+                         registriesMap.set(reg.id, reg);
+                         matchedRegistryIds.add(reg.id);
+                     }
+                }
+            }
         }
 
-        const registry = registries.length > 0 ? registries[0] : null;
-        
-        for (const reg of registries) {
-            if (reg.id) matchedRegistryIds.add(reg.id);
-        }
+        const consolidatedRegistries = Array.from(registriesMap.values());
+        // Sort registries by last_seen_at DESC so the most recent heartbeat is first
+        consolidatedRegistries.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
 
-        return {
-            id: terminal.id,
-            tenant_id: terminal.tenant_id,
-            terminal_id: terminal.id,
+        const registry = consolidatedRegistries.length > 0 ? consolidatedRegistries[0] : null;
+
+        snapshots.push({
+            id: primaryTerminal.id,
+            tenant_id: primaryTerminal.tenant_id,
+            terminal_id: primaryTerminal.id,
             name: terminalName,
             device_token: deviceToken,
-            is_active: terminal.is_active ?? terminal.active ?? true,
-            last_checkin_at: terminal.last_checkin_at || terminal.last_seen_at || terminal.updated_at || null,
-            created_at: terminal.created_at || null,
+            is_active: primaryTerminal.is_active ?? primaryTerminal.active ?? true,
+            last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.updated_at || null,
+            created_at: primaryTerminal.created_at || null,
             registry,
-            registries,
-        };
-    });
+            registries: consolidatedRegistries,
+        });
+    }
 
     const orphanedRegistriesGrouped = new Map<string, TenantTerminalRegistryEntry[]>();
 
