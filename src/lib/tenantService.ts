@@ -35,6 +35,8 @@ type TenantUpdatePayload = {
     phone: string | null;
     type: TenantType;
     cloud_sync: boolean;
+    max_pos_terminals?: number;
+    max_erp_users?: number;
 };
 
 function normalizeOptional(value?: string): string | null {

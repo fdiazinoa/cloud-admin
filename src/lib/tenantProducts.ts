@@ -6,6 +6,8 @@ export interface TenantProductSelection {
     pos: boolean;
     erp: boolean;
     backup: boolean;
+    pos_licenses: number;
+    erp_users: number;
 }
 
 export interface TenantProductDefinition {
@@ -36,16 +38,25 @@ export function getDefaultTenantProducts(): TenantProductSelection {
     return {
         pos: true,
         erp: true,
-        backup: true
+        backup: true,
+        pos_licenses: 1,
+        erp_users: 1
     };
 }
 
-export function deriveProductsFromTenant(type: TenantType | undefined, cloudSync: boolean | undefined): TenantProductSelection {
+export function deriveProductsFromTenant(
+    type: TenantType | undefined,
+    cloudSync: boolean | undefined,
+    maxPosTerminals?: number,
+    maxErpUsers?: number
+): TenantProductSelection {
     if (type === 'pos_only') {
         return {
             pos: true,
             erp: false,
-            backup: cloudSync ?? true
+            backup: cloudSync ?? true,
+            pos_licenses: maxPosTerminals ?? 1,
+            erp_users: maxErpUsers ?? 1
         };
     }
 
@@ -53,14 +64,18 @@ export function deriveProductsFromTenant(type: TenantType | undefined, cloudSync
         return {
             pos: false,
             erp: true,
-            backup: cloudSync ?? true
+            backup: cloudSync ?? true,
+            pos_licenses: maxPosTerminals ?? 1,
+            erp_users: maxErpUsers ?? 1
         };
     }
 
     return {
         pos: true,
         erp: true,
-        backup: cloudSync ?? true
+        backup: cloudSync ?? true,
+        pos_licenses: maxPosTerminals ?? 1,
+        erp_users: maxErpUsers ?? 1
     };
 }
 

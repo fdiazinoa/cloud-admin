@@ -229,7 +229,7 @@ export const Tenants: React.FC = () => {
             legalName: tenant.legal_name || '',
             taxId: tenant.tax_id || '',
             phone: tenant.phone || '',
-            products: deriveProductsFromTenant(tenant.type, tenant.cloud_sync),
+            products: deriveProductsFromTenant(tenant.type, tenant.cloud_sync, tenant.max_pos_terminals, tenant.max_erp_users),
         });
         setIsEditModalOpen(true);
     };
@@ -271,6 +271,8 @@ export const Tenants: React.FC = () => {
                 phone: normalizeOptional(editFormData.phone),
                 type: productConfig.type,
                 cloud_sync: productConfig.cloudSync,
+                max_pos_terminals: editFormData.products.pos_licenses,
+                max_erp_users: editFormData.products.erp_users,
             });
             closeEditModal();
             await fetchTenants();
