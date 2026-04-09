@@ -450,8 +450,6 @@ export const Tenants: React.FC = () => {
     const getLanIps = (terminal: TenantTerminalSnapshot) =>
         getReportedIps(terminal).filter((ip) => isPrivateLanIp(ip) && !isLikelyVirtualIp(ip));
 
-    const getDiscardedIps = (terminal: TenantTerminalSnapshot) =>
-        getReportedIps(terminal).filter((ip) => !getLanIps(terminal).includes(ip));
 
     const getPreferredLanIp = (terminal: TenantTerminalSnapshot) => {
         const endpointHost = normalizeIp(parseEndpointHost(terminal.registry?.endpoint_url));
@@ -884,74 +882,56 @@ export const Tenants: React.FC = () => {
 
                                                 <div className="p-5 bg-slate-100/30">
                                                     <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-4">Dispositivos y Activaciones Registrados</h5>
-                                                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                                                        {(terminal.registries || []).map((reg, idx) => {
-                                                            const mockTerminal = { ...terminal, registry: reg };
-                                                            const rStatusLabel = getRegistryStatusLabel(mockTerminal);
-                                                            const rIsOnline = rStatusLabel === 'ONLINE';
-                                                            const rVersionKey = getApkVersionKey(mockTerminal);
-                                                            const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
-                                                            const rDiscardedIps = getDiscardedIps(mockTerminal);
-                                                            const rLanIps = getLanIps(mockTerminal);
-                                                            const rEndpointHost = reg.endpoint_url || null;
-
-                                                            return (
-                                                                <div key={reg.id || idx} className={`rounded-2xl border bg-white p-4 ${rIsOutOfVersion ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200'}`}>
-                                                                    <div className="flex items-start justify-between mb-4 gap-2">
-                                                                        <div className="flex flex-col gap-1">
-                                                                            <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Device ID / Token</p>
-                                                                            <p className="text-xs font-mono font-bold text-slate-700 break-all">{reg.device_id || terminal.device_token || 'N/D'}</p>
-                                                                        </div>
-                                                                        <div className="flex flex-col items-end gap-2 shrink-0">
-                                                                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${rIsOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                                                                                {rStatusLabel}
-                                                                            </span>
-                                                                        </div>
-                                                                    </div>
-
-                                                                    <div className="grid grid-cols-2 gap-2 text-sm">
-                                                                        <div className="rounded-xl bg-slate-50 px-3 py-2 border border-slate-100">
-                                                                            <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Hostname</p>
-                                                                            <p className="mt-0.5 text-xs text-slate-700 truncate">{reg.hostname || 'N/D'}</p>
-                                                                        </div>
-                                                                        <div className="rounded-xl bg-emerald-50 px-3 py-2 border border-emerald-100">
-                                                                            <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-700">IP Recomendada</p>
-                                                                            <p className="mt-0.5 text-xs text-emerald-900 font-mono">{getPreferredLanIp(mockTerminal)}</p>
-                                                                        </div>
-                                                                        
-                                                                        <div className="rounded-xl bg-slate-50 px-3 py-2 border border-slate-100 col-span-2">
-                                                                            <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">IPs LAN válidas</p>
-                                                                            <p className="mt-0.5 text-[11px] text-slate-700 font-mono break-all">{rLanIps.length ? rLanIps.join(', ') : 'N/D'}</p>
-                                                                        </div>
-                                                                        
-                                                                        {rEndpointHost && (
-                                                                            <div className="rounded-xl bg-slate-50 px-3 py-2 border border-slate-100 col-span-2">
-                                                                                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Endpoint Publicado</p>
-                                                                                <p className="mt-0.5 text-[11px] text-slate-700 font-mono break-all">{rEndpointHost}</p>
-                                                                            </div>
-                                                                        )}
-                                                                        
-                                                                        {rDiscardedIps.length > 0 && (
-                                                                            <div className="rounded-xl bg-amber-50 px-3 py-2 border border-amber-100 col-span-2">
-                                                                                <p className="text-[9px] font-bold uppercase tracking-wider text-amber-700">Virtual IPs</p>
-                                                                                <p className="mt-0.5 text-[11px] text-amber-900 font-mono break-all">{rDiscardedIps.join(', ')}</p>
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-
-                                                                    <div className="mt-3 flex items-center justify-between pt-3 border-t border-slate-100 text-[11px] text-slate-500">
-                                                                        <div className="flex flex-col">
-                                                                            <span>v {formatApkVersion(mockTerminal)}</span>
-                                                                            {rIsOutOfVersion && <span className="text-amber-600 font-bold">Desfasado</span>}
-                                                                        </div>
-                                                                        <div className="text-right">
-                                                                            <p>Tick: {formatDateTime(reg.last_seen_at)}</p>
-                                                                            <p className="font-bold text-violet-600 mt-0.5">{getRoleLabel(mockTerminal)}</p>
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })}
+                                                    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                                                        <table className="w-full text-left text-sm whitespace-nowrap">
+                                                            <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
+                                                                <tr>
+                                                                    <th className="px-4 py-3 font-bold">Estado</th>
+                                                                    <th className="px-4 py-3 font-bold">Device / Modelo</th>
+                                                                    <th className="px-4 py-3 font-bold">Red / Endpoint</th>
+                                                                    <th className="px-4 py-3 font-bold">Versión APK</th>
+                                                                    <th className="px-4 py-3 font-bold text-right">Último Tick</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-slate-50">
+                                                                {(terminal.registries || []).map((reg, idx) => {
+                                                                    const mockTerminal = { ...terminal, registry: reg };
+                                                                    const rStatusLabel = getRegistryStatusLabel(mockTerminal);
+                                                                    const rIsOnline = rStatusLabel === 'ONLINE';
+                                                                    const rVersionKey = getApkVersionKey(mockTerminal);
+                                                                    const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
+                                                                    const prefLanIp = getPreferredLanIp(mockTerminal);
+                                                                    
+                                                                    return (
+                                                                        <tr key={reg.id || idx} className={`hover:bg-slate-50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/20' : ''}`}>
+                                                                            <td className="px-4 py-3 align-top">
+                                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center w-min ${rIsOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                                                    {rStatusLabel}
+                                                                                </span>
+                                                                            </td>
+                                                                            <td className="px-4 py-3 align-top">
+                                                                                <p className="font-mono font-bold text-slate-700 text-[11px] mb-0.5">{reg.device_id || terminal.device_token || 'N/D'}</p>
+                                                                                <p className="text-[10px] text-slate-500">{reg.hostname || 'N/D'}</p>
+                                                                            </td>
+                                                                            <td className="px-4 py-3 align-top">
+                                                                                <p className="font-mono text-emerald-700 font-bold text-[11px] mb-0.5">{prefLanIp}</p>
+                                                                                {reg.endpoint_url && <p className="text-[10px] text-slate-400 font-mono" title="Endpoint">{reg.endpoint_url}</p>}
+                                                                            </td>
+                                                                            <td className="px-4 py-3 align-top">
+                                                                                <div className="flex flex-col items-start gap-0.5">
+                                                                                    <span className="font-mono text-slate-700 text-[11px]">v {formatApkVersion(mockTerminal)}</span>
+                                                                                    {rIsOutOfVersion && <span className="text-[10px] text-amber-600 font-bold">Desfasado</span>}
+                                                                                </div>
+                                                                            </td>
+                                                                            <td className="px-4 py-3 align-top text-right">
+                                                                                <p className="text-[10px] text-slate-500 mb-0.5">{formatDateTime(reg.last_seen_at)}</p>
+                                                                                <p className="font-bold text-violet-600 text-[10px]">{getRoleLabel(mockTerminal)}</p>
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
                                                     </div>
                                                 </div>
                                             </div>

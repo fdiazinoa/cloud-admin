@@ -372,20 +372,34 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     const orphanedRegistriesGrouped = new Map<string, TenantTerminalRegistryEntry[]>();
 
     for (const row of registryRows) {
-        if (matchedRegistryIds.has(row.id)) continue;
-        const key = row.terminal_id || row.device_id || row.id;
-        const arr = orphanedRegistriesGrouped.get(key) || [];
-        arr.push(row);
-        orphanedRegistriesGrouped.set(key, arr);
+        if (row.id && matchedRegistryIds.has(row.id)) continue;
+        
+        const terminalName = (row.terminal_name || row.terminal_id || row.device_id || "Terminal sin catálogo").trim();
+        const groupKey = terminalName.toUpperCase();
+
+        const existingSnapshot = snapshots.find(s => (s.name || '').trim().toUpperCase() === groupKey);
+
+        if (existingSnapshot) {
+            existingSnapshot.registries = existingSnapshot.registries || [];
+            existingSnapshot.registries.push(row);
+            existingSnapshot.registries.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
+            existingSnapshot.registry = existingSnapshot.registries[0];
+            if (row.id) matchedRegistryIds.add(row.id);
+        } else {
+            const arr = orphanedRegistriesGrouped.get(groupKey) || [];
+            arr.push(row);
+            orphanedRegistriesGrouped.set(groupKey, arr);
+        }
     }
 
     for (const arr of orphanedRegistriesGrouped.values()) {
+        arr.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
         const primary = arr[0];
         snapshots.push({
-            id: primary.id,
+            id: primary.id || primary.device_id || `orphan-${Date.now()}`,
             tenant_id: primary.tenant_id,
             terminal_id: primary.terminal_id || null,
-            name: primary.terminal_name || primary.terminal_id || primary.device_id || "Terminal sin catálogo",
+            name: (primary.terminal_name || primary.terminal_id || primary.device_id || "Terminal sin catálogo").trim(),
             device_token: primary.device_id || null,
             is_active: (primary.status || "").toUpperCase() === "ONLINE",
             last_checkin_at: primary.last_seen_at || null,
