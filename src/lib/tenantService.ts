@@ -37,6 +37,8 @@ type TenantUpdatePayload = {
     cloud_sync: boolean;
     max_pos_terminals?: number;
     max_erp_users?: number;
+    email?: string;
+    password?: string;
 };
 
 function normalizeOptional(value?: string): string | null {
@@ -305,7 +307,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         }
     }
 
-    const groupedTerminalRows = new Map<string, any[]>();
+    const groupedTerminalRows = new Map<string, Terminal[]>();
     for (const terminal of terminalRows) {
         const terminalName = (terminal.name || terminal.terminal_name || terminal.label || terminal.id || "Terminal Sin Nombre").trim();
         const groupKey = terminalName.toUpperCase();
@@ -455,6 +457,54 @@ export async function reactivateTenant(id: string): Promise<void> {
     if (error) throw error;
 }
 
+export async function updateTenantCredentials(
+    tenantId: string,
+    payload: { email?: string; password?: string }
+): Promise<void> {
+    const { email, password } = payload;
+    if (!email && !password) return;
+
+    // 1. Get the current tenant to get the current email
+    const { data: tenant, error: fetchErr } = await supabaseAdmin
+        .from("tenants")
+        .select("email")
+        .eq("id", tenantId)
+        .single();
+
+    if (fetchErr) throw fetchErr;
+
+    // 2. Find the user in Auth by current email or tenant_id
+    const { data: { users }, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
+    if (listErr) throw listErr;
+
+    const authUser = users.find((u) => u.email === (tenant as { email: string }).email || u.user_metadata?.tenant_id === tenantId);
+    if (!authUser) throw new Error("Usuario de autenticación no encontrado para este tenant");
+
+    // 3. Update Auth
+    const updateData: { email?: string; password?: string; email_confirm?: boolean } = {};
+    if (email && email.trim().toLowerCase() !== (tenant as { email: string }).email) {
+        updateData.email = email.trim().toLowerCase();
+        updateData.email_confirm = true;
+    }
+    if (password && password.trim()) {
+        updateData.password = password.trim();
+    }
+
+    if (Object.keys(updateData).length > 0) {
+        const { error: authErr } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, updateData);
+        if (authErr) throw authErr;
+    }
+
+    // 4. Update DB if email changed
+    if (email && email.trim().toLowerCase() !== (tenant as { email: string }).email) {
+        const { error: dbErr } = await supabaseAdmin
+            .from("tenants")
+            .update({ email: email.trim().toLowerCase() })
+            .eq("id", tenantId);
+        if (dbErr) throw dbErr;
+    }
+}
+
 export async function toggleTerminalActiveStatus(terminalId: string, isActive: boolean): Promise<void> {
     const { data: terminal, error: getErr } = await supabaseAdmin
         .schema("public")
@@ -489,5 +539,6 @@ export const tenantService = {
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
+    updateTenantCredentials,
     toggleTerminalActiveStatus,
 };

@@ -49,6 +49,10 @@ export interface Terminal {
     last_seen_at?: string | null;
     created_at?: string | null;
     updated_at?: string | null;
+    config?: {
+        is_active?: boolean;
+        [key: string]: unknown;
+    } | null;
 }
 
 export interface TenantTerminalRegistryEntry {

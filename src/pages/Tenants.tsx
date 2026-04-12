@@ -53,6 +53,8 @@ export const Tenants: React.FC = () => {
         legalName: '',
         taxId: '',
         phone: '',
+        email: '',
+        password: '',
         products: getDefaultTenantProducts() as TenantProductSelection,
     });
 
@@ -229,6 +231,8 @@ export const Tenants: React.FC = () => {
             legalName: tenant.legal_name || '',
             taxId: tenant.tax_id || '',
             phone: tenant.phone || '',
+            email: tenant.email || '',
+            password: '',
             products: deriveProductsFromTenant(tenant.type, tenant.cloud_sync, tenant.max_pos_terminals, tenant.max_erp_users),
         });
         setIsEditModalOpen(true);
@@ -271,9 +275,10 @@ export const Tenants: React.FC = () => {
             setTenantTerminals(prev => 
                 prev.map(t => t.id === terminalId ? { ...t, is_active: newStatus } : t)
             );
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : JSON.stringify(err);
             console.error('Error toggling terminal status:', err);
-            alert(`Error al cambiar el estado de la terminal: ${err?.message || JSON.stringify(err)}`);
+            alert(`Error al cambiar el estado de la terminal: ${errorMessage}`);
         }
     };
     const handleUpdateTenant = async (e: React.FormEvent) => {
@@ -294,6 +299,14 @@ export const Tenants: React.FC = () => {
                 max_pos_terminals: editFormData.products.pos_licenses,
                 max_erp_users: editFormData.products.erp_users,
             });
+
+            if (editFormData.email.trim().toLowerCase() !== editingTenant.email || editFormData.password.trim()) {
+                await tenantService.updateTenantCredentials(editingTenant.id, {
+                    email: editFormData.email.trim().toLowerCase(),
+                    password: editFormData.password.trim() || undefined,
+                });
+            }
+
             closeEditModal();
             await fetchTenants();
         } catch (err: unknown) {
@@ -1028,15 +1041,29 @@ export const Tenants: React.FC = () => {
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-1">Email de Contacto</label>
-                                <input
-                                    type="email"
-                                    value={editingTenant.email}
-                                    disabled
-                                    className="w-full px-4 py-3 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 cursor-not-allowed"
-                                />
-                                <p className="text-xs text-slate-500 mt-1">El email de acceso se mantiene fijo para no desincronizar autenticación.</p>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Email de Acceso</label>
+                                    <input
+                                        type="email"
+                                        value={editFormData.email}
+                                        onChange={e => setEditFormData({ ...editFormData, email: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="admin@empresa.com"
+                                    />
+                                    <p className="text-[10px] text-slate-500 mt-1">Sincroniza con Supabase Auth.</p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Nueva Contraseña</label>
+                                    <input
+                                        type="password"
+                                        value={editFormData.password}
+                                        onChange={e => setEditFormData({ ...editFormData, password: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Dejar vacío para no cambiar"
+                                    />
+                                    <p className="text-[10px] text-slate-500 mt-1">Fuerza el cambio en el próximo acceso.</p>
+                                </div>
                             </div>
 
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
