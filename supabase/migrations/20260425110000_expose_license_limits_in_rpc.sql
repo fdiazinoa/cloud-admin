@@ -1,11 +1,5 @@
 BEGIN;
 
--- Phase 1 is safe to apply before touching POS or ERP clients.
--- It closes the landlord.subscriptions advisor finding and prepares
--- RPCs so external clients can stop querying landlord.tenants directly.
-
-ALTER TABLE IF EXISTS landlord.subscriptions ENABLE ROW LEVEL SECURITY;
-
 DROP FUNCTION IF EXISTS public.get_tenant_status(UUID);
 
 CREATE FUNCTION public.get_tenant_status(p_tenant_id UUID)
