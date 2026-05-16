@@ -43,6 +43,34 @@ interface TenantMatch {
     confidence: number;
 }
 
+interface IntegrationConfig {
+    resendApiKey?: string;
+    openAiApiKey?: string;
+    anthropicApiKey?: string;
+    fromAddress: string;
+    aiProvider: 'openai' | 'anthropic' | 'disabled';
+    aiModel: string;
+    aiTriageEnabled: boolean;
+    aiSentimentEnabled: boolean;
+    aiAutoDraftsEnabled: boolean;
+}
+
+interface IntegrationSettingsRow {
+    resend_from_name?: string | null;
+    resend_from_email?: string | null;
+    ai_provider?: 'openai' | 'anthropic' | 'disabled' | null;
+    ai_model?: string | null;
+    ai_triage_enabled?: boolean | null;
+    ai_sentiment_enabled?: boolean | null;
+    ai_auto_drafts_enabled?: boolean | null;
+}
+
+interface IntegrationSecretRow {
+    provider: 'resend' | 'openai' | 'anthropic';
+    secret_ciphertext: string;
+    secret_iv: string;
+}
+
 const categoryMap: Record<string, TicketCategory> = {
     ventas: 'Ventas',
     inventario: 'Inventario',
@@ -64,6 +92,94 @@ function getEnv(name: string) {
     const value = Deno.env.get(name);
     if (!value) throw new Error(`Missing required environment variable: ${name}`);
     return value;
+}
+
+function base64ToBytes(value: string) {
+    const binary = atob(value);
+    return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+async function getDecryptKey() {
+    const secret = Deno.env.get('INTEGRATION_SECRET_KEY');
+    if (!secret) return null;
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
+    return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['decrypt']);
+}
+
+async function decryptSecret(row: IntegrationSecretRow) {
+    const key = await getDecryptKey();
+    if (!key) return null;
+
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: base64ToBytes(row.secret_iv) },
+        key,
+        base64ToBytes(row.secret_ciphertext),
+    );
+
+    return new TextDecoder().decode(decrypted);
+}
+
+function formatFromAddress(name: string, email: string) {
+    const cleanName = name.trim() || 'Cloud Admin Soporte';
+    return `${cleanName} <${email.trim().toLowerCase()}>`;
+}
+
+async function loadIntegrationConfig(supabase: ReturnType<typeof createClient>): Promise<IntegrationConfig> {
+    const config: IntegrationConfig = {
+        resendApiKey: Deno.env.get('RESEND_API_KEY'),
+        openAiApiKey: Deno.env.get('OPENAI_API_KEY'),
+        anthropicApiKey: Deno.env.get('ANTHROPIC_API_KEY'),
+        fromAddress: Deno.env.get('HELPDESK_FROM_EMAIL') ?? 'Cloud Admin Soporte <apoyotenico@mercasend.com>',
+        aiProvider: 'openai',
+        aiModel: Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini',
+        aiTriageEnabled: true,
+        aiSentimentEnabled: true,
+        aiAutoDraftsEnabled: true,
+    };
+
+    const { data: settings, error: settingsError } = await supabase
+        .from('support_integration_settings')
+        .select('*')
+        .eq('id', 'helpdesk')
+        .maybeSingle();
+
+    if (!settingsError && settings) {
+        const row = settings as IntegrationSettingsRow;
+        config.aiProvider = row.ai_provider ?? config.aiProvider;
+        config.aiModel = row.ai_model ?? config.aiModel;
+        config.aiTriageEnabled = row.ai_triage_enabled ?? config.aiTriageEnabled;
+        config.aiSentimentEnabled = row.ai_sentiment_enabled ?? config.aiSentimentEnabled;
+        config.aiAutoDraftsEnabled = row.ai_auto_drafts_enabled ?? config.aiAutoDraftsEnabled;
+
+        if (row.resend_from_email) {
+            config.fromAddress = formatFromAddress(row.resend_from_name ?? 'Cloud Admin Soporte', row.resend_from_email);
+        }
+    } else if (settingsError) {
+        console.error('Integration settings fallback to env', settingsError);
+    }
+
+    const { data: secrets, error: secretsError } = await supabase
+        .from('support_integration_secrets')
+        .select('provider, secret_ciphertext, secret_iv');
+
+    if (!secretsError && secrets?.length) {
+        for (const secretRow of secrets as IntegrationSecretRow[]) {
+            try {
+                const decrypted = await decryptSecret(secretRow);
+                if (!decrypted) continue;
+
+                if (secretRow.provider === 'resend') config.resendApiKey = decrypted;
+                if (secretRow.provider === 'openai') config.openAiApiKey = decrypted;
+                if (secretRow.provider === 'anthropic') config.anthropicApiKey = decrypted;
+            } catch (error) {
+                console.error(`Could not decrypt ${secretRow.provider} integration secret`, error);
+            }
+        }
+    } else if (secretsError) {
+        console.error('Integration secrets fallback to env', secretsError);
+    }
+
+    return config;
 }
 
 function extractEmailAddress(rawFrom: string) {
@@ -270,10 +386,10 @@ Deno.serve(async (request) => {
             },
         );
 
-        const resendApiKey = getEnv('RESEND_API_KEY');
-        const openAiApiKey = Deno.env.get('OPENAI_API_KEY');
-        const openAiModel = Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini';
-        const fromAddress = Deno.env.get('HELPDESK_FROM_EMAIL') ?? 'Cloud Admin Soporte <apoyotenico@mercasend.com>';
+        const integrationConfig = await loadIntegrationConfig(supabase);
+        if (!integrationConfig.resendApiKey) {
+            throw new Error('Missing Resend API key. Configure it in Cloud Admin or RESEND_API_KEY.');
+        }
 
         const event = await request.json() as ResendInboundEvent;
         if (event.type && event.type !== 'email.received') {
@@ -306,16 +422,18 @@ Deno.serve(async (request) => {
         const senderEmail = extractEmailAddress(inbound.from);
         const subject = inbound.subject?.trim() || 'Solicitud técnica por email';
         const body = (inbound.text ?? inbound.textBody ?? inbound.text_body ?? '').trim()
-            || (inbound.email_id ? await getInboundEmailBody(inbound.email_id, resendApiKey) : '')
+            || (inbound.email_id ? await getInboundEmailBody(inbound.email_id, integrationConfig.resendApiKey) : '')
             || '(Correo recibido sin cuerpo de texto plano disponible.)';
 
-        const triage = await runAiTriage({
-            openAiApiKey,
-            model: openAiModel,
-            from: senderEmail,
-            subject,
-            body,
-        });
+        const triage = integrationConfig.aiTriageEnabled && integrationConfig.aiProvider === 'openai'
+            ? await runAiTriage({
+                openAiApiKey: integrationConfig.openAiApiKey,
+                model: integrationConfig.aiModel,
+                from: senderEmail,
+                subject,
+                body,
+            })
+            : heuristicTriage(subject, body);
 
         const contactLookup = await supabase
             .from('support_contacts')
@@ -412,11 +530,11 @@ Deno.serve(async (request) => {
         const autoReply = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
-                Authorization: `Bearer ${resendApiKey}`,
+                Authorization: `Bearer ${integrationConfig.resendApiKey}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                from: fromAddress,
+                from: integrationConfig.fromAddress,
                 to: [senderEmail],
                 subject: `Ticket recibido: ${subject}`,
                 text: `Hola, hemos recibido tu solicitud técnica. Se ha generado el ticket #${ticketId}. Un agente te responderá a la brevedad posible.`,
