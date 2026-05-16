@@ -54,6 +54,8 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
     db: { schema: 'landlord' }
 });
 
+export const supabaseProjectUrl = supabaseUrl;
+
 // TODO: Move all service-role operations to a trusted backend or Edge Function.
 export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
