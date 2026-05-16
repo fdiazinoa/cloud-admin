@@ -4,7 +4,6 @@ import {
     CheckCircle2,
     Clipboard,
     ExternalLink,
-    KeyRound,
     Mail,
     Save,
     ShieldCheck,
@@ -46,11 +45,6 @@ const defaultSettings: IntegrationSettings = {
 function getWebhookUrl() {
     if (!supabaseProjectUrl) return `https://<PROJECT_REF>.supabase.co/functions/v1/${functionName}`;
     return `${supabaseProjectUrl.replace(/\/$/, '')}/functions/v1/${functionName}`;
-}
-
-function getSettingsUrl() {
-    if (!supabaseProjectUrl) return '';
-    return `${supabaseProjectUrl.replace(/\/$/, '')}/functions/v1/${settingsFunctionName}`;
 }
 
 interface CopyButtonProps {
@@ -141,10 +135,8 @@ function formatSecretStatus(statuses: SecretStatus[], provider: SecretStatus['pr
 
 export const Configuration: React.FC = () => {
     const webhookUrl = useMemo(() => getWebhookUrl(), []);
-    const settingsUrl = useMemo(() => getSettingsUrl(), []);
     const [settings, setSettings] = useState<IntegrationSettings>(defaultSettings);
     const [secretStatuses, setSecretStatuses] = useState<SecretStatus[]>([]);
-    const [adminToken, setAdminToken] = useState('');
     const [resendApiKey, setResendApiKey] = useState('');
     const [openAiApiKey, setOpenAiApiKey] = useState('');
     const [anthropicApiKey, setAnthropicApiKey] = useState('');
@@ -191,42 +183,23 @@ export const Configuration: React.FC = () => {
     };
 
     const handleSave = async () => {
-        if (!settingsUrl) {
-            setSaveState('error');
-            setMessage('Falta VITE_SUPABASE_URL para llamar la función de configuración.');
-            return;
-        }
-
-        if (!adminToken.trim()) {
-            setSaveState('error');
-            setMessage('Ingresa el token administrador de configuración para guardar cambios.');
-            return;
-        }
-
         setSaveState('saving');
         setMessage('');
 
-        const response = await fetch(settingsUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'x-config-admin-token': adminToken,
-            },
-            body: JSON.stringify({
+        const { data: payload, error } = await supabaseAdmin.functions.invoke(settingsFunctionName, {
+            body: {
                 settings,
                 secrets: {
                     resend_api_key: resendApiKey || undefined,
                     openai_api_key: openAiApiKey || undefined,
                     anthropic_api_key: anthropicApiKey || undefined,
                 },
-            }),
+            },
         });
 
-        const payload = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
+        if (error) {
             setSaveState('error');
-            setMessage(payload.detail || payload.error || 'No se pudo guardar la configuración.');
+            setMessage(payload?.detail || payload?.error || error.message || 'No se pudo guardar la configuración.');
             return;
         }
 
@@ -362,19 +335,22 @@ export const Configuration: React.FC = () => {
                 <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
                     <div className="border-b border-slate-100 p-5">
                         <div className="flex items-center gap-2">
-                            <KeyRound size={18} className="text-amber-700" />
+                            <ShieldCheck size={18} className="text-emerald-700" />
                             <h2 className="text-lg font-black text-slate-900">Guardar configuración</h2>
                         </div>
                         <p className="mt-1 text-sm text-slate-500">
-                            Usa el token administrador de configuración. No se guarda en el navegador.
+                            Los cambios se guardan desde el panel administrativo y las API keys se cifran antes de persistirse.
                         </p>
                     </div>
-                    <div className="grid grid-cols-1 gap-4 p-5 lg:grid-cols-[1fr_auto] lg:items-end">
-                        <TextInput label="Token administrador de configuración" value={adminToken} onChange={setAdminToken} type="password" placeholder="CONFIG_ADMIN_TOKEN" />
+                    <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <p className="text-sm font-bold text-slate-800">Listo para guardar</p>
+                            <p className="mt-1 text-xs text-slate-500">Si dejas un campo de API key vacío, se conserva la key configurada actualmente.</p>
+                        </div>
                         <button
                             onClick={handleSave}
                             disabled={saveState === 'saving'}
-                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                             type="button"
                         >
                             <Save size={16} />
@@ -388,7 +364,7 @@ export const Configuration: React.FC = () => {
                     )}
                     <div className="mx-5 mb-5 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
                         <Sparkles size={15} className="mt-0.5 shrink-0 text-indigo-500" />
-                        Para habilitar esta pantalla, despliega la función `save-integration-settings` y define `CONFIG_ADMIN_TOKEN` e `INTEGRATION_SECRET_KEY` como secrets de Supabase.
+                        Para habilitar esta pantalla, despliega la función `save-integration-settings` y define `INTEGRATION_SECRET_KEY` como secret de Supabase. `CONFIG_ADMIN_TOKEN` queda opcional solo para llamadas externas.
                     </div>
                 </section>
             </div>
