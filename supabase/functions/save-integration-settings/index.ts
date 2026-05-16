@@ -46,6 +46,22 @@ function getEnv(name: string) {
     return value;
 }
 
+function isAuthorizedConfigurationRequest(request: Request) {
+    const expectedToken = Deno.env.get('CONFIG_ADMIN_TOKEN');
+    const receivedToken = request.headers.get('x-config-admin-token');
+
+    if (expectedToken && receivedToken === expectedToken) {
+        return true;
+    }
+
+    const authorization = request.headers.get('authorization') ?? '';
+    const bearerToken = authorization.replace(/^Bearer\s+/i, '').trim();
+    if (!bearerToken) return false;
+
+    const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY');
+    return bearerToken === serviceRoleKey;
+}
+
 function bytesToBase64(bytes: Uint8Array) {
     let binary = '';
     bytes.forEach((byte) => {
@@ -122,10 +138,7 @@ Deno.serve(async (request) => {
     }
 
     try {
-        const expectedToken = getEnv('CONFIG_ADMIN_TOKEN');
-        const receivedToken = request.headers.get('x-config-admin-token');
-
-        if (!receivedToken || receivedToken !== expectedToken) {
+        if (!isAuthorizedConfigurationRequest(request)) {
             return json({ error: 'Unauthorized configuration request' }, 401);
         }
 
