@@ -133,6 +133,18 @@ function formatSecretStatus(statuses: SecretStatus[], provider: SecretStatus['pr
     return `Configurado · termina en ${status.secret_last4 || '****'}`;
 }
 
+function formatSaveError(payload: { detail?: string; error?: string } | null, error: Error) {
+    if (payload?.detail || payload?.error) {
+        return payload.detail || payload.error || 'No se pudo guardar la configuración.';
+    }
+
+    if (error.message.includes('Failed to send a request')) {
+        return 'No se pudo contactar la función save-integration-settings. Verifica que esté desplegada y que Supabase tenga verify_jwt=false para permitir CORS.';
+    }
+
+    return error.message || 'No se pudo guardar la configuración.';
+}
+
 export const Configuration: React.FC = () => {
     const webhookUrl = useMemo(() => getWebhookUrl(), []);
     const [settings, setSettings] = useState<IntegrationSettings>(defaultSettings);
@@ -199,7 +211,7 @@ export const Configuration: React.FC = () => {
 
         if (error) {
             setSaveState('error');
-            setMessage(payload?.detail || payload?.error || error.message || 'No se pudo guardar la configuración.');
+            setMessage(formatSaveError(payload, error));
             return;
         }
 

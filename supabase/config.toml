@@ -1,0 +1,5 @@
+[functions.process-inbound-email]
+verify_jwt = false
+
+[functions.save-integration-settings]
+verify_jwt = false
