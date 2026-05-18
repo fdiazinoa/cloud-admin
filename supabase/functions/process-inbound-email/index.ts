@@ -27,6 +27,17 @@ interface ResendInboundEvent {
     };
 }
 
+interface ResendAttachment {
+    id: string;
+    filename: string;
+    size?: number;
+    content_type?: string;
+    content_disposition?: string;
+    content_id?: string | null;
+    download_url?: string;
+    expires_at?: string;
+}
+
 interface TriageResult {
     category: TicketCategory;
     priority: TicketPriority;
@@ -58,6 +69,7 @@ interface IntegrationConfig {
     openAiApiKey?: string;
     anthropicApiKey?: string;
     fromAddress: string;
+    replyToAddress: string;
     aiProvider: 'openai' | 'anthropic' | 'disabled';
     aiModel: string;
     aiTriageEnabled: boolean;
@@ -66,6 +78,7 @@ interface IntegrationConfig {
 }
 
 interface IntegrationSettingsRow {
+    resend_inbound_email?: string | null;
     resend_from_name?: string | null;
     resend_from_email?: string | null;
     ai_provider?: 'openai' | 'anthropic' | 'disabled' | null;
@@ -91,11 +104,40 @@ const categoryMap: Record<string, TicketCategory> = {
     otros: 'Otros',
 };
 
+const supportAttachmentsBucket = 'support-attachments';
+
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), {
         status,
         headers: { 'Content-Type': 'application/json' },
     });
+}
+
+function describeError(error: unknown) {
+    if (error instanceof Error) return error.message;
+    if (error && typeof error === 'object') {
+        const record = error as Record<string, unknown>;
+        const parts = [
+            typeof record.message === 'string' ? record.message : null,
+            typeof record.details === 'string' ? record.details : null,
+            typeof record.hint === 'string' ? record.hint : null,
+            typeof record.code === 'string' ? `code: ${record.code}` : null,
+        ].filter(Boolean);
+
+        if (parts.length) return parts.join(' | ');
+
+        try {
+            return JSON.stringify(record);
+        } catch (_) {
+            return String(error);
+        }
+    }
+
+    return String(error);
+}
+
+function failWithStage(stage: string, error: unknown): never {
+    throw new Error(`${stage}: ${describeError(error)}`);
 }
 
 function getEnv(name: string) {
@@ -140,6 +182,7 @@ async function loadIntegrationConfig(supabase: ReturnType<typeof createClient>):
         openAiApiKey: Deno.env.get('OPENAI_API_KEY'),
         anthropicApiKey: Deno.env.get('ANTHROPIC_API_KEY'),
         fromAddress: Deno.env.get('HELPDESK_FROM_EMAIL') ?? 'Cloud Admin Soporte <apoyotenico@mercasend.com>',
+        replyToAddress: Deno.env.get('HELPDESK_INBOUND_EMAIL') ?? 'apoyotenico@mercasend.com',
         aiProvider: 'openai',
         aiModel: Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini',
         aiTriageEnabled: true,
@@ -160,6 +203,7 @@ async function loadIntegrationConfig(supabase: ReturnType<typeof createClient>):
         config.aiTriageEnabled = row.ai_triage_enabled ?? config.aiTriageEnabled;
         config.aiSentimentEnabled = row.ai_sentiment_enabled ?? config.aiSentimentEnabled;
         config.aiAutoDraftsEnabled = row.ai_auto_drafts_enabled ?? config.aiAutoDraftsEnabled;
+        config.replyToAddress = row.resend_inbound_email ?? config.replyToAddress;
 
         if (row.resend_from_email) {
             config.fromAddress = formatFromAddress(row.resend_from_name ?? 'Cloud Admin Soporte', row.resend_from_email);
@@ -202,6 +246,113 @@ function extractDisplayName(rawFrom: string) {
     return rawFrom.replace(`<${email}>`, '').replace(email, '').replaceAll('"', '').trim() || null;
 }
 
+function stripQuotedEmailText(value: string) {
+    let text = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+
+    const quotePatterns = [
+        /\n\s*On\s.+?wrote:\s*[\s\S]*$/i,
+        /\s+On\s.+?wrote:\s*[\s\S]*$/i,
+        /\n\s*El\s+(lun|mar|mi[eé]|jue|vie|s[aá]b|dom).+?escribi[oó]:\s*[\s\S]*$/i,
+        /\s+El\s+(lun|mar|mi[eé]|jue|vie|s[aá]b|dom).+?escribi[oó]:\s*[\s\S]*$/i,
+        /\n\s*De:\s.+\n\s*Enviado:\s.+[\s\S]*$/i,
+        /\n\s*From:\s.+\n\s*Sent:\s.+[\s\S]*$/i,
+        /\n_{5,}[\s\S]*$/i,
+    ];
+
+    for (const pattern of quotePatterns) {
+        text = text.replace(pattern, '').trim();
+    }
+
+    text = text
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('>'))
+        .join('\n')
+        .replace(/\n?\[image:[^\]]+\]\s*/gi, '\n')
+        .replace(/\n--\s*\n[\s\S]*$/m, '')
+        .replace(/\n--\[image:[\s\S]*$/i, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+    return text || value.trim();
+}
+
+function sanitizeStorageName(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 120) || 'attachment';
+}
+
+async function getInboundAttachments(emailId: string, resendApiKey: string) {
+    const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}/attachments`, {
+        method: 'GET',
+        headers: {
+            Authorization: `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json',
+        },
+    });
+
+    if (!response.ok) {
+        console.error('Could not retrieve inbound email attachments', await response.text());
+        return [];
+    }
+
+    const payload = await response.json() as { data?: ResendAttachment[] };
+    return payload.data ?? [];
+}
+
+async function persistInboundAttachments(
+    supabase: ReturnType<typeof createClient>,
+    emailId: string,
+    resendApiKey: string,
+) {
+    const attachments = await getInboundAttachments(emailId, resendApiKey);
+    const storedAttachments = [];
+
+    for (const attachment of attachments) {
+        const fileName = sanitizeStorageName(attachment.filename || `${attachment.id}.bin`);
+        const storagePath = `${emailId}/${attachment.id}-${fileName}`;
+        let stored = false;
+
+        if (attachment.download_url) {
+            try {
+                const download = await fetch(attachment.download_url);
+                if (download.ok) {
+                    const bytes = new Uint8Array(await download.arrayBuffer());
+                    const upload = await supabase.storage
+                        .from(supportAttachmentsBucket)
+                        .upload(storagePath, bytes, {
+                            contentType: attachment.content_type || 'application/octet-stream',
+                            upsert: true,
+                        });
+
+                    stored = !upload.error;
+                    if (upload.error) console.error('Could not store inbound attachment', upload.error);
+                }
+            } catch (error) {
+                console.error('Attachment download/store failed', error);
+            }
+        }
+
+        storedAttachments.push({
+            id: attachment.id,
+            filename: attachment.filename,
+            size: attachment.size,
+            content_type: attachment.content_type,
+            content_disposition: attachment.content_disposition,
+            content_id: attachment.content_id,
+            resend_download_url: attachment.download_url,
+            resend_expires_at: attachment.expires_at,
+            storage_bucket: stored ? supportAttachmentsBucket : null,
+            storage_path: stored ? storagePath : null,
+        });
+    }
+
+    return storedAttachments;
+}
+
 function normalizeCategory(value?: string | null): TicketCategory {
     if (!value) return 'Otros';
     return categoryMap[value.toLowerCase()] ?? 'Otros';
@@ -213,9 +364,43 @@ function extractTicketNumberFromSubject(subject: string) {
 }
 
 function buildThreadSubject(ticketNumber: number | string, subject: string) {
-    const cleanSubject = subject.replace(/^\s*(re|fw|fwd):\s*/i, '').trim() || 'Solicitud técnica';
     const ticketToken = `[Ticket #${ticketNumber}]`;
-    return cleanSubject.includes(ticketToken) ? cleanSubject : `${ticketToken} ${cleanSubject}`;
+    const cleanSubject = subject
+        .replace(/^\s*(re|fw|fwd):\s*/i, '')
+        .replace(ticketToken, '')
+        .trim() || 'Solicitud técnica';
+
+    return `Re: ${ticketToken} ${cleanSubject}`;
+}
+
+function mergeEmailThreadContext(
+    currentContext: Record<string, unknown> | null | undefined,
+    inbound: NonNullable<ResendInboundEvent['data']>,
+) {
+    const messageIds = Array.isArray(currentContext?.email_thread_message_ids)
+        ? currentContext.email_thread_message_ids.filter((value): value is string => typeof value === 'string')
+        : [];
+    const updatedMessageIds = inbound.message_id
+        ? Array.from(new Set([...messageIds, inbound.message_id]))
+        : messageIds;
+
+    return {
+        ...(currentContext ?? {}),
+        channel: 'email',
+        resend_email_id: inbound.email_id ?? currentContext?.resend_email_id,
+        resend_message_id: inbound.message_id ?? currentContext?.resend_message_id,
+        email_thread_message_ids: updatedMessageIds,
+        last_inbound_at: new Date().toISOString(),
+    };
+}
+
+function buildThreadHeaders(messageId?: string) {
+    return messageId
+        ? {
+            'In-Reply-To': messageId,
+            References: messageId,
+        }
+        : undefined;
 }
 
 function findPhoneCandidate(text: string) {
@@ -465,8 +650,10 @@ Deno.serve(async (request) => {
     }
 
     let rawEventId: string | null = null;
+    let stage = 'start';
 
     try {
+        stage = 'init_supabase';
         const supabase = createClient(
             getEnv('SUPABASE_URL'),
             getEnv('SUPABASE_SERVICE_ROLE_KEY'),
@@ -476,11 +663,13 @@ Deno.serve(async (request) => {
             },
         );
 
+        stage = 'load_integration_config';
         const integrationConfig = await loadIntegrationConfig(supabase);
         if (!integrationConfig.resendApiKey) {
             throw new Error('Missing Resend API key. Configure it in Cloud Admin or RESEND_API_KEY.');
         }
 
+        stage = 'parse_event';
         const event = await request.json() as ResendInboundEvent;
         if (event.type && event.type !== 'email.received') {
             return json({ ok: true, ignored: true });
@@ -495,54 +684,71 @@ Deno.serve(async (request) => {
             external_id: emailId,
             payload: event,
         }).select('id').single();
+        if (rawInsert.error) failWithStage('record_raw_event', rawInsert.error);
 
         rawEventId = rawInsert.data?.id ?? null;
 
+        stage = 'check_duplicate_ticket';
         const existingTicket = await supabase
             .from('support_tickets')
             .select('id')
             .eq('source', 'Email')
             .eq('external_message_id', emailId)
             .maybeSingle();
+        if (existingTicket.error) failWithStage(stage, existingTicket.error);
 
         if (existingTicket.data?.id) {
             return json({ ok: true, duplicate: true, ticket_id: existingTicket.data.id });
         }
 
+        stage = 'extract_email_content';
         const senderEmail = extractEmailAddress(inbound.from);
         const subject = inbound.subject?.trim() || 'Solicitud técnica por email';
-        const body = (inbound.text ?? inbound.textBody ?? inbound.text_body ?? '').trim()
+        const rawBody = (inbound.text ?? inbound.textBody ?? inbound.text_body ?? '').trim()
             || (inbound.email_id ? await getInboundEmailBody(inbound.email_id, integrationConfig.resendApiKey) : '')
             || '(Correo recibido sin cuerpo de texto plano disponible.)';
+        const body = stripQuotedEmailText(rawBody);
+        const attachments = inbound.email_id
+            ? await persistInboundAttachments(supabase, inbound.email_id, integrationConfig.resendApiKey)
+            : [];
         const subjectTicketNumber = extractTicketNumberFromSubject(subject);
 
         if (subjectTicketNumber) {
             const threadedTicket = await supabase
                 .from('support_tickets')
-                .select('id, ticket_number')
+                .select('id, ticket_number, technical_context')
                 .eq('ticket_number', subjectTicketNumber)
                 .maybeSingle();
 
-            if (threadedTicket.error) throw threadedTicket.error;
+            if (threadedTicket.error) failWithStage('find_threaded_ticket', threadedTicket.error);
 
             if (threadedTicket.data?.id) {
                 const threadedMessage = await supabase.from('ticket_messages').insert({
                     ticket_id: threadedTicket.data.id,
                     sender_type: 'Client',
                     message: body.trim(),
+                    attachments,
                 });
 
-                if (threadedMessage.error) throw threadedMessage.error;
+                if (threadedMessage.error) failWithStage('append_threaded_message', threadedMessage.error);
 
-                await supabase
+                const threadedTicketUpdate = await supabase
                     .from('support_tickets')
-                    .update({ status: 'En_Proceso' })
+                    .update({
+                        status: 'En_Proceso',
+                        technical_context: mergeEmailThreadContext(
+                            threadedTicket.data.technical_context as Record<string, unknown> | null,
+                            inbound,
+                        ),
+                    })
                     .eq('id', threadedTicket.data.id);
+                if (threadedTicketUpdate.error) failWithStage('update_threaded_ticket', threadedTicketUpdate.error);
 
                 if (rawEventId) {
-                    await supabase.from('raw_support_events')
+                    const rawProcessed = await supabase.from('raw_support_events')
                         .update({ status: 'processed', processed_at: new Date().toISOString() })
                         .eq('id', rawEventId);
+                    if (rawProcessed.error) failWithStage('mark_raw_threaded_processed', rawProcessed.error);
                 }
 
                 return json({
@@ -554,6 +760,7 @@ Deno.serve(async (request) => {
             }
         }
 
+        stage = 'triage_email';
         const triage = integrationConfig.aiTriageEnabled && integrationConfig.aiProvider === 'openai'
             ? await runAiTriage({
                 openAiApiKey: integrationConfig.openAiApiKey,
@@ -564,11 +771,13 @@ Deno.serve(async (request) => {
             })
             : heuristicTriage(subject, body);
 
+        stage = 'lookup_contact';
         const contactLookup = await supabase
             .from('support_contacts')
             .select('id, tenant_id')
             .ilike('email', senderEmail)
             .maybeSingle();
+        if (contactLookup.error) failWithStage(stage, contactLookup.error);
 
         let contactId = contactLookup.data?.id ?? null;
         let tenantMatch: TenantMatch = {
@@ -577,11 +786,13 @@ Deno.serve(async (request) => {
         };
 
         if (!tenantMatch.id) {
+            stage = 'lookup_tenant';
             const tenantLookup = await supabase
                 .from('tenants')
                 .select('id, contact_email')
                 .ilike('contact_email', senderEmail)
                 .maybeSingle();
+            if (tenantLookup.error) failWithStage(stage, tenantLookup.error);
 
             tenantMatch = {
                 id: tenantLookup.data?.id ?? null,
@@ -590,6 +801,7 @@ Deno.serve(async (request) => {
         }
 
         if (!contactId) {
+            stage = 'create_contact';
             const contactInsert = await supabase
                 .from('support_contacts')
                 .insert({
@@ -608,10 +820,11 @@ Deno.serve(async (request) => {
                 .select('id')
                 .single();
 
-            if (contactInsert.error) throw contactInsert.error;
+            if (contactInsert.error) failWithStage(stage, contactInsert.error);
             contactId = contactInsert.data.id;
         }
 
+        stage = 'create_ticket';
         const ticketInsert = await supabase
             .from('support_tickets')
             .insert({
@@ -630,6 +843,8 @@ Deno.serve(async (request) => {
                     channel: 'email',
                     resend_email_id: inbound.email_id,
                     resend_message_id: inbound.message_id,
+                    email_thread_message_ids: inbound.message_id ? [inbound.message_id] : [],
+                    last_inbound_at: new Date().toISOString(),
                     to: inbound.to ?? [],
                     affected_module: triage.affected_module ?? undefined,
                     incident_fingerprint: triage.incident_fingerprint ?? undefined,
@@ -638,21 +853,24 @@ Deno.serve(async (request) => {
             .select('id, ticket_number')
             .single();
 
-        if (ticketInsert.error) throw ticketInsert.error;
+        if (ticketInsert.error) failWithStage(stage, ticketInsert.error);
 
         const ticketId = ticketInsert.data.id;
         const ticketNumber = ticketInsert.data.ticket_number ?? ticketId;
 
+        stage = 'create_ticket_message';
         const messageInsert = await supabase.from('ticket_messages').insert({
             ticket_id: ticketId,
             sender_type: 'Client',
             message: body.trim(),
+            attachments,
         });
 
-        if (messageInsert.error) throw messageInsert.error;
+        if (messageInsert.error) failWithStage(stage, messageInsert.error);
 
         let duplicateSignal = triage.duplicate_signal;
         if (triage.incident_fingerprint) {
+            stage = 'check_similar_tickets';
             const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
             const similarTickets = await supabase
                 .from('ai_ticket_insights')
@@ -665,7 +883,8 @@ Deno.serve(async (request) => {
             }
         }
 
-        await supabase.from('ai_ticket_insights').insert({
+        stage = 'create_ai_insights';
+        const insightInsert = await supabase.from('ai_ticket_insights').insert({
             ticket_id: ticketId,
             sentiment: triage.sentiment,
             sentiment_score: triage.sentiment_score,
@@ -685,7 +904,9 @@ Deno.serve(async (request) => {
             duplicate_signal: duplicateSignal,
             ai_tags: triage.ai_tags,
         });
+        if (insightInsert.error) failWithStage(stage, insightInsert.error);
 
+        stage = 'send_auto_reply';
         const autoReply = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
@@ -697,6 +918,8 @@ Deno.serve(async (request) => {
                 to: [senderEmail],
                 subject: buildThreadSubject(ticketNumber, subject),
                 text: `Hola, hemos recibido tu solicitud técnica. Se ha generado el ticket #${ticketNumber}. Un agente te responderá a la brevedad posible.`,
+                reply_to: [integrationConfig.replyToAddress],
+                headers: buildThreadHeaders(inbound.message_id),
             }),
         });
 
@@ -705,9 +928,11 @@ Deno.serve(async (request) => {
         }
 
         if (rawEventId) {
-            await supabase.from('raw_support_events')
+            stage = 'mark_raw_processed';
+            const rawProcessed = await supabase.from('raw_support_events')
                 .update({ status: 'processed', processed_at: new Date().toISOString() })
                 .eq('id', rawEventId);
+            if (rawProcessed.error) failWithStage(stage, rawProcessed.error);
         }
 
         return json({
@@ -734,7 +959,7 @@ Deno.serve(async (request) => {
                 await supabase.from('raw_support_events')
                     .update({
                         status: 'failed',
-                        error_message: error instanceof Error ? error.message : String(error),
+                        error_message: describeError(error),
                         processed_at: new Date().toISOString(),
                     })
                     .eq('id', rawEventId);
@@ -745,7 +970,8 @@ Deno.serve(async (request) => {
 
         return json({
             error: 'Inbound email processing failed',
-            detail: error instanceof Error ? error.message : String(error),
+            detail: describeError(error),
+            stage,
         }, 500);
     }
 });

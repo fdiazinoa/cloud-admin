@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.save-integration-settings]
 verify_jwt = false
+
+[functions.send-support-reply]
+verify_jwt = false

@@ -14,7 +14,7 @@ import {
     WifiOff,
     X,
 } from 'lucide-react';
-import { supabaseAdmin } from '../lib/supabase';
+import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
 
 type Sentiment = 'frustrated' | 'neutral' | 'positive';
 
@@ -79,7 +79,23 @@ interface Message {
     id: string;
     sender_type: 'Admin' | 'Client' | 'System';
     message: string;
+    attachments?: MessageAttachment[] | MessageAttachment | null;
     created_at: string;
+}
+
+interface MessageAttachment {
+    id?: string;
+    filename?: string;
+    content_type?: string;
+    size?: number;
+    storage_bucket?: string | null;
+    storage_path?: string | null;
+    resend_download_url?: string | null;
+    download_url?: string | null;
+    signed_url?: string | null;
+    to?: string;
+    channel?: string;
+    resend_email_id?: string;
 }
 
 interface ContactFormState {
@@ -164,6 +180,53 @@ function getTicketNumberLabel(ticket: Ticket) {
     return `#${ticket.ticket_number ?? ticket.id.slice(0, 8)}`;
 }
 
+function normalizeAttachments(value: Message['attachments']): MessageAttachment[] {
+    if (!value) return [];
+    return Array.isArray(value) ? value : [value];
+}
+
+function getDisplayAttachments(value: Message['attachments']) {
+    return normalizeAttachments(value).filter((attachment) => (
+        Boolean(attachment.filename || attachment.storage_path || attachment.signed_url || attachment.download_url || attachment.resend_download_url)
+    ));
+}
+
+function isImageAttachment(attachment: MessageAttachment) {
+    return attachment.content_type?.toLowerCase().startsWith('image/');
+}
+
+function formatFileSize(value?: number) {
+    if (!value) return '';
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function hydrateMessageAttachments(messages: Message[]) {
+    return Promise.all(messages.map(async (message) => {
+        const attachments = normalizeAttachments(message.attachments);
+        if (!attachments.length) return message;
+
+        const hydratedAttachments = await Promise.all(attachments.map(async (attachment) => {
+            if (!attachment.storage_bucket || !attachment.storage_path) return attachment;
+
+            const { data } = await supabaseAdmin.storage
+                .from(attachment.storage_bucket)
+                .createSignedUrl(attachment.storage_path, 60 * 60);
+
+            return {
+                ...attachment,
+                signed_url: data?.signedUrl ?? attachment.signed_url,
+            };
+        }));
+
+        return {
+            ...message,
+            attachments: hydratedAttachments,
+        };
+    }));
+}
+
 const SupportCommandCenter: React.FC = () => {
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -172,6 +235,7 @@ const SupportCommandCenter: React.FC = () => {
     const [filterStatus, setFilterStatus] = useState('Todos');
     const [filterSource, setFilterSource] = useState('Todos');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
+    const [isSendingReply, setIsSendingReply] = useState(false);
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
     const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -282,7 +346,8 @@ const SupportCommandCenter: React.FC = () => {
                 return;
             }
 
-            if (mounted) setMessages((data ?? []) as Message[]);
+            const hydratedMessages = await hydrateMessageAttachments((data ?? []) as Message[]);
+            if (mounted) setMessages(hydratedMessages);
         };
 
         fetchMessages();
@@ -293,8 +358,9 @@ const SupportCommandCenter: React.FC = () => {
                 schema: 'landlord',
                 table: 'ticket_messages',
                 filter: `ticket_id=eq.${selectedTicketId}`,
-            }, (payload) => {
-                if (mounted) setMessages((previous) => [...previous, payload.new as Message]);
+            }, async (payload) => {
+                const [hydratedMessage] = await hydrateMessageAttachments([payload.new as Message]);
+                if (mounted) setMessages((previous) => [...previous, hydratedMessage]);
             })
             .subscribe();
 
@@ -322,10 +388,34 @@ const SupportCommandCenter: React.FC = () => {
     }, [filterSource, filterStatus, tickets]);
 
     const handleSendReply = async () => {
-        if (!replyText.trim() || !selectedTicket) return;
+        if (!replyText.trim() || !selectedTicket || isSendingReply) return;
 
         const text = replyText.trim();
         setReplyText('');
+        setIsSendingReply(true);
+
+        if (selectedTicket.source === 'Email') {
+            const response = await fetch(`${supabaseProjectUrl}/functions/v1/send-support-reply`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    ticket_id: selectedTicket.id,
+                    message: text,
+                }),
+            });
+
+            if (!response.ok) {
+                const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
+                console.error('Admin: error sending email support reply', payload ?? response.statusText);
+                setReplyText(text);
+            }
+
+            setIsSendingReply(false);
+            return;
+        }
 
         const { error } = await supabaseAdmin.from('ticket_messages').insert({
             ticket_id: selectedTicket.id,
@@ -337,6 +427,8 @@ const SupportCommandCenter: React.FC = () => {
             console.error('Admin: error sending support reply', error);
             setReplyText(text);
         }
+
+        setIsSendingReply(false);
     };
 
     const updateStatus = async (newStatus: string) => {
@@ -612,7 +704,42 @@ const SupportCommandCenter: React.FC = () => {
                                         <div className="mb-1 text-[10px] font-bold uppercase opacity-70">
                                             {message.sender_type === 'Admin' ? 'Cloud Admin' : message.sender_type === 'System' ? 'Sistema' : getContactLabel(selectedTicket)}
                                         </div>
-                                        {message.message}
+                                        <div className="whitespace-pre-wrap break-words">{message.message}</div>
+                                        {getDisplayAttachments(message.attachments).length > 0 && (
+                                            <div className="mt-3 grid gap-2">
+                                                {getDisplayAttachments(message.attachments).map((attachment, index) => {
+                                                    const url = attachment.signed_url || attachment.download_url || attachment.resend_download_url || '';
+                                                    const label = attachment.filename || `Adjunto ${index + 1}`;
+
+                                                    if (!url) {
+                                                        return (
+                                                            <div key={`${label}-${index}`} className={`rounded-lg border px-3 py-2 text-xs ${message.sender_type === 'Admin' ? 'border-blue-300 bg-blue-500/40 text-white' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                                                                {label}
+                                                            </div>
+                                                        );
+                                                    }
+
+                                                    if (isImageAttachment(attachment)) {
+                                                        return (
+                                                            <a key={`${label}-${index}`} href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-slate-200 bg-white">
+                                                                <img src={url} alt={label} className="max-h-72 w-full object-contain" />
+                                                                <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs text-slate-600">
+                                                                    <span className="truncate font-medium">{label}</span>
+                                                                    <span className="shrink-0 text-slate-400">{formatFileSize(attachment.size)}</span>
+                                                                </div>
+                                                            </a>
+                                                        );
+                                                    }
+
+                                                    return (
+                                                        <a key={`${label}-${index}`} href={url} target="_blank" rel="noreferrer" className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs ${message.sender_type === 'Admin' ? 'border-blue-300 bg-blue-500/40 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
+                                                            <span className="truncate font-medium">{label}</span>
+                                                            <span className="shrink-0 opacity-70">{formatFileSize(attachment.size)}</span>
+                                                        </a>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -647,8 +774,12 @@ const SupportCommandCenter: React.FC = () => {
                                         <Wand2 size={14} />
                                         Borrador IA
                                     </button>
-                                    <button onClick={handleSendReply} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700">
-                                        Enviar
+                                    <button
+                                        onClick={handleSendReply}
+                                        disabled={isSendingReply}
+                                        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        {isSendingReply ? 'Enviando...' : 'Enviar'}
                                         <Send size={14} />
                                     </button>
                                 </div>
