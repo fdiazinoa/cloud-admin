@@ -133,9 +133,24 @@ function formatSecretStatus(statuses: SecretStatus[], provider: SecretStatus['pr
     return `Configurado · termina en ${status.secret_last4 || '****'}`;
 }
 
-function formatSaveError(payload: { detail?: string; error?: string } | null, error: Error) {
+function formatMessageValue(value: unknown) {
+    if (typeof value === 'string' && value.trim()) return value;
+    if (value && typeof value === 'object') {
+        const payload = value as Record<string, unknown>;
+        const parts = [payload.message, payload.details, payload.hint, payload.code ? `code: ${payload.code}` : undefined]
+            .filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
+
+        if (parts.length > 0) return parts.join(' · ');
+
+        return JSON.stringify(payload);
+    }
+
+    return '';
+}
+
+function formatSaveError(payload: Record<string, unknown> | null, error: Error) {
     if (payload?.detail || payload?.error) {
-        return payload.detail || payload.error || 'No se pudo guardar la configuración.';
+        return formatMessageValue(payload.detail) || formatMessageValue(payload.error) || 'No se pudo guardar la configuración.';
     }
 
     if (error.message.includes('Failed to send a request')) {
@@ -215,11 +230,15 @@ export const Configuration: React.FC = () => {
                 }),
             });
 
-            const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
+            const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
 
             if (!response.ok) {
                 setSaveState('error');
-                setMessage(payload?.detail || payload?.error || 'No se pudo guardar la configuración.');
+                setMessage(
+                    formatMessageValue(payload?.detail) ||
+                    formatMessageValue(payload?.error) ||
+                    'No se pudo guardar la configuración.',
+                );
                 return;
             }
         } catch (error) {

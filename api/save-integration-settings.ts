@@ -34,6 +34,32 @@ function sendJson(response: ServerResponse, statusCode: number, body: unknown) {
     response.end(JSON.stringify(body));
 }
 
+function formatUnknownError(error: unknown) {
+    if (error instanceof Error) {
+        return error.message;
+    }
+
+    if (error && typeof error === 'object') {
+        const payload = error as Record<string, unknown>;
+        const parts = [
+            payload.message,
+            payload.details,
+            payload.hint,
+            payload.code ? `code: ${payload.code}` : undefined,
+        ]
+            .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+            .map((part) => part.trim());
+
+        if (parts.length > 0) {
+            return parts.join(' · ');
+        }
+
+        return JSON.stringify(payload);
+    }
+
+    return String(error);
+}
+
 function getEnv(...names: string[]) {
     for (const name of names) {
         const value = process.env[name];
@@ -175,7 +201,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         console.error('save-integration-settings failed', error);
         sendJson(response, 500, {
             error: 'Could not save integration settings',
-            detail: error instanceof Error ? error.message : String(error),
+            detail: formatUnknownError(error),
         });
     }
 }
