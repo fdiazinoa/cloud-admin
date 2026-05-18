@@ -197,6 +197,17 @@ function normalizeCategory(value?: string | null): TicketCategory {
     return categoryMap[value.toLowerCase()] ?? 'Otros';
 }
 
+function extractTicketNumberFromSubject(subject: string) {
+    const match = subject.match(/(?:ticket\s*)?#\s*(\d+)/i);
+    return match ? Number(match[1]) : null;
+}
+
+function buildThreadSubject(ticketNumber: number | string, subject: string) {
+    const cleanSubject = subject.replace(/^\s*(re|fw|fwd):\s*/i, '').trim() || 'Solicitud técnica';
+    const ticketToken = `[Ticket #${ticketNumber}]`;
+    return cleanSubject.includes(ticketToken) ? cleanSubject : `${ticketToken} ${cleanSubject}`;
+}
+
 function heuristicTriage(subject: string, body: string): TriageResult {
     const text = `${subject} ${body}`.toLowerCase();
     const category = text.includes('impres') || text.includes('fiscal') || text.includes('comprobante')
@@ -424,6 +435,45 @@ Deno.serve(async (request) => {
         const body = (inbound.text ?? inbound.textBody ?? inbound.text_body ?? '').trim()
             || (inbound.email_id ? await getInboundEmailBody(inbound.email_id, integrationConfig.resendApiKey) : '')
             || '(Correo recibido sin cuerpo de texto plano disponible.)';
+        const subjectTicketNumber = extractTicketNumberFromSubject(subject);
+
+        if (subjectTicketNumber) {
+            const threadedTicket = await supabase
+                .from('support_tickets')
+                .select('id, ticket_number')
+                .eq('ticket_number', subjectTicketNumber)
+                .maybeSingle();
+
+            if (threadedTicket.error) throw threadedTicket.error;
+
+            if (threadedTicket.data?.id) {
+                const threadedMessage = await supabase.from('ticket_messages').insert({
+                    ticket_id: threadedTicket.data.id,
+                    sender_type: 'Client',
+                    message: body.trim(),
+                });
+
+                if (threadedMessage.error) throw threadedMessage.error;
+
+                await supabase
+                    .from('support_tickets')
+                    .update({ status: 'En_Proceso' })
+                    .eq('id', threadedTicket.data.id);
+
+                if (rawEventId) {
+                    await supabase.from('raw_support_events')
+                        .update({ status: 'processed', processed_at: new Date().toISOString() })
+                        .eq('id', rawEventId);
+                }
+
+                return json({
+                    ok: true,
+                    threaded: true,
+                    ticket_id: threadedTicket.data.id,
+                    ticket_number: threadedTicket.data.ticket_number,
+                });
+            }
+        }
 
         const triage = integrationConfig.aiTriageEnabled && integrationConfig.aiProvider === 'openai'
             ? await runAiTriage({
@@ -537,7 +587,7 @@ Deno.serve(async (request) => {
             body: JSON.stringify({
                 from: integrationConfig.fromAddress,
                 to: [senderEmail],
-                subject: `Ticket recibido: ${subject}`,
+                subject: buildThreadSubject(ticketNumber, subject),
                 text: `Hola, hemos recibido tu solicitud técnica. Se ha generado el ticket #${ticketNumber}. Un agente te responderá a la brevedad posible.`,
             }),
         });
