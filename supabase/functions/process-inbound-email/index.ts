@@ -36,6 +36,16 @@ interface TriageResult {
     suggested_replies: string[];
     tenant_identifier: string | null;
     tenant_match_confidence: number;
+    next_best_action: string;
+    urgency_reason: string;
+    affected_module: string | null;
+    detected_contact_name: string | null;
+    detected_company: string | null;
+    detected_phone: string | null;
+    detected_identifiers: string[];
+    incident_fingerprint: string | null;
+    duplicate_signal: boolean;
+    ai_tags: string[];
 }
 
 interface TenantMatch {
@@ -208,6 +218,25 @@ function buildThreadSubject(ticketNumber: number | string, subject: string) {
     return cleanSubject.includes(ticketToken) ? cleanSubject : `${ticketToken} ${cleanSubject}`;
 }
 
+function findPhoneCandidate(text: string) {
+    const match = text.match(/(?:\+?\d[\s().-]?){7,}/);
+    return match?.[0]?.trim() ?? null;
+}
+
+function detectAffectedModule(text: string, category: TicketCategory) {
+    const normalized = text.toLowerCase();
+    if (normalized.includes('impres') || normalized.includes('recibo') || normalized.includes('comprobante')) return 'Impresión fiscal';
+    if (normalized.includes('internet') || normalized.includes('wifi') || normalized.includes('red') || normalized.includes('timeout')) return 'Conectividad';
+    if (normalized.includes('inventario') || normalized.includes('producto') || normalized.includes('stock')) return 'Inventario';
+    if (normalized.includes('pago') || normalized.includes('tarjeta') || normalized.includes('cobro')) return 'Pagos';
+    if (normalized.includes('scanner') || normalized.includes('terminal') || normalized.includes('bateria')) return 'Hardware POS';
+    return category;
+}
+
+function buildIncidentFingerprint(category: TicketCategory, affectedModule: string | null) {
+    return `${category}:${affectedModule ?? 'general'}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
 function heuristicTriage(subject: string, body: string): TriageResult {
     const text = `${subject} ${body}`.toLowerCase();
     const category = text.includes('impres') || text.includes('fiscal') || text.includes('comprobante')
@@ -231,6 +260,8 @@ function heuristicTriage(subject: string, body: string): TriageResult {
     const sentiment = text.includes('molesto') || text.includes('cansado') || text.includes('urgente') || text.includes('otra vez')
         ? 'frustrated'
         : 'neutral';
+    const affectedModule = detectAffectedModule(`${subject} ${body}`, category);
+    const incidentFingerprint = buildIncidentFingerprint(category, affectedModule);
 
     return {
         category,
@@ -244,6 +275,20 @@ function heuristicTriage(subject: string, body: string): TriageResult {
         ],
         tenant_identifier: null,
         tenant_match_confidence: 0,
+        next_best_action: priority === 'Critica'
+            ? 'Escalar a soporte técnico inmediatamente y confirmar impacto operativo con el cliente.'
+            : 'Validar el contexto del cliente, revisar señales técnicas disponibles y responder con próximos pasos.',
+        urgency_reason: priority === 'Critica'
+            ? 'El texto sugiere bloqueo operativo o urgencia alta.'
+            : 'No se detectó bloqueo operativo explícito.',
+        affected_module: affectedModule,
+        detected_contact_name: null,
+        detected_company: null,
+        detected_phone: findPhoneCandidate(`${subject} ${body}`),
+        detected_identifiers: [],
+        incident_fingerprint: incidentFingerprint,
+        duplicate_signal: false,
+        ai_tags: [category, affectedModule].filter((tag): tag is string => Boolean(tag)),
     };
 }
 
@@ -318,6 +363,16 @@ async function runAiTriage(params: {
                                 'suggested_replies',
                                 'tenant_identifier',
                                 'tenant_match_confidence',
+                                'next_best_action',
+                                'urgency_reason',
+                                'affected_module',
+                                'detected_contact_name',
+                                'detected_company',
+                                'detected_phone',
+                                'detected_identifiers',
+                                'incident_fingerprint',
+                                'duplicate_signal',
+                                'ai_tags',
                             ],
                             properties: {
                                 category: { type: 'string', enum: ['ventas', 'inventario', 'fiscal', 'hardware', 'pagos', 'red', 'otros'] },
@@ -333,6 +388,24 @@ async function runAiTriage(params: {
                                 },
                                 tenant_identifier: { type: ['string', 'null'] },
                                 tenant_match_confidence: { type: 'number', minimum: 0, maximum: 1 },
+                                next_best_action: { type: 'string' },
+                                urgency_reason: { type: 'string' },
+                                affected_module: { type: ['string', 'null'] },
+                                detected_contact_name: { type: ['string', 'null'] },
+                                detected_company: { type: ['string', 'null'] },
+                                detected_phone: { type: ['string', 'null'] },
+                                detected_identifiers: {
+                                    type: 'array',
+                                    maxItems: 8,
+                                    items: { type: 'string' },
+                                },
+                                incident_fingerprint: { type: ['string', 'null'] },
+                                duplicate_signal: { type: 'boolean' },
+                                ai_tags: {
+                                    type: 'array',
+                                    maxItems: 8,
+                                    items: { type: 'string' },
+                                },
                             },
                         },
                     },
@@ -350,9 +423,15 @@ async function runAiTriage(params: {
         if (!text) return heuristicTriage(params.subject, params.body);
 
         const parsed = JSON.parse(text) as Omit<TriageResult, 'category'> & { category: string };
+        const category = normalizeCategory(parsed.category);
+        const affectedModule = parsed.affected_module || detectAffectedModule(`${params.subject} ${params.body}`, category);
         return {
             ...parsed,
-            category: normalizeCategory(parsed.category),
+            category,
+            affected_module: affectedModule,
+            incident_fingerprint: parsed.incident_fingerprint || buildIncidentFingerprint(category, affectedModule),
+            detected_identifiers: parsed.detected_identifiers || [],
+            ai_tags: parsed.ai_tags || [],
         };
     } catch (error) {
         console.error('OpenAI triage fallback', error);
@@ -515,12 +594,15 @@ Deno.serve(async (request) => {
                 .from('support_contacts')
                 .insert({
                     email: senderEmail,
-                    name: extractDisplayName(inbound.from),
+                    name: triage.detected_contact_name ?? extractDisplayName(inbound.from),
+                    company_name: triage.detected_company,
+                    phone: triage.detected_phone,
                     source: 'Email',
                     tenant_id: tenantMatch.id,
                     metadata: {
                         first_email_id: emailId,
                         ai_tenant_identifier: triage.tenant_identifier,
+                        ai_detected_identifiers: triage.detected_identifiers,
                     },
                 })
                 .select('id')
@@ -549,6 +631,8 @@ Deno.serve(async (request) => {
                     resend_email_id: inbound.email_id,
                     resend_message_id: inbound.message_id,
                     to: inbound.to ?? [],
+                    affected_module: triage.affected_module ?? undefined,
+                    incident_fingerprint: triage.incident_fingerprint ?? undefined,
                 },
             })
             .select('id, ticket_number')
@@ -567,6 +651,20 @@ Deno.serve(async (request) => {
 
         if (messageInsert.error) throw messageInsert.error;
 
+        let duplicateSignal = triage.duplicate_signal;
+        if (triage.incident_fingerprint) {
+            const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const similarTickets = await supabase
+                .from('ai_ticket_insights')
+                .select('ticket_id', { count: 'exact', head: true })
+                .eq('incident_fingerprint', triage.incident_fingerprint)
+                .gte('created_at', since);
+
+            if (!similarTickets.error && (similarTickets.count ?? 0) >= 4) {
+                duplicateSignal = true;
+            }
+        }
+
         await supabase.from('ai_ticket_insights').insert({
             ticket_id: ticketId,
             sentiment: triage.sentiment,
@@ -576,6 +674,16 @@ Deno.serve(async (request) => {
             confidence: tenantMatch.confidence,
             summary: triage.summary,
             suggested_replies: triage.suggested_replies,
+            next_best_action: triage.next_best_action,
+            urgency_reason: triage.urgency_reason,
+            affected_module: triage.affected_module,
+            detected_contact_name: triage.detected_contact_name,
+            detected_company: triage.detected_company,
+            detected_phone: triage.detected_phone,
+            detected_identifiers: triage.detected_identifiers,
+            incident_fingerprint: triage.incident_fingerprint,
+            duplicate_signal: duplicateSignal,
+            ai_tags: triage.ai_tags,
         });
 
         const autoReply = await fetch('https://api.resend.com/emails', {
