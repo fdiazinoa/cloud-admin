@@ -9,10 +9,10 @@ import {
     ShieldCheck,
     Sparkles,
 } from 'lucide-react';
-import { supabaseAdmin, supabaseProjectUrl } from '../lib/supabase';
+import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
 
 const functionName = 'process-inbound-email';
-const settingsFunctionName = 'save-integration-settings';
+const settingsEndpoint = '/api/save-integration-settings';
 
 interface IntegrationSettings {
     resend_inbound_email: string;
@@ -139,7 +139,7 @@ function formatSaveError(payload: { detail?: string; error?: string } | null, er
     }
 
     if (error.message.includes('Failed to send a request')) {
-        return 'No se pudo contactar la función save-integration-settings. Verifica que esté desplegada y que Supabase tenga verify_jwt=false para permitir CORS.';
+        return 'No se pudo contactar la API de Vercel para guardar configuración. Verifica que el último deploy de Vercel esté activo.';
     }
 
     return error.message || 'No se pudo guardar la configuración.';
@@ -198,20 +198,35 @@ export const Configuration: React.FC = () => {
         setSaveState('saving');
         setMessage('');
 
-        const { data: payload, error } = await supabaseAdmin.functions.invoke(settingsFunctionName, {
-            body: {
-                settings,
-                secrets: {
-                    resend_api_key: resendApiKey || undefined,
-                    openai_api_key: openAiApiKey || undefined,
-                    anthropic_api_key: anthropicApiKey || undefined,
+        try {
+            const response = await fetch(settingsEndpoint, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${supabaseServiceRoleKey}`,
+                    'Content-Type': 'application/json',
                 },
-            },
-        });
+                body: JSON.stringify({
+                    settings,
+                    secrets: {
+                        resend_api_key: resendApiKey || undefined,
+                        openai_api_key: openAiApiKey || undefined,
+                        anthropic_api_key: anthropicApiKey || undefined,
+                    },
+                }),
+            });
 
-        if (error) {
+            const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
+
+            if (!response.ok) {
+                setSaveState('error');
+                setMessage(payload?.detail || payload?.error || 'No se pudo guardar la configuración.');
+                return;
+            }
+        } catch (error) {
+            const normalizedError = error instanceof Error ? error : new Error(String(error));
+
             setSaveState('error');
-            setMessage(formatSaveError(payload, error));
+            setMessage(formatSaveError(null, normalizedError));
             return;
         }
 
@@ -376,7 +391,7 @@ export const Configuration: React.FC = () => {
                     )}
                     <div className="mx-5 mb-5 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
                         <Sparkles size={15} className="mt-0.5 shrink-0 text-indigo-500" />
-                        Para habilitar esta pantalla, despliega la función `save-integration-settings` y define `INTEGRATION_SECRET_KEY` como secret de Supabase. `CONFIG_ADMIN_TOKEN` queda opcional solo para llamadas externas.
+                        Para habilitar esta pantalla en Vercel, define `INTEGRATION_SECRET_KEY`. Las variables `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` pueden usar los mismos valores ya configurados como `VITE_SUPABASE_URL` y `VITE_SUPABASE_SERVICE_ROLE_KEY`.
                     </div>
                 </section>
             </div>
