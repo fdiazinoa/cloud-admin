@@ -12,6 +12,7 @@ import {
     UserPlus,
     Wand2,
     WifiOff,
+    X,
 } from 'lucide-react';
 import { supabaseAdmin } from '../lib/supabase';
 
@@ -30,7 +31,12 @@ interface SupportContact {
     email: string;
     name?: string | null;
     company_name?: string | null;
+    phone?: string | null;
     tenant_id?: string | null;
+    metadata?: {
+        sla?: string;
+        [key: string]: unknown;
+    } | null;
 }
 
 interface AiTicketInsight {
@@ -66,6 +72,14 @@ interface Message {
     created_at: string;
 }
 
+interface ContactFormState {
+    name: string;
+    phone: string;
+    email: string;
+    companyName: string;
+    sla: string;
+}
+
 interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight'> {
     tenants?: { name?: string | null } | { name?: string | null }[] | null;
     support_contacts?: SupportContact | SupportContact[] | null;
@@ -92,6 +106,20 @@ const sentimentLabels: Record<Sentiment, string> = {
     frustrated: 'Frustrado',
     neutral: 'Neutral',
     positive: 'Positivo',
+};
+
+const emptyContactForm: ContactFormState = {
+    name: '',
+    phone: '',
+    email: '',
+    companyName: '',
+    sla: 'standard',
+};
+
+const slaLabels: Record<string, string> = {
+    standard: 'Estándar',
+    priority: 'Prioritario',
+    critical: 'Crítico',
 };
 
 function normalizeRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -134,6 +162,8 @@ const SupportCommandCenter: React.FC = () => {
     const [filterStatus, setFilterStatus] = useState('Todos');
     const [filterSource, setFilterSource] = useState('Todos');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
+    const [isContactModalOpen, setIsContactModalOpen] = useState(false);
+    const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const selectedTicketId = selectedTicket?.id;
@@ -157,6 +187,8 @@ const SupportCommandCenter: React.FC = () => {
                         email,
                         name,
                         company_name,
+                        phone,
+                        metadata,
                         tenant_id
                     ),
                     ai_ticket_insights (
@@ -303,24 +335,56 @@ const SupportCommandCenter: React.FC = () => {
         setSelectedTicket({ ...selectedTicket, status: newStatus });
     };
 
-    const createContactFromTicket = async () => {
-        if (!selectedTicket?.external_sender_email || selectedTicket.contact) return;
+    const openContactModal = () => {
+        if (!selectedTicket?.external_sender_email && !selectedTicket?.contact?.email) return;
+
+        const email = selectedTicket.contact?.email || selectedTicket.external_sender_email || '';
+        const fallbackName = email ? email.split('@')[0] : '';
+
+        setContactForm({
+            name: selectedTicket.contact?.name || fallbackName,
+            phone: selectedTicket.contact?.phone || '',
+            email,
+            companyName: selectedTicket.contact?.company_name || '',
+            sla: selectedTicket.contact?.metadata?.sla || 'standard',
+        });
+        setIsContactModalOpen(true);
+    };
+
+    const saveContactFromTicket = async () => {
+        if (!selectedTicket || (!selectedTicket.external_sender_email && !selectedTicket.contact?.email)) return;
 
         setIsCreatingContact(true);
 
-        const { data: contact, error: contactError } = await supabaseAdmin
-            .from('support_contacts')
-            .insert({
-                email: selectedTicket.external_sender_email.toLowerCase(),
-                name: selectedTicket.external_sender_email.split('@')[0],
-                source: 'Email',
-                metadata: {
-                    first_ticket_id: selectedTicket.id,
-                    created_from: 'command_center',
-                },
-            })
-            .select('id, email, name, company_name, tenant_id')
-            .single();
+        const contactPayload = {
+            email: contactForm.email.trim().toLowerCase(),
+            name: contactForm.name.trim() || null,
+            phone: contactForm.phone.trim() || null,
+            company_name: contactForm.companyName.trim() || null,
+            source: 'Email',
+            metadata: {
+                ...(selectedTicket.contact?.metadata || {}),
+                sla: contactForm.sla,
+                converted_from: 'command_center',
+                converted_from_ticket_id: selectedTicket.id,
+                converted_at: new Date().toISOString(),
+            },
+        };
+
+        const contactRequest = selectedTicket.contact?.id
+            ? supabaseAdmin
+                .from('support_contacts')
+                .update(contactPayload)
+                .eq('id', selectedTicket.contact.id)
+                .select('id, email, name, company_name, phone, metadata, tenant_id')
+                .single()
+            : supabaseAdmin
+                .from('support_contacts')
+                .upsert(contactPayload, { onConflict: 'email' })
+                .select('id, email, name, company_name, phone, metadata, tenant_id')
+                .single();
+
+        const { data: contact, error: contactError } = await contactRequest;
 
         if (contactError) {
             console.error('Admin: error creating support contact', contactError);
@@ -332,14 +396,19 @@ const SupportCommandCenter: React.FC = () => {
             .from('support_tickets')
             .update({
                 contact_id: contact.id,
-                assignment_status: selectedTicket.tenant_id ? 'assigned' : 'needs_assignment',
+                assignment_status: selectedTicket.tenant_id || contact.tenant_id ? 'assigned' : 'needs_assignment',
             })
             .eq('id', selectedTicket.id);
 
         if (ticketError) {
             console.error('Admin: error linking support contact', ticketError);
         } else {
-            setSelectedTicket({ ...selectedTicket, contact, assignment_status: selectedTicket.tenant_id ? 'assigned' : 'needs_assignment' });
+            setSelectedTicket({
+                ...selectedTicket,
+                contact,
+                assignment_status: selectedTicket.tenant_id || contact.tenant_id ? 'assigned' : 'needs_assignment',
+            });
+            setIsContactModalOpen(false);
         }
 
         setIsCreatingContact(false);
@@ -582,15 +651,21 @@ const SupportCommandCenter: React.FC = () => {
                                 <p className="font-bold text-slate-800">{getContactLabel(selectedTicket)}</p>
                                 <p className="mt-1 text-xs text-slate-500">{selectedTicket.contact?.company_name || selectedTicket.tenant_name}</p>
 
-                                {selectedTicket.source === 'Email' && !selectedTicket.contact && selectedTicket.external_sender_email && (
+                                {selectedTicket.source === 'Email' && (selectedTicket.external_sender_email || selectedTicket.contact?.email) && (
                                     <button
-                                        onClick={createContactFromTicket}
+                                        onClick={openContactModal}
                                         disabled={isCreatingContact}
                                         className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                         <UserPlus size={14} />
-                                        {isCreatingContact ? 'Creando contacto...' : 'Crear contacto'}
+                                        {selectedTicket.contact?.company_name || selectedTicket.contact?.phone ? 'Editar contacto' : 'Convertir en contacto'}
                                     </button>
+                                )}
+
+                                {selectedTicket.contact?.metadata?.sla && (
+                                    <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-600">
+                                        SLA: <span className="font-bold text-slate-800">{slaLabels[selectedTicket.contact.metadata.sla] ?? selectedTicket.contact.metadata.sla}</span>
+                                    </div>
                                 )}
 
                                 {selectedTicket.assignment_status === 'needs_assignment' && (
@@ -644,6 +719,91 @@ const SupportCommandCenter: React.FC = () => {
                         </section>
                     </div>
                 </aside>
+            )}
+
+            {isContactModalOpen && selectedTicket && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+                    <div className="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-2xl">
+                        <div className="flex items-center justify-between border-b border-slate-100 p-5">
+                            <div>
+                                <h3 className="text-lg font-black text-slate-900">Convertir en contacto</h3>
+                                <p className="mt-1 text-sm text-slate-500">Completa los datos del remitente y define su nivel de atención.</p>
+                            </div>
+                            <button
+                                onClick={() => setIsContactModalOpen(false)}
+                                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"
+                                type="button"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
+                            <label className="block sm:col-span-2">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Nombre</span>
+                                <input
+                                    value={contactForm.name}
+                                    onChange={(event) => setContactForm((current) => ({ ...current, name: event.target.value }))}
+                                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Teléfono</span>
+                                <input
+                                    value={contactForm.phone}
+                                    onChange={(event) => setContactForm((current) => ({ ...current, phone: event.target.value }))}
+                                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">SLA</span>
+                                <select
+                                    value={contactForm.sla}
+                                    onChange={(event) => setContactForm((current) => ({ ...current, sla: event.target.value }))}
+                                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                >
+                                    <option value="standard">Estándar</option>
+                                    <option value="priority">Prioritario</option>
+                                    <option value="critical">Crítico</option>
+                                </select>
+                            </label>
+                            <label className="block sm:col-span-2">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Mail</span>
+                                <input
+                                    value={contactForm.email}
+                                    onChange={(event) => setContactForm((current) => ({ ...current, email: event.target.value }))}
+                                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+                            <label className="block sm:col-span-2">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Empresa</span>
+                                <input
+                                    value={contactForm.companyName}
+                                    onChange={(event) => setContactForm((current) => ({ ...current, companyName: event.target.value }))}
+                                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 p-4">
+                            <button
+                                onClick={() => setIsContactModalOpen(false)}
+                                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50"
+                                type="button"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={saveContactFromTicket}
+                                disabled={isCreatingContact || !contactForm.email.trim()}
+                                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                type="button"
+                            >
+                                {isCreatingContact ? 'Guardando...' : 'Guardar contacto'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
