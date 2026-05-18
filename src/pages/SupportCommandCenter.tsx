@@ -43,6 +43,7 @@ interface AiTicketInsight {
 
 interface Ticket {
     id: string;
+    ticket_number?: number | null;
     tenant_id?: string | null;
     tenant_name: string;
     contact?: SupportContact | null;
@@ -119,6 +120,10 @@ function getContactLabel(ticket: Ticket) {
 function getTicketOwner(ticket: Ticket) {
     if (ticket.tenant_name !== 'Sin tenant asignado') return ticket.tenant_name;
     return ticket.contact?.company_name || getContactLabel(ticket);
+}
+
+function getTicketNumberLabel(ticket: Ticket) {
+    return `#${ticket.ticket_number ?? ticket.id.slice(0, 8)}`;
 }
 
 const SupportCommandCenter: React.FC = () => {
@@ -427,11 +432,14 @@ const SupportCommandCenter: React.FC = () => {
                                 className={`mb-2 w-full rounded-lg border p-3 text-left transition-colors ${selectedTicket?.id === ticket.id ? 'border-blue-300 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-100 bg-white hover:border-slate-300 hover:bg-slate-50'}`}
                             >
                                 <div className="mb-2 flex items-center justify-between gap-2">
-                                    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>
-                                        {ticket.source === 'Email' ? <Mail size={11} /> : <MonitorSmartphone size={11} />}
-                                        {ticket.source}
-                                    </span>
-                                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${ticket.priority === 'Critica' ? 'border-red-200 bg-red-50 text-red-700' : 'border-orange-200 bg-orange-50 text-orange-700'}`}>
+                                    <div className="flex min-w-0 items-center gap-2">
+                                        <span className="shrink-0 text-xs font-black text-slate-500">{getTicketNumberLabel(ticket)}</span>
+                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>
+                                            {ticket.source === 'Email' ? <Mail size={11} /> : <MonitorSmartphone size={11} />}
+                                            {ticket.source}
+                                        </span>
+                                    </div>
+                                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${ticket.priority === 'Critica' ? 'border-red-200 bg-red-50 text-red-700' : 'border-orange-200 bg-orange-50 text-orange-700'}`}>
                                         {ticket.priority}
                                     </span>
                                 </div>
@@ -472,7 +480,12 @@ const SupportCommandCenter: React.FC = () => {
                                             {selectedTicket.category}
                                         </span>
                                     </div>
-                                    <h2 className="truncate text-lg font-bold text-slate-900">{getTicketOwner(selectedTicket)}</h2>
+                                    <div className="flex min-w-0 items-center gap-2">
+                                        <span className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-black text-slate-500">
+                                            {getTicketNumberLabel(selectedTicket)}
+                                        </span>
+                                        <h2 className="truncate text-lg font-bold text-slate-900">{getTicketOwner(selectedTicket)}</h2>
+                                    </div>
                                     <p className="mt-1 text-sm text-slate-500">{selectedTicket.subject}</p>
                                 </div>
 

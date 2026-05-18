@@ -501,12 +501,13 @@ Deno.serve(async (request) => {
                     to: inbound.to ?? [],
                 },
             })
-            .select('id')
+            .select('id, ticket_number')
             .single();
 
         if (ticketInsert.error) throw ticketInsert.error;
 
         const ticketId = ticketInsert.data.id;
+        const ticketNumber = ticketInsert.data.ticket_number ?? ticketId;
 
         const messageInsert = await supabase.from('ticket_messages').insert({
             ticket_id: ticketId,
@@ -537,7 +538,7 @@ Deno.serve(async (request) => {
                 from: integrationConfig.fromAddress,
                 to: [senderEmail],
                 subject: `Ticket recibido: ${subject}`,
-                text: `Hola, hemos recibido tu solicitud técnica. Se ha generado el ticket #${ticketId}. Un agente te responderá a la brevedad posible.`,
+                text: `Hola, hemos recibido tu solicitud técnica. Se ha generado el ticket #${ticketNumber}. Un agente te responderá a la brevedad posible.`,
             }),
         });
 
@@ -554,6 +555,7 @@ Deno.serve(async (request) => {
         return json({
             ok: true,
             ticket_id: ticketId,
+            ticket_number: ticketNumber,
             contact_id: contactId,
             tenant_id: tenantMatch.id,
             assignment_status: tenantMatch.id ? 'assigned' : 'needs_assignment',
