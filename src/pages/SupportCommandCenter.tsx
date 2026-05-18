@@ -45,6 +45,16 @@ interface AiTicketInsight {
     summary?: string | null;
     suggested_replies?: string[] | null;
     confidence?: number | null;
+    next_best_action?: string | null;
+    urgency_reason?: string | null;
+    affected_module?: string | null;
+    detected_contact_name?: string | null;
+    detected_company?: string | null;
+    detected_phone?: string | null;
+    detected_identifiers?: string[] | null;
+    incident_fingerprint?: string | null;
+    duplicate_signal?: boolean | null;
+    ai_tags?: string[] | null;
 }
 
 interface Ticket {
@@ -196,7 +206,17 @@ const SupportCommandCenter: React.FC = () => {
                         sentiment_score,
                         summary,
                         suggested_replies,
-                        confidence
+                        confidence,
+                        next_best_action,
+                        urgency_reason,
+                        affected_module,
+                        detected_contact_name,
+                        detected_company,
+                        detected_phone,
+                        detected_identifiers,
+                        incident_fingerprint,
+                        duplicate_signal,
+                        ai_tags
                     )
                 `)
                 .order('created_at', { ascending: false });
@@ -575,6 +595,12 @@ const SupportCommandCenter: React.FC = () => {
                                         Resumen IA
                                     </div>
                                     <p className="text-sm text-violet-900">{selectedTicket.insight.summary}</p>
+                                    {selectedTicket.insight.next_best_action && (
+                                        <div className="mt-3 rounded-lg border border-violet-200 bg-white/70 p-2">
+                                            <p className="text-[11px] font-bold uppercase tracking-wide text-violet-600">Próxima acción</p>
+                                            <p className="mt-1 text-sm text-violet-950">{selectedTicket.insight.next_best_action}</p>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -645,6 +671,57 @@ const SupportCommandCenter: React.FC = () => {
                     </div>
 
                     <div className="space-y-5 p-4">
+                        {selectedTicket.insight && (
+                            <section>
+                                <h4 className="mb-2 text-xs font-semibold text-slate-500">IA operativa</h4>
+                                <div className="space-y-3 rounded-lg border border-violet-100 bg-violet-50 p-3 text-xs">
+                                    {selectedTicket.insight.duplicate_signal && (
+                                        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-amber-800">
+                                            <AlertTriangle className="mt-0.5 shrink-0" size={14} />
+                                            Posible patrón repetido o falla masiva.
+                                        </div>
+                                    )}
+                                    {selectedTicket.insight.urgency_reason && (
+                                        <div>
+                                            <p className="font-bold uppercase tracking-wide text-violet-700">Razón de prioridad</p>
+                                            <p className="mt-1 text-violet-950">{selectedTicket.insight.urgency_reason}</p>
+                                        </div>
+                                    )}
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="rounded-lg border border-violet-100 bg-white p-2">
+                                            <p className="font-bold text-violet-700">Módulo</p>
+                                            <p className="mt-1 text-slate-700">{selectedTicket.insight.affected_module || 'No detectado'}</p>
+                                        </div>
+                                        <div className="rounded-lg border border-violet-100 bg-white p-2">
+                                            <p className="font-bold text-violet-700">Empresa</p>
+                                            <p className="mt-1 text-slate-700">{selectedTicket.insight.detected_company || 'No detectada'}</p>
+                                        </div>
+                                    </div>
+                                    {selectedTicket.insight.detected_phone && (
+                                        <div className="rounded-lg border border-violet-100 bg-white p-2">
+                                            <p className="font-bold text-violet-700">Teléfono detectado</p>
+                                            <p className="mt-1 text-slate-700">{selectedTicket.insight.detected_phone}</p>
+                                        </div>
+                                    )}
+                                    {selectedTicket.insight.detected_identifiers?.length ? (
+                                        <div className="rounded-lg border border-violet-100 bg-white p-2">
+                                            <p className="font-bold text-violet-700">Datos detectados</p>
+                                            <p className="mt-1 text-slate-700">{selectedTicket.insight.detected_identifiers.join(' · ')}</p>
+                                        </div>
+                                    ) : null}
+                                    {selectedTicket.insight.ai_tags?.length ? (
+                                        <div className="flex flex-wrap gap-1">
+                                            {selectedTicket.insight.ai_tags.slice(0, 6).map((tag) => (
+                                                <span key={tag} className="rounded-full border border-violet-200 bg-white px-2 py-0.5 font-bold text-violet-700">
+                                                    {tag}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </section>
+                        )}
+
                         <section>
                             <h4 className="mb-2 text-xs font-semibold text-slate-500">Contacto</h4>
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
