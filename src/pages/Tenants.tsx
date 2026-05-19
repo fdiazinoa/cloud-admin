@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle } from 'lucide-react';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle, Trash2 } from 'lucide-react';
 import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
@@ -31,6 +31,7 @@ export const Tenants: React.FC = () => {
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
+    const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
         tempPassword: string;
@@ -122,6 +123,32 @@ export const Tenants: React.FC = () => {
         } catch (err) {
             console.error('Error toggling status:', err);
             alert('Hubo un error al actualizar el estatus');
+        }
+    };
+
+    const handleDeleteTenant = async (tenant: Tenant) => {
+        const confirmed = confirm(
+            `Vas a eliminar definitivamente el tenant "${tenant.name}". Esta accion borra su registro, suscripcion, esquema de base de datos y usuario de acceso si existe. ¿Deseas continuar?`,
+        );
+        if (!confirmed) return;
+
+        const typedName = prompt(`Para confirmar, escribe exactamente el nombre del tenant: ${tenant.name}`);
+        if (typedName !== tenant.name) {
+            alert('El nombre no coincide. No se elimino el tenant.');
+            return;
+        }
+
+        setDeletingTenantId(tenant.id);
+        try {
+            await tenantService.deleteTenant(tenant);
+            await fetchTenants();
+            alert(`Tenant "${tenant.name}" eliminado correctamente.`);
+        } catch (err: unknown) {
+            console.error('Error deleting tenant:', err);
+            await fetchTenants();
+            alert('Error al eliminar el Tenant: ' + getErrorMessage(err));
+        } finally {
+            setDeletingTenantId(null);
         }
     };
 
@@ -487,6 +514,15 @@ export const Tenants: React.FC = () => {
                                             title={tenant.status === 'ACTIVE' ? 'Forzar Suspensión' : 'Reactivar'}
                                         >
                                             <Power size={18} />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => void handleDeleteTenant(tenant)}
+                                            disabled={deletingTenantId === tenant.id}
+                                            className="p-2 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                            title="Eliminar tenant"
+                                        >
+                                            {deletingTenantId === tenant.id ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
                                         </button>
                                     </div>
                                 </td>
