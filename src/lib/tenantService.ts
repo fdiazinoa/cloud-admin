@@ -203,6 +203,50 @@ export async function updateTenant(
     if (error) throw error;
 }
 
+async function findTenantAuthUserId(tenant: Tenant): Promise<string | null> {
+    const tenantEmail = tenant.email.trim().toLowerCase();
+    let page = 1;
+    const perPage = 1000;
+
+    while (true) {
+        const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+        if (error) throw error;
+
+        const users = data.users || [];
+        const match = users.find((user) => {
+            const userEmail = user.email?.trim().toLowerCase();
+            const metadataTenantId = typeof user.user_metadata?.tenant_id === "string"
+                ? user.user_metadata.tenant_id
+                : null;
+            return userEmail === tenantEmail || metadataTenantId === tenant.id;
+        });
+
+        if (match) return match.id;
+        if (users.length < perPage) return null;
+        page += 1;
+    }
+}
+
+export async function deleteTenant(tenant: Tenant): Promise<void> {
+    const authUserId = await findTenantAuthUserId(tenant);
+
+    const { error } = await supabaseAdmin.rpc("delete_tenant", {
+        p_tenant_id: tenant.id,
+        p_confirm_name: tenant.name,
+    });
+
+    if (error) throw error;
+
+    if (authUserId) {
+        const { error: authDeleteError } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        if (authDeleteError) {
+            throw new Error(
+                `Tenant eliminado, pero no se pudo eliminar el usuario de acceso (${tenant.email}): ${authDeleteError.message}`,
+            );
+        }
+    }
+}
+
 export async function getDistributors(): Promise<Distributor[]> {
     const { data, error } = await supabaseAdmin
         .from("distributors")
@@ -348,6 +392,7 @@ export const tenantService = {
     getTenants,
     updateTenantTaxId,
     updateTenant,
+    deleteTenant,
     getDistributors,
     getTenantTerminalOverview,
     getDashboardStats,
