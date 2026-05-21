@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2 } from 'lucide-react';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, CheckCircle2 } from 'lucide-react';
 import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
@@ -33,6 +33,7 @@ export const Tenants: React.FC = () => {
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
+    const [updatingStatusTenantId, setUpdatingStatusTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
         tempPassword: string;
@@ -129,12 +130,28 @@ export const Tenants: React.FC = () => {
             || (tenant.city && tenant.city.toLowerCase().includes(normalizedSearch));
     });
 
+    const activateTrialTenant = async (tenant: Tenant) => {
+        if (!confirm(`¿Deseas activar la empresa "${tenant.name}"?`)) return;
+
+        setUpdatingStatusTenantId(tenant.id);
+        try {
+            await tenantService.reactivateTenant(tenant.id);
+            await fetchTenants();
+        } catch (err) {
+            console.error('Error activating tenant:', err);
+            alert('Hubo un error al activar la empresa');
+        } finally {
+            setUpdatingStatusTenantId(null);
+        }
+    };
+
     const toggleTenantStatus = async (tenant: Tenant) => {
-        const isCurrentlyActive = tenant.status === 'ACTIVE' || tenant.status === 'TRIAL';
+        const isCurrentlyActive = tenant.status === 'ACTIVE';
         const newStatusLabel = isCurrentlyActive ? 'SUSPENDER' : 'REACTIVAR';
 
         if (!confirm(`¿Estás seguro que deseas ${newStatusLabel} esta empresa?`)) return;
 
+        setUpdatingStatusTenantId(tenant.id);
         try {
             if (isCurrentlyActive) {
                 await tenantService.suspendTenant(tenant.id);
@@ -145,6 +162,8 @@ export const Tenants: React.FC = () => {
         } catch (err) {
             console.error('Error toggling status:', err);
             alert('Hubo un error al actualizar el estatus');
+        } finally {
+            setUpdatingStatusTenantId(null);
         }
     };
 
@@ -645,13 +664,27 @@ export const Tenants: React.FC = () => {
                                         >
                                             <Edit3 size={18} />
                                         </button>
-                                        <button
-                                            onClick={() => toggleTenantStatus(tenant)}
-                                            className={`p-2 rounded-lg transition-colors ${tenant.status === 'ACTIVE' ? 'text-slate-400 hover:text-red-600 hover:bg-red-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
-                                            title={tenant.status === 'ACTIVE' ? 'Forzar Suspensión' : 'Reactivar'}
-                                        >
-                                            <Power size={18} />
-                                        </button>
+                                        {tenant.status === 'TRIAL' ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => void activateTrialTenant(tenant)}
+                                                disabled={updatingStatusTenantId === tenant.id}
+                                                className="p-2 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                                title="Activar empresa"
+                                            >
+                                                {updatingStatusTenantId === tenant.id ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => toggleTenantStatus(tenant)}
+                                                disabled={updatingStatusTenantId === tenant.id}
+                                                className={`p-2 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${tenant.status === 'ACTIVE' ? 'text-slate-400 hover:text-red-600 hover:bg-red-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                                                title={tenant.status === 'ACTIVE' ? 'Forzar Suspensión' : 'Reactivar'}
+                                            >
+                                                {updatingStatusTenantId === tenant.id ? <Loader2 size={18} className="animate-spin" /> : <Power size={18} />}
+                                            </button>
+                                        )}
                                         <button
                                             type="button"
                                             onClick={() => void handleDeleteTenant(tenant)}
