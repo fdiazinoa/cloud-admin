@@ -5,6 +5,7 @@ import { Tenants } from './pages/Tenants'
 import { KillSwitch } from './pages/KillSwitch'
 import { Plans } from './pages/Plans'
 import { Configuration } from './pages/Configuration'
+import { PosApkReleases } from './pages/PosApkReleases'
 import SupportCommandCenter from './pages/SupportCommandCenter'
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
                     <Route index element={<Dashboard />} />
                     <Route path="tenants" element={<Tenants />} />
                     <Route path="plans" element={<Plans />} />
+                    <Route path="pos-apk" element={<PosApkReleases />} />
                     <Route path="support" element={<SupportCommandCenter />} />
                     <Route path="configuracion" element={<Configuration />} />
                     <Route path="kill-switch" element={<KillSwitch />} />
