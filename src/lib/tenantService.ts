@@ -10,9 +10,40 @@ import type {
 import { provisionTenant, type ProvisionTenantInput, type SupabaseAdminClient } from "./tenantProvisioning";
 
 export interface DashboardStats {
+    totalTenants: number;
     activeTenants: number;
+    trialTenants: number;
     suspendedTenants: number;
     terminals: number;
+    activeSubscriptions: number;
+    openTickets: number;
+    criticalTickets: number;
+    tenantGrowth: DashboardTrendPoint[];
+    recentTickets: DashboardTicket[];
+    expiringSubscriptions: DashboardExpiringSubscription[];
+    lastUpdatedAt: string;
+}
+
+export interface DashboardTrendPoint {
+    name: string;
+    value: number;
+}
+
+export interface DashboardTicket {
+    id: string;
+    subject: string;
+    priority: string;
+    status: string;
+    tenantName: string;
+    createdAt: string;
+}
+
+export interface DashboardExpiringSubscription {
+    tenantId: string;
+    tenantName: string;
+    planName: string;
+    endDate: string;
+    daysRemaining: number;
 }
 
 type CreateTenantInput = ProvisionTenantInput;
@@ -333,26 +364,158 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
-    const [tenantsRes, terminalsRes] = await Promise.all([
-        supabaseAdmin.from("tenants").select("status"),
+    const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
+        supabaseAdmin.from("tenants").select("id,name,status,created_at"),
         supabaseAdmin.schema("public").from("terminals").select("id", { count: "exact", head: true }),
+        getDashboardSubscriptions(),
+        getDashboardTickets(),
     ]);
 
     if (tenantsRes.error) throw tenantsRes.error;
     if (terminalsRes.error) throw terminalsRes.error;
 
-    const activeTenants = tenantsRes.data?.filter(
-        (tenant) => tenant.status === "ACTIVE" || tenant.status === "TRIAL",
-    ).length || 0;
-    const suspendedTenants = tenantsRes.data?.filter(
-        (tenant) => tenant.status === "SUSPENDED",
-    ).length || 0;
+    const tenantRows = ((tenantsRes.data as Array<Pick<Tenant, "id" | "name" | "status" | "created_at">>) || []);
+    const tenantsById = new Map(tenantRows.map((tenant) => [tenant.id, tenant]));
+    const activeTenants = tenantRows.filter((tenant) => tenant.status === "ACTIVE").length;
+    const trialTenants = tenantRows.filter((tenant) => tenant.status === "TRIAL").length;
+    const suspendedTenants = tenantRows.filter((tenant) => tenant.status === "SUSPENDED").length;
+    const today = startOfDay(new Date());
+    const activeSubscriptions = subscriptionRows.filter((subscription) => subscription.is_active).length;
+    const expiringSubscriptions = subscriptionRows
+        .filter((subscription) => subscription.is_active && Boolean(subscription.end_date))
+        .map((subscription) => {
+            const endDate = startOfDay(new Date(subscription.end_date as string));
+            const daysRemaining = Math.ceil((endDate.getTime() - today.getTime()) / 86400000);
+            const tenant = tenantsById.get(subscription.tenant_id);
+
+            return {
+                tenantId: subscription.tenant_id,
+                tenantName: tenant?.name || "Tenant no identificado",
+                planName: subscription.plan_name || "Plan activo",
+                endDate: subscription.end_date as string,
+                daysRemaining,
+            };
+        })
+        .filter((subscription) => subscription.daysRemaining >= 0 && subscription.daysRemaining <= 30)
+        .sort((a, b) => a.daysRemaining - b.daysRemaining)
+        .slice(0, 5);
+    const openTickets = ticketRows.filter((ticket) => !["Cerrado", "Resuelto"].includes(ticket.status)).length;
+    const criticalTickets = ticketRows.filter((ticket) => {
+        const isOpen = !["Cerrado", "Resuelto"].includes(ticket.status);
+        return isOpen && ticket.priority.toLowerCase().startsWith("cr");
+    }).length;
+    const recentTickets = ticketRows
+        .slice(0, 5)
+        .map((ticket) => ({
+            id: ticket.id,
+            subject: ticket.subject,
+            priority: ticket.priority,
+            status: ticket.status,
+            tenantName: ticket.tenant_id ? tenantsById.get(ticket.tenant_id)?.name || "Sin tenant asignado" : "Sin tenant asignado",
+            createdAt: ticket.created_at,
+        }));
 
     return {
+        totalTenants: tenantRows.length,
         activeTenants,
+        trialTenants,
         suspendedTenants,
         terminals: terminalsRes.count || 0,
+        activeSubscriptions,
+        openTickets,
+        criticalTickets,
+        tenantGrowth: buildTenantGrowth(tenantRows),
+        recentTickets,
+        expiringSubscriptions,
+        lastUpdatedAt: new Date().toISOString(),
     };
+}
+
+function startOfDay(value: Date): Date {
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+type DashboardSubscriptionRow = {
+    tenant_id: string;
+    is_active: boolean;
+    end_date?: string | null;
+    plan_name?: string | null;
+};
+
+type DashboardTicketRow = {
+    id: string;
+    subject: string;
+    priority: string;
+    status: string;
+    tenant_id?: string | null;
+    created_at: string;
+};
+
+async function getDashboardSubscriptions(): Promise<DashboardSubscriptionRow[]> {
+    const { data, error } = await supabaseAdmin
+        .from("subscriptions")
+        .select("tenant_id,is_active,end_date,plan_name");
+
+    if (!error) return (data as DashboardSubscriptionRow[]) || [];
+
+    const code = (error as { code?: string }).code;
+    if (code !== "42703" && code !== "PGRST204") {
+        console.warn("Dashboard subscriptions unavailable:", error);
+        return [];
+    }
+
+    const fallback = await supabaseAdmin
+        .from("subscriptions")
+        .select("tenant_id,is_active,plan_name");
+
+    if (fallback.error) {
+        console.warn("Dashboard subscriptions fallback unavailable:", fallback.error);
+        return [];
+    }
+
+    return ((fallback.data as DashboardSubscriptionRow[]) || []).map((subscription) => ({
+        ...subscription,
+        end_date: null,
+    }));
+}
+
+async function getDashboardTickets(): Promise<DashboardTicketRow[]> {
+    const { data, error } = await supabaseAdmin
+        .from("support_tickets")
+        .select("id,subject,priority,status,tenant_id,created_at")
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        console.warn("Dashboard support tickets unavailable:", error);
+        return [];
+    }
+
+    return (data as DashboardTicketRow[]) || [];
+}
+
+function buildTenantGrowth(tenants: Array<Pick<Tenant, "created_at">>): DashboardTrendPoint[] {
+    const formatter = new Intl.DateTimeFormat("es-DO", { month: "short" });
+    const now = new Date();
+    const buckets: DashboardTrendPoint[] = [];
+
+    for (let index = 5; index >= 0; index -= 1) {
+        const month = new Date(now.getFullYear(), now.getMonth() - index, 1);
+        buckets.push({
+            name: formatter.format(month).replace(".", ""),
+            value: 0,
+        });
+    }
+
+    tenants.forEach((tenant) => {
+        const createdAt = new Date(tenant.created_at);
+        const diffMonths = (now.getFullYear() - createdAt.getFullYear()) * 12 + now.getMonth() - createdAt.getMonth();
+
+        if (diffMonths >= 0 && diffMonths < buckets.length) {
+            buckets[buckets.length - 1 - diffMonths].value += 1;
+        }
+    });
+
+    return buckets;
 }
 
 export async function suspendTenant(id: string): Promise<void> {
