@@ -14,7 +14,7 @@ import {
     WifiOff,
     X,
 } from 'lucide-react';
-import { supabaseAdmin } from '../lib/supabase';
+import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
 
 type Sentiment = 'frustrated' | 'neutral' | 'positive';
 
@@ -79,6 +79,7 @@ interface Message {
     id: string;
     sender_type: 'Admin' | 'Client' | 'System';
     message: string;
+    attachments?: unknown;
     created_at: string;
 }
 
@@ -164,6 +165,10 @@ function getTicketNumberLabel(ticket: Ticket) {
     return `#${ticket.ticket_number ?? ticket.id.slice(0, 8)}`;
 }
 
+function getTicketRecipientEmail(ticket: Ticket) {
+    return ticket.contact?.email || ticket.external_sender_email || '';
+}
+
 const SupportCommandCenter: React.FC = () => {
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -172,6 +177,7 @@ const SupportCommandCenter: React.FC = () => {
     const [filterStatus, setFilterStatus] = useState('Todos');
     const [filterSource, setFilterSource] = useState('Todos');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
+    const [isSendingReply, setIsSendingReply] = useState(false);
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
     const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -322,20 +328,57 @@ const SupportCommandCenter: React.FC = () => {
     }, [filterSource, filterStatus, tickets]);
 
     const handleSendReply = async () => {
-        if (!replyText.trim() || !selectedTicket) return;
+        if (!replyText.trim() || !selectedTicket || isSendingReply) return;
 
         const text = replyText.trim();
+        const recipientEmail = getTicketRecipientEmail(selectedTicket);
+
         setReplyText('');
+        setIsSendingReply(true);
 
-        const { error } = await supabaseAdmin.from('ticket_messages').insert({
-            ticket_id: selectedTicket.id,
-            message: text,
-            sender_type: 'Admin',
-        });
+        try {
+            if (recipientEmail) {
+                const response = await fetch(`${supabaseProjectUrl}/functions/v1/send-support-reply`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        ticket_id: selectedTicket.id,
+                        message: text,
+                    }),
+                });
 
-        if (error) {
-            console.error('Admin: error sending support reply', error);
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
+                    console.error('Admin: error notifying support reply', payload ?? response.statusText);
+                    setReplyText(text);
+                }
+
+                return;
+            }
+
+            const { error } = await supabaseAdmin.from('ticket_messages').insert({
+                ticket_id: selectedTicket.id,
+                message: text,
+                sender_type: 'Admin',
+                attachments: {
+                    channel: 'realtime',
+                    notify_client: true,
+                    delivery_status: 'inserted',
+                },
+            });
+
+            if (error) {
+                console.error('Admin: error sending support reply', error);
+                setReplyText(text);
+            }
+        } catch (error) {
+            console.error('Admin: unexpected error sending support reply', error);
             setReplyText(text);
+        } finally {
+            setIsSendingReply(false);
         }
     };
 
@@ -647,8 +690,12 @@ const SupportCommandCenter: React.FC = () => {
                                         <Wand2 size={14} />
                                         Borrador IA
                                     </button>
-                                    <button onClick={handleSendReply} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700">
-                                        Enviar
+                                    <button
+                                        onClick={handleSendReply}
+                                        disabled={isSendingReply}
+                                        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        {isSendingReply ? 'Enviando...' : getTicketRecipientEmail(selectedTicket) ? 'Enviar y notificar' : 'Enviar'}
                                         <Send size={14} />
                                     </button>
                                 </div>
@@ -728,7 +775,7 @@ const SupportCommandCenter: React.FC = () => {
                                 <p className="font-bold text-slate-800">{getContactLabel(selectedTicket)}</p>
                                 <p className="mt-1 text-xs text-slate-500">{selectedTicket.contact?.company_name || selectedTicket.tenant_name}</p>
 
-                                {selectedTicket.source === 'Email' && (selectedTicket.external_sender_email || selectedTicket.contact?.email) && (
+                                {getTicketRecipientEmail(selectedTicket) && (
                                     <button
                                         onClick={openContactModal}
                                         disabled={isCreatingContact}
