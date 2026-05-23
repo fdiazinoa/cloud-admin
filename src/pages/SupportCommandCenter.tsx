@@ -16,6 +16,8 @@ import {
 } from 'lucide-react';
 import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
 
+const REPLY_TEXTAREA_MAX_HEIGHT = 240;
+
 type Sentiment = 'frustrated' | 'neutral' | 'positive';
 
 interface TechnicalContext {
@@ -181,6 +183,7 @@ const SupportCommandCenter: React.FC = () => {
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
     const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
     const messagesPaneRef = useRef<HTMLDivElement>(null);
+    const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
 
     const selectedTicketId = selectedTicket?.id;
 
@@ -189,6 +192,16 @@ const SupportCommandCenter: React.FC = () => {
         if (!pane) return;
         pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' });
     }, [messages]);
+
+    useEffect(() => {
+        const textarea = replyTextareaRef.current;
+        if (!textarea) return;
+
+        textarea.style.height = 'auto';
+        const nextHeight = Math.min(textarea.scrollHeight, REPLY_TEXTAREA_MAX_HEIGHT);
+        textarea.style.height = `${nextHeight}px`;
+        textarea.style.overflowY = textarea.scrollHeight > REPLY_TEXTAREA_MAX_HEIGHT ? 'auto' : 'hidden';
+    }, [replyText, selectedTicketId]);
 
     useEffect(() => {
         let mounted = true;
@@ -678,11 +691,12 @@ const SupportCommandCenter: React.FC = () => {
 
                                 <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500">
                                     <textarea
+                                        ref={replyTextareaRef}
                                         rows={1}
                                         value={replyText}
                                         onChange={(event) => setReplyText(event.target.value)}
                                         placeholder="Escribe tu respuesta..."
-                                        className="w-full resize-none overflow-hidden border-0 p-2 text-sm outline-none focus:ring-0"
+                                        className="max-h-[240px] min-h-[40px] w-full resize-none overflow-hidden border-0 p-2 text-sm leading-5 outline-none focus:ring-0"
                                     />
                                     <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-2 py-1.5">
                                         <button onClick={generateDraft} className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
