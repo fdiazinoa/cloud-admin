@@ -251,6 +251,22 @@ function isElectronicInvoiceConfigurationQuestion(text: string) {
     return asksConfiguration && isElectronicInvoice;
 }
 
+function hasAlreadyAskedConfigurationPrereqs(messages: Message[]) {
+    return messages.some((message) => (
+        message.sender_type === 'Admin'
+        && /no tengo cargada aqui una guia confirmada de configuracion inicial de digifact/i.test(message.message)
+        && /credenciales\/ambiente digifact/i.test(message.message)
+    ));
+}
+
+function clientConfirmedConfigurationPrereqs(messages: Message[]) {
+    const text = [...messages].reverse().find((message) => message.sender_type === 'Client')?.message.toLowerCase() ?? '';
+    const confirms = /(ya tenemos|tenemos todo|todo lo indicado|si tenemos|sí tenemos|confirmo|contamos con|ya esta|ya está)/i.test(text);
+    const asksNextStep = /(configur|llegar|ruta|paso|pasos|que debo|qué debo|como sigo|cómo sigo|que sigue|qué sigue|tener en cuenta)/i.test(text);
+
+    return confirms && asksNextStep;
+}
+
 function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
     const subject = `${ticket.subject} ${ticket.category} ${ticket.insight?.affected_module ?? ''}`.toLowerCase();
     const owner = getTicketOwner(ticket);
@@ -263,6 +279,10 @@ function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
         ticket.technical_context?.network_type ? `red ${ticket.technical_context.network_type}` : null,
         ticket.technical_context?.battery_level ? `bateria ${ticket.technical_context.battery_level}` : null,
     ].filter(Boolean).join(', ');
+
+    if (hasAlreadyAskedConfigurationPrereqs(messages) && clientConfirmedConfigurationPrereqs(messages)) {
+        return `${opening} gracias por confirmarlo. Como ya tienen credenciales/ambiente DigiFact y secuencias e-CF/NCF, el siguiente paso no es volver a pedir prerequisitos: debo validarte la ruta exacta de parametrizacion en Clic-ERP para no indicarte un menu incorrecto.\n\nVoy a confirmar internamente el flujo correcto de configuracion y dejarlo documentado en nuestra base de conocimiento. En la proxima respuesta te compartimos los pasos exactos para activarlo en facturas y que debes revisar antes de emitir.`;
+    }
 
     if (isElectronicInvoiceConfigurationQuestion(`${subject}\n${lastClientMessage ?? ''}`)) {
         return `${opening} para no darte una ruta incorrecta de Clic-ERP, no tengo cargada aqui una guia confirmada de configuracion inicial de DigiFact/facturacion electronica. Lo correcto es validarlo como parametrizacion fiscal antes de indicar menus o pasos.\n\nPara avanzar, confirmanos dos cosas: si la empresa ya tiene credenciales/ambiente DigiFact activo (prueba o produccion) y si ya tiene asignadas sus secuencias e-CF/NCF/RNC emisor. Con eso te guiamos con el flujo exacto y dejamos documentada la configuracion correcta. Si el caso es un error al emitir, envianos folio, NCF/e-CF y captura del rechazo.`;
