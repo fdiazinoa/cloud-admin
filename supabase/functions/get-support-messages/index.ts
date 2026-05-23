@@ -22,6 +22,8 @@ interface AttachmentMetadata {
     signed_url?: string | null;
 }
 
+type AttachmentEnvelope = Record<string, unknown>;
+
 interface MessageRow {
     id: string;
     sender_type: 'Admin' | 'Client' | 'System';
@@ -138,6 +140,29 @@ async function signAttachments(supabase: ReturnType<typeof createClient>, attach
     }));
 }
 
+async function hydrateMessageAttachments(supabase: ReturnType<typeof createClient>, value: unknown) {
+    if (Array.isArray(value)) {
+        return signAttachments(supabase, normalizeAttachments(value));
+    }
+
+    if (!value || typeof value !== 'object') {
+        return [];
+    }
+
+    const envelope = value as AttachmentEnvelope;
+    const embeddedFiles = Array.isArray(envelope.files)
+        ? envelope.files
+        : Array.isArray(envelope.attachments)
+            ? envelope.attachments
+            : [];
+    const signedFiles = await signAttachments(supabase, normalizeAttachments(embeddedFiles));
+
+    return {
+        ...envelope,
+        files: signedFiles,
+    };
+}
+
 Deno.serve(async (request) => {
     if (request.method === 'OPTIONS') {
         return json({ ok: true });
@@ -175,7 +200,7 @@ Deno.serve(async (request) => {
 
         const messages = await Promise.all(((data ?? []) as MessageRow[]).map(async (message) => ({
             ...message,
-            attachments: await signAttachments(supabase, normalizeAttachments(message.attachments)),
+            attachments: await hydrateMessageAttachments(supabase, message.attachments),
         })));
 
         return json({ messages });
