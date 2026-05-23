@@ -180,12 +180,14 @@ const SupportCommandCenter: React.FC = () => {
     const [isSendingReply, setIsSendingReply] = useState(false);
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
     const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const messagesPaneRef = useRef<HTMLDivElement>(null);
 
     const selectedTicketId = selectedTicket?.id;
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        const pane = messagesPaneRef.current;
+        if (!pane) return;
+        pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' });
     }, [messages]);
 
     useEffect(() => {
@@ -648,7 +650,7 @@ const SupportCommandCenter: React.FC = () => {
                             )}
                         </div>
 
-                        <div className="flex-1 space-y-4 overflow-y-auto p-6">
+                        <div ref={messagesPaneRef} className="flex-1 space-y-4 overflow-y-auto p-6">
                             {messages.map((message) => (
                                 <div key={message.id} className={`flex ${message.sender_type === 'Admin' ? 'justify-end' : message.sender_type === 'System' ? 'justify-center' : 'justify-start'}`}>
                                     <div className={`max-w-[72%] rounded-2xl px-4 py-3 text-sm shadow-sm ${message.sender_type === 'Admin' ? 'rounded-tr-sm bg-blue-600 text-white' : message.sender_type === 'System' ? 'border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-tl-sm border border-slate-200 bg-white text-slate-700'}`}>
@@ -659,45 +661,43 @@ const SupportCommandCenter: React.FC = () => {
                                     </div>
                                 </div>
                             ))}
-                            <div ref={messagesEndRef} />
-                        </div>
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2 shadow-sm">
+                                {selectedTicket.insight?.suggested_replies?.length ? (
+                                    <div className="mb-3 flex gap-2 overflow-x-auto">
+                                        {selectedTicket.insight.suggested_replies.slice(0, 3).map((reply) => (
+                                            <button
+                                                key={reply}
+                                                onClick={() => setReplyText(reply)}
+                                                className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50"
+                                            >
+                                                {reply.slice(0, 92)}
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : null}
 
-                        <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-4">
-                            {selectedTicket.insight?.suggested_replies?.length ? (
-                                <div className="mb-3 flex gap-2 overflow-x-auto">
-                                    {selectedTicket.insight.suggested_replies.slice(0, 3).map((reply) => (
-                                        <button
-                                            key={reply}
-                                            onClick={() => setReplyText(reply)}
-                                            className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50"
-                                        >
-                                            {reply.slice(0, 92)}
+                                <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500">
+                                    <textarea
+                                        rows={1}
+                                        value={replyText}
+                                        onChange={(event) => setReplyText(event.target.value)}
+                                        placeholder="Escribe tu respuesta..."
+                                        className="w-full resize-none overflow-hidden border-0 p-2 text-sm outline-none focus:ring-0"
+                                    />
+                                    <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-2 py-1.5">
+                                        <button onClick={generateDraft} className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+                                            <Wand2 size={14} />
+                                            Borrador IA
                                         </button>
-                                    ))}
-                                </div>
-                            ) : null}
-
-                            <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500">
-                                <textarea
-                                    rows={4}
-                                    value={replyText}
-                                    onChange={(event) => setReplyText(event.target.value)}
-                                    placeholder={`Escribe tu respuesta a ${getTicketOwner(selectedTicket)}...`}
-                                    className="w-full resize-none border-0 p-3 text-sm outline-none focus:ring-0"
-                                />
-                                <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-3 py-2">
-                                    <button onClick={generateDraft} className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-50">
-                                        <Wand2 size={14} />
-                                        Borrador IA
-                                    </button>
-                                    <button
-                                        onClick={handleSendReply}
-                                        disabled={isSendingReply}
-                                        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                        {isSendingReply ? 'Enviando...' : getTicketRecipientEmail(selectedTicket) ? 'Enviar y notificar' : 'Enviar'}
-                                        <Send size={14} />
-                                    </button>
+                                        <button
+                                            onClick={handleSendReply}
+                                            disabled={isSendingReply}
+                                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                            {isSendingReply ? 'Enviando...' : getTicketRecipientEmail(selectedTicket) ? 'Enviar y notificar' : 'Enviar'}
+                                            <Send size={14} />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
