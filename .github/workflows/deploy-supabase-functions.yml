@@ -39,3 +39,6 @@ jobs:
 
       - name: Deploy support reply sender
         run: supabase functions deploy send-support-reply --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+
+      - name: Deploy support draft generator
+        run: supabase functions deploy generate-support-draft --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
