@@ -93,6 +93,12 @@ interface ContactFormState {
     sla: string;
 }
 
+interface DraftResponse {
+    draft?: string;
+    error?: string;
+    detail?: string;
+}
+
 interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight'> {
     tenants?: { name?: string | null } | { name?: string | null }[] | null;
     support_contacts?: SupportContact | SupportContact[] | null;
@@ -171,6 +177,42 @@ function getTicketRecipientEmail(ticket: Ticket) {
     return ticket.contact?.email || ticket.external_sender_email || '';
 }
 
+function truncateDraftContext(value: string, maxLength = 180) {
+    return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
+    const subject = `${ticket.subject} ${ticket.category}`.toLowerCase();
+    const owner = getTicketOwner(ticket);
+    const lastClientMessage = [...messages].reverse().find((message) => message.sender_type === 'Client')?.message;
+    const opening = `Hola ${owner}, estamos revisando el caso "${ticket.subject}".`;
+    const evidence = lastClientMessage
+        ? ` Tomamos como referencia el detalle que nos enviaron: "${truncateDraftContext(lastClientMessage)}".`
+        : '';
+
+    if (/(impres|printer|cocina|comanda|hardware)/i.test(subject)) {
+        return `${opening}${evidence} Vamos a validar que la terminal tenga asignada la impresora correcta, revisar la ruta de impresion y hacer una prueba de comanda. Si pueden confirmarnos el nombre de la terminal afectada y si otras impresoras funcionan, avanzamos mas rapido.`;
+    }
+
+    if (/(factura|fiscal|ncf|e-?cf|digifact|rnc|comprobante)/i.test(subject)) {
+        return `${opening}${evidence} Vamos a revisar la secuencia fiscal, la configuracion de e-CF/DGII y el ultimo error registrado para identificar si el rechazo viene por datos del comprobante, conectividad o credenciales fiscales. Les confirmamos el siguiente paso cuando validemos el resultado.`;
+    }
+
+    if (/(sync|sincron|red|internet|conexion|offline|enviar|viajar)/i.test(subject)) {
+        return `${opening}${evidence} Vamos a validar conectividad, cola de sincronizacion y eventos pendientes para confirmar por que la informacion no esta viajando. Mientras tanto, por favor no reinstalen la app ni borren datos locales para preservar las transacciones pendientes.`;
+    }
+
+    if (/(inventario|stock|producto|catalogo)/i.test(subject)) {
+        return `${opening}${evidence} Vamos a revisar el producto afectado, los movimientos recientes y la sincronizacion de inventario entre POS y nube. Si tienen un SKU o nombre de producto especifico, pueden enviarlo para enfocar la revision.`;
+    }
+
+    if (/(pago|caja|cierre|z|cuadre|turno)/i.test(subject)) {
+        return `${opening}${evidence} Vamos a revisar el cierre, los pagos asociados y la sincronizacion del turno para confirmar donde se detuvo el flujo. Les recomendamos mantener abierta la evidencia del cierre hasta completar la validacion.`;
+    }
+
+    return `${opening}${evidence} Vamos a revisar el historial del ticket, las senales tecnicas y los ultimos eventos registrados para proponer el siguiente paso concreto. Les confirmamos tan pronto tengamos el diagnostico.`;
+}
+
 const SupportCommandCenter: React.FC = () => {
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -180,6 +222,7 @@ const SupportCommandCenter: React.FC = () => {
     const [filterSource, setFilterSource] = useState('Todos');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
+    const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
     const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
     const messagesPaneRef = useRef<HTMLDivElement>(null);
@@ -492,22 +535,37 @@ const SupportCommandCenter: React.FC = () => {
         setIsCreatingContact(false);
     };
 
-    const generateDraft = () => {
-        if (!selectedTicket) return;
+    const generateDraft = async () => {
+        if (!selectedTicket || isGeneratingDraft) return;
 
-        const suggestedReply = selectedTicket.insight?.suggested_replies?.[0];
-        if (suggestedReply) {
-            setReplyText(suggestedReply);
-            return;
+        const fallbackDraft = buildContextualFallbackDraft(selectedTicket, messages);
+        setIsGeneratingDraft(true);
+
+        try {
+            const response = await fetch(`${supabaseProjectUrl}/functions/v1/generate-support-draft`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ ticket_id: selectedTicket.id }),
+            });
+
+            const payload = await response.json().catch(() => null) as DraftResponse | null;
+
+            if (!response.ok || !payload?.draft) {
+                console.error('Admin: error generating support draft', payload ?? response.statusText);
+                setReplyText(fallbackDraft);
+                return;
+            }
+
+            setReplyText(payload.draft);
+        } catch (error) {
+            console.error('Admin: unexpected error generating support draft', error);
+            setReplyText(fallbackDraft);
+        } finally {
+            setIsGeneratingDraft(false);
         }
-
-        const lastError = selectedTicket.technical_context?.last_5_errors?.[0];
-        const greeting = `Hola ${getTicketOwner(selectedTicket)},`;
-        const diagnostic = lastError
-            ? `notamos en los logs el evento "${lastError}".`
-            : `estamos revisando el caso "${selectedTicket.subject}".`;
-
-        setReplyText(`${greeting} ${diagnostic} Vamos a validar el estado del servicio y te confirmamos los próximos pasos en breve.`);
     };
 
     return (
@@ -699,9 +757,13 @@ const SupportCommandCenter: React.FC = () => {
                                         className="max-h-[240px] min-h-[40px] w-full resize-none overflow-hidden border-0 p-2 text-sm leading-5 outline-none focus:ring-0"
                                     />
                                     <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-2 py-1.5">
-                                        <button onClick={generateDraft} className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50">
+                                        <button
+                                            onClick={generateDraft}
+                                            disabled={isGeneratingDraft}
+                                            className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
                                             <Wand2 size={14} />
-                                            Borrador IA
+                                            {isGeneratingDraft ? 'Generando...' : 'Borrador IA'}
                                         </button>
                                         <button
                                             onClick={handleSendReply}

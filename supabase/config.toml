@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.send-support-reply]
 verify_jwt = false
+
+[functions.generate-support-draft]
+verify_jwt = false
