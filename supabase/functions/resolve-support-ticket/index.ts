@@ -9,6 +9,7 @@ declare const Deno: {
 
 interface ResolvePayload {
     ticket_id?: string;
+    notify_email?: boolean;
 }
 
 interface SupportContact {
@@ -178,6 +179,38 @@ function buildFeedbackUrl(ticketId: string, token: string, params: Record<string
     return url.toString();
 }
 
+function buildFeedbackRequest(ticket: SupportTicket, token: string) {
+    const closeActions = [1, 2, 3, 4, 5].map((rating) => ({
+        action: 'close',
+        rating,
+        label: `${rating} estrella${rating === 1 ? '' : 's'}`,
+        url: buildFeedbackUrl(ticket.id, token, { action: 'close', rating: String(rating) }),
+    }));
+
+    return {
+        version: 1,
+        type: 'resolution_confirmation',
+        prompt: '¿La respuesta solucionó tu problema?',
+        close_label: 'Sí, cerrar ticket',
+        reopen_label: 'No, necesito ayuda',
+        rating_label: 'Valora la atención',
+        rating_scale: [1, 2, 3, 4, 5],
+        endpoint: `${getEnv('SUPABASE_URL')}/functions/v1/submit-support-feedback`,
+        method: 'POST',
+        ticket_id: ticket.id,
+        ticket_number: ticket.ticket_number ?? null,
+        token,
+        actions: {
+            close: closeActions,
+            reopen: {
+                action: 'reopen',
+                label: 'No, necesito ayuda',
+                url: buildFeedbackUrl(ticket.id, token, { action: 'reopen' }),
+            },
+        },
+    };
+}
+
 function escapeHtml(value: string) {
     return value
         .replace(/&/g, '&amp;')
@@ -242,6 +275,7 @@ Deno.serve(async (request) => {
         if (!ticketId) {
             return json({ error: 'ticket_id is required' }, 400);
         }
+        const shouldNotifyEmail = payload.notify_email !== false;
 
         const supabase = createClient(
             getEnv('SUPABASE_URL'),
@@ -292,7 +326,13 @@ Deno.serve(async (request) => {
 
         if (updateError) throw updateError;
 
-        const notificationMessage = 'Marcamos este caso como resuelto y enviamos una solicitud de confirmacion al cliente.';
+        const feedbackRequest = buildFeedbackRequest(supportTicket, token);
+        const notificationMessage = [
+            feedbackRequest.prompt,
+            'Si la solucion fue satisfactoria, selecciona "Si, cerrar ticket" y una valoracion de 1 a 5 estrellas.',
+            'Si aun necesitas ayuda, selecciona "No, necesito ayuda".',
+        ].join('\n\n');
+
         await supabase.from('ticket_messages').insert({
             ticket_id: supportTicket.id,
             sender_type: 'System',
@@ -301,10 +341,14 @@ Deno.serve(async (request) => {
                 channel: 'resolution',
                 event: 'resolution_feedback_requested',
                 notify_client: true,
+                requires_customer_action: true,
                 notification: {
                     play_sound: true,
                     sound: 'support-resolution-request',
+                    title: 'Soporte respondió tu caso',
+                    body: feedbackRequest.prompt,
                 },
+                feedback_request: feedbackRequest,
             },
         });
 
@@ -312,7 +356,7 @@ Deno.serve(async (request) => {
         const recipientEmail = contact?.email || supportTicket.external_sender_email;
         let notified = false;
 
-        if (recipientEmail) {
+        if (recipientEmail && shouldNotifyEmail) {
             const { data: settings, error: settingsError } = await supabase
                 .from('support_integration_settings')
                 .select('resend_inbound_email, resend_from_name, resend_from_email')
@@ -371,6 +415,7 @@ Deno.serve(async (request) => {
             status: 'Resuelto',
             resolution_status: 'pending_customer_confirmation',
             notified,
+            feedback_request: true,
         });
     } catch (error) {
         return json({
