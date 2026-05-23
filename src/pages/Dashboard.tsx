@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, CheckCircle2, Clock, HelpCircle, Server, ShieldAlert, Users } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Frown, HelpCircle, Meh, Server, ShieldAlert, Smile, Users } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { tenantService, type DashboardStats } from '../lib/tenantService';
 
@@ -16,6 +16,12 @@ const emptyStats: DashboardStats = {
     tenantGrowth: [],
     recentTickets: [],
     expiringSubscriptions: [],
+    supportSatisfaction: {
+        totalResponses: 0,
+        excellent: { count: 0, percentage: 0 },
+        good: { count: 0, percentage: 0 },
+        bad: { count: 0, percentage: 0 },
+    },
     lastUpdatedAt: new Date().toISOString(),
 };
 
@@ -63,6 +69,36 @@ function priorityClass(priority: string): string {
 
     return 'bg-slate-100 text-slate-600';
 }
+
+const satisfactionItems = [
+    {
+        key: 'excellent',
+        label: 'Excelente',
+        detail: '5 estrellas',
+        icon: Smile,
+        color: 'text-emerald-600',
+        bg: 'bg-emerald-50',
+        bar: 'bg-emerald-500',
+    },
+    {
+        key: 'good',
+        label: 'Bueno',
+        detail: '3-4 estrellas',
+        icon: Meh,
+        color: 'text-amber-600',
+        bg: 'bg-amber-50',
+        bar: 'bg-amber-500',
+    },
+    {
+        key: 'bad',
+        label: 'Malo',
+        detail: '1-2 estrellas',
+        icon: Frown,
+        color: 'text-red-600',
+        bg: 'bg-red-50',
+        bar: 'bg-red-500',
+    },
+] as const;
 
 export const Dashboard: React.FC = () => {
     const [stats, setStats] = useState<DashboardStats>(emptyStats);
@@ -198,25 +234,77 @@ export const Dashboard: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="glass-card rounded-2xl p-6">
-                    <h4 className="font-bold text-slate-800 mb-6">Operación Actual</h4>
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                            <span className="text-sm font-semibold text-slate-600">Suscripciones activas</span>
-                            <span className="text-lg font-black text-slate-900">{formatInteger(stats.activeSubscriptions)}</span>
+                <div className="space-y-6">
+                    <div className="glass-card rounded-2xl p-6">
+                        <h4 className="font-bold text-slate-800 mb-6">Operación Actual</h4>
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                                <span className="text-sm font-semibold text-slate-600">Suscripciones activas</span>
+                                <span className="text-lg font-black text-slate-900">{formatInteger(stats.activeSubscriptions)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                                <span className="text-sm font-semibold text-slate-600">Tickets abiertos</span>
+                                <span className="text-lg font-black text-slate-900">{formatInteger(stats.openTickets)}</span>
+                            </div>
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                                <span className="text-sm font-semibold text-slate-600">Tickets críticos</span>
+                                <span className="text-lg font-black text-red-600">{formatInteger(stats.criticalTickets)}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm font-semibold text-slate-600">Tenants operativos</span>
+                                <span className="text-lg font-black text-emerald-600">{formatInteger(activeOperations)}</span>
+                            </div>
                         </div>
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                            <span className="text-sm font-semibold text-slate-600">Tickets abiertos</span>
-                            <span className="text-lg font-black text-slate-900">{formatInteger(stats.openTickets)}</span>
+                    </div>
+
+                    <div className="glass-card rounded-2xl p-6">
+                        <div className="mb-5 flex items-start justify-between gap-3">
+                            <div>
+                                <h4 className="font-bold text-slate-800">Satisfacción del soporte</h4>
+                                <p className="mt-1 text-xs font-medium text-slate-500">
+                                    {formatInteger(stats.supportSatisfaction.totalResponses)} encuesta{stats.supportSatisfaction.totalResponses === 1 ? '' : 's'} respondida{stats.supportSatisfaction.totalResponses === 1 ? '' : 's'}
+                                </p>
+                            </div>
+                            {stats.supportSatisfaction.totalResponses > 0 && stats.supportSatisfaction.totalResponses < 5 ? (
+                                <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-500">Muestra baja</span>
+                            ) : null}
                         </div>
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                            <span className="text-sm font-semibold text-slate-600">Tickets críticos</span>
-                            <span className="text-lg font-black text-red-600">{formatInteger(stats.criticalTickets)}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <span className="text-sm font-semibold text-slate-600">Tenants operativos</span>
-                            <span className="text-lg font-black text-emerald-600">{formatInteger(activeOperations)}</span>
-                        </div>
+
+                        {stats.supportSatisfaction.totalResponses === 0 ? (
+                            <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-500">
+                                Aún no hay encuestas respondidas.
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {satisfactionItems.map((item) => {
+                                    const bucket = stats.supportSatisfaction[item.key];
+                                    const Icon = item.icon;
+
+                                    return (
+                                        <div key={item.key}>
+                                            <div className="mb-2 flex items-center justify-between gap-3">
+                                                <div className="flex min-w-0 items-center gap-3">
+                                                    <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${item.bg} ${item.color}`}>
+                                                        <Icon size={18} />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-sm font-bold text-slate-800">{item.label}</p>
+                                                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{item.detail}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className={`text-lg font-black ${item.color}`}>{bucket.percentage}%</p>
+                                                    <p className="text-[10px] font-semibold text-slate-400">{formatInteger(bucket.count)}</p>
+                                                </div>
+                                            </div>
+                                            <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                                                <div className={`h-full rounded-full ${item.bar}`} style={{ width: `${bucket.percentage}%` }} />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
