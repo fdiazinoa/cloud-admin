@@ -172,6 +172,8 @@ function isElectronicInvoiceConfigurationQuestion(text: string) {
     return asksConfiguration && isElectronicInvoice;
 }
 
+const improvementRequestPattern = /(necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta|solicitamos (una|un|que|como mejora)|sugeri(mos|ria|r[ií]a|do|da|encia).{0,80}(mejora|cambio|funci[oó]n|m[oó]dulo|modulo|sistema)|(proponemos|recomendamos).{0,80}(mejora|cambio|funci[oó]n|m[oó]dulo|modulo|sistema)|no permita(n)? .{0,100}(duplic|repet|m[aá]s de una vez|mas de una vez|depreci)|evit(a|ar|e).{0,100}(duplic|repet|m[aá]s de una vez|mas de una vez)|poder (aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)|promocion(es)?.{0,100}(forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio))/i;
+
 function knowledgeHasConfigurationGuide(knowledgeMatches: KnowledgeMatch[]) {
     return knowledgeMatches.some((match) => {
         const text = `${match.module} ${match.title} ${match.content} ${match.source_path ?? ''}`.toLowerCase();
@@ -333,9 +335,7 @@ function buildFallbackDraft(ticket: SupportTicket, messages: MessageRow[]) {
         return `${opening} validemos el pago/cierre en Clic-POS.${evidence} Revisa si la venta quedo completada, pendiente o duplicada en el historial y comparala contra el cuadre de caja. Envianos folio, monto, metodo de pago, hora, caja y terminal para identificar si es registro, sincronizacion o conciliacion.`;
     }
 
-    const improvementPattern = /(necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta|poder (aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)|promocion(es)?.{0,100}(forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio))/i;
-
-    if (improvementPattern.test(subject) || (lastClientMessage && improvementPattern.test(lastClientMessage))) {
+    if (improvementRequestPattern.test(subject) || (lastClientMessage && improvementRequestPattern.test(lastClientMessage))) {
         return `${opening} lo que solicitas parece una mejora funcional para Clic-ERP/Clic-POS. La registraremos para evaluacion de producto con el caso de uso e impacto operativo. Para documentarla bien, confirmanos modulo, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.`;
     }
 
