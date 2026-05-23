@@ -45,3 +45,9 @@ jobs:
 
       - name: Deploy support message reader
         run: supabase functions deploy get-support-messages --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+
+      - name: Deploy support resolver
+        run: supabase functions deploy resolve-support-ticket --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+
+      - name: Deploy support feedback receiver
+        run: supabase functions deploy submit-support-feedback --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
