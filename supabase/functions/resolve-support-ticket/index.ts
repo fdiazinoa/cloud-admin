@@ -345,14 +345,24 @@ Deno.serve(async (request) => {
 
         await supabase.from('ticket_messages').insert({
             ticket_id: supportTicket.id,
-            sender_type: 'System',
+            sender_type: 'Admin',
             message: notificationMessage,
             attachments: {
                 channel: 'resolution',
+                delivery_status: 'in_app',
                 event: 'resolution_feedback_requested',
+                message_kind: 'resolution_feedback_request',
+                notified_client: true,
                 notify_client: true,
                 requires_customer_action: true,
+                client_alert: {
+                    badge: true,
+                    increment_unread: true,
+                    open_ticket_id: supportTicket.id,
+                },
                 notification: {
+                    badge: true,
+                    increment_unread: true,
                     play_sound: true,
                     sound: 'support-resolution-request',
                     title: 'Soporte respondió tu caso',
