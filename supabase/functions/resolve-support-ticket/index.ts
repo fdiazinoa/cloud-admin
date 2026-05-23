@@ -195,11 +195,21 @@ function buildFeedbackRequest(ticket: SupportTicket, token: string) {
         reopen_label: 'No, necesito ayuda',
         rating_label: 'Valora la atención',
         rating_scale: [1, 2, 3, 4, 5],
+        ui: {
+            component: 'resolution_feedback',
+            rating_style: 'amazon_stars',
+            rating_selection: 'single',
+            require_rating_for_close: true,
+        },
         endpoint: `${getEnv('SUPABASE_URL')}/functions/v1/submit-support-feedback`,
         method: 'POST',
         ticket_id: ticket.id,
         ticket_number: ticket.ticket_number ?? null,
         token,
+        close_action: {
+            action: 'close',
+            label: 'Sí, cerrar ticket',
+        },
         actions: {
             close: closeActions,
             reopen: {
@@ -275,7 +285,7 @@ Deno.serve(async (request) => {
         if (!ticketId) {
             return json({ error: 'ticket_id is required' }, 400);
         }
-        const shouldNotifyEmail = payload.notify_email !== false;
+        const shouldNotifyEmail = payload.notify_email === true;
 
         const supabase = createClient(
             getEnv('SUPABASE_URL'),

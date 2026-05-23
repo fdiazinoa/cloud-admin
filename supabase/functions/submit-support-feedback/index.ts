@@ -15,11 +15,33 @@ interface FeedbackPayload {
     feedback?: string;
 }
 
+interface SupportContact {
+    email?: string | null;
+}
+
 interface SupportTicket {
     id: string;
     ticket_number?: number | null;
     subject: string;
+    external_sender_email?: string | null;
+    technical_context?: {
+        email_thread_message_ids?: string[];
+        resend_message_id?: string;
+        [key: string]: unknown;
+    } | null;
     resolution_feedback_token_hash?: string | null;
+    support_contacts?: SupportContact | SupportContact[] | null;
+}
+
+interface IntegrationSettingsRow {
+    resend_inbound_email?: string | null;
+    resend_from_name?: string | null;
+    resend_from_email?: string | null;
+}
+
+interface ResendSecretRow {
+    secret_ciphertext: string;
+    secret_iv: string;
 }
 
 const corsHeaders = {
@@ -48,6 +70,10 @@ function getEnv(name: string) {
     return value;
 }
 
+function getOptionalEnv(name: string) {
+    return Deno.env.get(name)?.trim() || undefined;
+}
+
 function describeError(error: unknown) {
     if (error instanceof Error) return error.message;
     if (error && typeof error === 'object') {
@@ -72,10 +98,61 @@ async function sha256Hex(value: string) {
         .join('');
 }
 
+function normalizeRelation<T>(value: T | T[] | null | undefined): T | null {
+    if (Array.isArray(value)) return value[0] ?? null;
+    return value ?? null;
+}
+
+function base64ToBytes(value: string) {
+    const binary = atob(value);
+    return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+async function getDecryptKey() {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(getEnv('INTEGRATION_SECRET_KEY')));
+    return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['decrypt']);
+}
+
+async function decryptSecret(row: ResendSecretRow) {
+    const key = await getDecryptKey();
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: base64ToBytes(row.secret_iv) },
+        key,
+        base64ToBytes(row.secret_ciphertext),
+    );
+
+    return new TextDecoder().decode(decrypted);
+}
+
 function parseRating(value: unknown) {
     const rating = Number(value);
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) return null;
     return rating;
+}
+
+function formatFromAddress(name: string, email: string) {
+    const cleanName = name.trim() || 'Cloud Admin Soporte';
+    return `${cleanName} <${email.trim().toLowerCase()}>`;
+}
+
+function buildSummarySubject(ticket: SupportTicket) {
+    const ticketToken = `[Ticket #${ticket.ticket_number ?? ticket.id.slice(0, 8)}]`;
+    return `${ticketToken} Ticket cerrado: ${ticket.subject}`;
+}
+
+function buildThreadHeaders(ticket: SupportTicket) {
+    const messageIds = Array.isArray(ticket.technical_context?.email_thread_message_ids)
+        ? ticket.technical_context.email_thread_message_ids.filter((value): value is string => typeof value === 'string')
+        : [];
+    const latestMessageId = ticket.technical_context?.resend_message_id ?? messageIds.at(-1);
+    const references = Array.from(new Set([...messageIds, latestMessageId].filter((value): value is string => Boolean(value))));
+
+    if (!latestMessageId) return undefined;
+
+    return {
+        'In-Reply-To': latestMessageId,
+        References: references.join(' '),
+    };
 }
 
 function readPayloadFromUrl(request: Request): FeedbackPayload {
@@ -121,6 +198,103 @@ function responsePage(title: string, message: string) {
 </html>`;
 }
 
+function buildClosedTicketSummaryEmail(ticket: SupportTicket, rating: number | null, feedback: string | null) {
+    const ticketLabel = `#${ticket.ticket_number ?? ticket.id.slice(0, 8)}`;
+    const ratingText = rating ? `${rating}/5` : 'Sin valoracion';
+    const feedbackText = feedback || 'Sin comentario adicional.';
+
+    const text = [
+        `Ticket cerrado ${ticketLabel}: ${ticket.subject}`,
+        '',
+        `Valoracion del cliente: ${ratingText}`,
+        `Comentario: ${feedbackText}`,
+        '',
+        'Gracias por confirmar que la respuesta soluciono el caso.',
+    ].join('\n');
+
+    const stars = rating
+        ? `${'★'.repeat(rating)}${'☆'.repeat(5 - rating)}`
+        : '☆☆☆☆☆';
+
+    const html = `
+        <div style="font-family:Inter,Arial,sans-serif;line-height:1.5;color:#0f172a">
+            <p>El ticket <strong>${escapeHtml(ticketLabel)}</strong> fue cerrado.</p>
+            <p><strong>${escapeHtml(ticket.subject)}</strong></p>
+            <p>Valoración del cliente:</p>
+            <p style="font-size:24px;color:#f59e0b;letter-spacing:2px">${stars}</p>
+            <p><strong>${escapeHtml(ratingText)}</strong></p>
+            <p>Comentario:</p>
+            <p>${escapeHtml(feedbackText)}</p>
+            <p style="margin-top:24px;color:#475569">Gracias por confirmar que la respuesta solucionó el caso.</p>
+        </div>
+    `;
+
+    return { text, html };
+}
+
+async function sendClosedTicketSummary(
+    supabase: ReturnType<typeof createClient>,
+    ticket: SupportTicket,
+    rating: number | null,
+    feedback: string | null,
+) {
+    const contact = normalizeRelation(ticket.support_contacts);
+    const recipientEmail = contact?.email || ticket.external_sender_email;
+    if (!recipientEmail) return false;
+
+    const { data: settings, error: settingsError } = await supabase
+        .from('support_integration_settings')
+        .select('resend_inbound_email, resend_from_name, resend_from_email')
+        .eq('id', 'helpdesk')
+        .maybeSingle();
+
+    if (settingsError) throw settingsError;
+
+    const { data: resendSecret, error: secretError } = await supabase
+        .from('support_integration_secrets')
+        .select('secret_ciphertext, secret_iv')
+        .eq('provider', 'resend')
+        .maybeSingle();
+
+    if (secretError) throw secretError;
+
+    const resendApiKey = resendSecret
+        ? await decryptSecret(resendSecret as ResendSecretRow)
+        : getOptionalEnv('RESEND_API_KEY');
+
+    if (!resendApiKey) return false;
+
+    const settingsRow = (settings ?? {}) as IntegrationSettingsRow;
+    const fromAddress = settingsRow.resend_from_email
+        ? formatFromAddress(settingsRow.resend_from_name ?? 'Cloud Admin Soporte', settingsRow.resend_from_email)
+        : getEnv('HELPDESK_FROM_EMAIL');
+    const replyToAddress = settingsRow.resend_inbound_email ?? getEnv('HELPDESK_INBOUND_EMAIL');
+    const emailBody = buildClosedTicketSummaryEmail(ticket, rating, feedback);
+
+    const resendResponse = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            from: fromAddress,
+            to: [recipientEmail],
+            subject: buildSummarySubject(ticket),
+            text: emailBody.text,
+            html: emailBody.html,
+            reply_to: [replyToAddress],
+            headers: buildThreadHeaders(ticket),
+        }),
+    });
+
+    if (!resendResponse.ok) {
+        throw new Error(`Resend failed: ${await resendResponse.text()}`);
+    }
+
+    return true;
+}
+
 Deno.serve(async (request) => {
     if (request.method === 'OPTIONS') {
         return json({ ok: true });
@@ -153,6 +327,12 @@ Deno.serve(async (request) => {
                 : json({ error: 'action must be close or reopen' }, 400);
         }
 
+        if (action === 'close' && !rating) {
+            return request.method === 'GET'
+                ? html(responsePage('Valoracion requerida', 'Selecciona una valoracion de 1 a 5 estrellas para cerrar el ticket.'), 400)
+                : json({ error: 'rating from 1 to 5 is required to close the ticket' }, 400);
+        }
+
         const supabase = createClient(
             getEnv('SUPABASE_URL'),
             getEnv('SUPABASE_SERVICE_ROLE_KEY'),
@@ -164,7 +344,17 @@ Deno.serve(async (request) => {
 
         const { data: ticket, error: ticketError } = await supabase
             .from('support_tickets')
-            .select('id, ticket_number, subject, resolution_feedback_token_hash')
+            .select(`
+                id,
+                ticket_number,
+                subject,
+                external_sender_email,
+                technical_context,
+                resolution_feedback_token_hash,
+                support_contacts (
+                    email
+                )
+            `)
             .eq('id', ticketId)
             .single();
 
@@ -225,6 +415,16 @@ Deno.serve(async (request) => {
             },
         });
 
+        let summaryNotified = false;
+        let summaryNotificationError: string | null = null;
+        if (isClosing) {
+            try {
+                summaryNotified = await sendClosedTicketSummary(supabase, supportTicket, rating, feedback);
+            } catch (notificationError) {
+                summaryNotificationError = describeError(notificationError);
+            }
+        }
+
         if (request.method === 'GET') {
             return html(responsePage(
                 isClosing ? 'Gracias por tu valoracion' : 'Ticket reabierto',
@@ -238,6 +438,8 @@ Deno.serve(async (request) => {
             ok: true,
             status: isClosing ? 'Cerrado' : 'En_Proceso',
             resolution_status: isClosing ? 'closed' : 'reopened',
+            summary_notified: summaryNotified,
+            summary_notification_error: summaryNotificationError,
         });
     } catch (error) {
         const detail = describeError(error);
