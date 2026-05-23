@@ -7,6 +7,7 @@ import { Plans } from './pages/Plans'
 import { Configuration } from './pages/Configuration'
 import { PosApkReleases } from './pages/PosApkReleases'
 import SupportCommandCenter from './pages/SupportCommandCenter'
+import { CustomerImprovements } from './pages/CustomerImprovements'
 
 function App() {
     return (
@@ -18,6 +19,7 @@ function App() {
                     <Route path="plans" element={<Plans />} />
                     <Route path="pos-apk" element={<PosApkReleases />} />
                     <Route path="support" element={<SupportCommandCenter />} />
+                    <Route path="mejoras" element={<CustomerImprovements />} />
                     <Route path="configuracion" element={<Configuration />} />
                     <Route path="kill-switch" element={<KillSwitch />} />
                 </Route>
