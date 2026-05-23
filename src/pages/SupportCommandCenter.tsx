@@ -245,35 +245,43 @@ function truncateDraftContext(value: string, maxLength = 180) {
 }
 
 function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
-    const subject = `${ticket.subject} ${ticket.category}`.toLowerCase();
+    const subject = `${ticket.subject} ${ticket.category} ${ticket.insight?.affected_module ?? ''}`.toLowerCase();
     const owner = getTicketOwner(ticket);
     const lastClientMessage = [...messages].reverse().find((message) => message.sender_type === 'Client')?.message;
-    const opening = `Hola ${owner}, estamos revisando el caso "${ticket.subject}".`;
-    const evidence = lastClientMessage
-        ? ` Tomamos como referencia el detalle que nos enviaron: "${truncateDraftContext(lastClientMessage)}".`
-        : '';
+    const opening = `Hola ${owner},`;
+    const evidence = lastClientMessage ? ` Tomamos como referencia: "${truncateDraftContext(lastClientMessage)}".` : '';
+    const lastError = ticket.technical_context?.last_5_errors?.[0];
+    const terminalContext = [
+        ticket.technical_context?.app_version ? `version ${ticket.technical_context.app_version}` : null,
+        ticket.technical_context?.network_type ? `red ${ticket.technical_context.network_type}` : null,
+        ticket.technical_context?.battery_level ? `bateria ${ticket.technical_context.battery_level}` : null,
+    ].filter(Boolean).join(', ');
 
     if (/(impres|printer|cocina|comanda|hardware)/i.test(subject)) {
-        return `${opening}${evidence} Vamos a validar que la terminal tenga asignada la impresora correcta, revisar la ruta de impresion y hacer una prueba de comanda. Si pueden confirmarnos el nombre de la terminal afectada y si otras impresoras funcionan, avanzamos mas rapido.`;
+        return `${opening} vamos a validar el hardware del POS.${evidence} Confirma si ocurre en una sola terminal o en todas, revisa conexion/emparejamiento de impresora o scanner, y prueba una reimpresion o recibo de prueba. Si falla, envianos modelo del equipo, terminal afectada, version del POS y foto/captura del error${lastError ? `; tambien vemos "${lastError}" en contexto tecnico.` : '.'}`;
     }
 
     if (/(factura|fiscal|ncf|e-?cf|digifact|rnc|comprobante)/i.test(subject)) {
-        return `${opening}${evidence} Vamos a revisar la secuencia fiscal, la configuracion de e-CF/DGII y el ultimo error registrado para identificar si el rechazo viene por datos del comprobante, conectividad o credenciales fiscales. Les confirmamos el siguiente paso cuando validemos el resultado.`;
+        return `${opening} revisemos el flujo fiscal en Clic-ERP/Clic-POS.${evidence} Valida primero tipo de comprobante, RNC/consumidor final, secuencia NCF/e-CF disponible e internet estable. Luego intenta reenviar solo ese comprobante desde historial, sin recrear la venta. Si vuelve a fallar, envianos folio, NCF/e-CF, hora exacta y captura del error${lastError ? `; en los logs vemos "${lastError}".` : '.'}`;
     }
 
-    if (/(sync|sincron|red|internet|conexion|offline|enviar|viajar)/i.test(subject)) {
-        return `${opening}${evidence} Vamos a validar conectividad, cola de sincronizacion y eventos pendientes para confirmar por que la informacion no esta viajando. Mientras tanto, por favor no reinstalen la app ni borren datos locales para preservar las transacciones pendientes.`;
+    if (/(sync|sincron|red|internet|conexion|offline|enviar|viajar|cierre|z\b)/i.test(subject)) {
+        return `${opening} esto parece sincronizacion entre Clic-POS y Cloud/ERP.${evidence} Confirma que las ventas esten visibles localmente, que la terminal tenga internet estable y fecha/hora correcta, y luego fuerza la sincronizacion desde el POS. No borres datos ni reinstales antes de confirmar respaldo. Si no viaja, envianos terminal, usuario, hora del cierre/caja y cantidad de transacciones pendientes${terminalContext ? ` (${terminalContext})` : ''}${lastError ? `; ultimo error "${lastError}".` : '.'}`;
     }
 
     if (/(inventario|stock|producto|catalogo)/i.test(subject)) {
-        return `${opening}${evidence} Vamos a revisar el producto afectado, los movimientos recientes y la sincronizacion de inventario entre POS y nube. Si tienen un SKU o nombre de producto especifico, pueden enviarlo para enfocar la revision.`;
+        return `${opening} revisemos inventario/catalogo.${evidence} Confirma que el producto exista y este activo en Clic-ERP para la sucursal, valida precio/impuesto y luego sincroniza catalogo en el POS. Si sigue sin aparecer o el stock no coincide, envianos codigo del producto, sucursal, terminal, cantidad esperada y captura de la busqueda.`;
     }
 
     if (/(pago|caja|cierre|z|cuadre|turno)/i.test(subject)) {
-        return `${opening}${evidence} Vamos a revisar el cierre, los pagos asociados y la sincronizacion del turno para confirmar donde se detuvo el flujo. Les recomendamos mantener abierta la evidencia del cierre hasta completar la validacion.`;
+        return `${opening} validemos el pago/cierre en Clic-POS.${evidence} Revisa si la venta quedo completada, pendiente o duplicada en el historial y comparala contra el cuadre de caja. Envianos folio, monto, metodo de pago, hora, caja y terminal para identificar si es registro, sincronizacion o conciliacion.`;
     }
 
-    return `${opening}${evidence} Vamos a revisar el historial del ticket, las senales tecnicas y los ultimos eventos registrados para proponer el siguiente paso concreto. Les confirmamos tan pronto tengamos el diagnostico.`;
+    if (/(necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta)/i.test(subject) || (lastClientMessage && /(necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta)/i.test(lastClientMessage))) {
+        return `${opening} lo que solicitas parece una mejora funcional para Clic-ERP/Clic-POS. La registraremos para evaluacion de producto con el caso de uso e impacto operativo. Para documentarla bien, confirmanos modulo, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.`;
+    }
+
+    return `${opening} necesito ubicar el punto exacto del caso en Clic-ERP/Clic-POS.${evidence} Confirma modulo afectado, usuario, sucursal/caja, terminal, version, hora aproximada y captura del mensaje. Mientras tanto valida conectividad, fecha/hora del equipo y si ocurre en una sola terminal o en todas${lastError ? `; el ultimo error registrado es "${lastError}".` : '.'}`;
 }
 
 const SupportCommandCenter: React.FC = () => {
