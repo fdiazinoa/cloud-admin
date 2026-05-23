@@ -308,7 +308,9 @@ function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
         return `${opening} validemos el pago/cierre en Clic-POS.${evidence} Revisa si la venta quedo completada, pendiente o duplicada en el historial y comparala contra el cuadre de caja. Envianos folio, monto, metodo de pago, hora, caja y terminal para identificar si es registro, sincronizacion o conciliacion.`;
     }
 
-    if (/(necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta)/i.test(subject) || (lastClientMessage && /(necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta)/i.test(lastClientMessage))) {
+    const improvementPattern = /(necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta|poder (aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)|promocion(es)?.{0,100}(forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio))/i;
+
+    if (improvementPattern.test(subject) || (lastClientMessage && improvementPattern.test(lastClientMessage))) {
         return `${opening} lo que solicitas parece una mejora funcional para Clic-ERP/Clic-POS. La registraremos para evaluacion de producto con el caso de uso e impacto operativo. Para documentarla bien, confirmanos modulo, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.`;
     }
 

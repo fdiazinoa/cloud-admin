@@ -29,6 +29,9 @@ begin
     or combined_text ~* 'opci[oó]n para'
     or combined_text ~* 'funci[oó]n para'
     or combined_text ~* 'mejora para'
+    or combined_text ~* 'poder (aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)'
+    or combined_text ~* '(aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar).{0,80}(por|seg[uú]n) (forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)'
+    or combined_text ~* 'promocion(es)?.{0,100}(forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)'
   ) then
     return new;
   end if;

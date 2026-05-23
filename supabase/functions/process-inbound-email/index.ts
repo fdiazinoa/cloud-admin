@@ -286,6 +286,9 @@ function detectImprovementSignal(subject: string, body: string, affectedModule: 
         /opci[oó]n para/i,
         /funci[oó]n para/i,
         /mejora para/i,
+        /poder (?:aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)/i,
+        /(?:aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar).{0,80}(?:por|seg[uú]n) (?:forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)/i,
+        /promocion(?:es)? .{0,100}(?:forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)/i,
     ];
     const isRequest = patterns.some((pattern) => pattern.test(text));
 
