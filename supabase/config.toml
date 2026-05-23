@@ -9,3 +9,6 @@ verify_jwt = false
 
 [functions.generate-support-draft]
 verify_jwt = false
+
+[functions.get-support-messages]
+verify_jwt = false
