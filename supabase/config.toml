@@ -12,3 +12,9 @@ verify_jwt = false
 
 [functions.get-support-messages]
 verify_jwt = false
+
+[functions.resolve-support-ticket]
+verify_jwt = false
+
+[functions.submit-support-feedback]
+verify_jwt = false

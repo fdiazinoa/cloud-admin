@@ -71,6 +71,8 @@ interface Ticket {
     category: string;
     priority: string;
     status: string;
+    resolution_status?: 'open' | 'pending_customer_confirmation' | 'closed' | 'reopened' | null;
+    customer_rating?: number | null;
     subject: string;
     source: string;
     assignment_status?: string | null;
@@ -119,7 +121,7 @@ interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight'> 
     ai_ticket_insights?: AiTicketInsight | AiTicketInsight[] | null;
 }
 
-const statusFilters = ['Todos', 'Abierto', 'En_Proceso', 'Resuelto'];
+const statusFilters = ['Todos', 'Abierto', 'En_Proceso', 'Resuelto', 'Cerrado'];
 const sourceFilters = ['Todos', 'POS', 'ERP', 'Email', 'Preventivo'];
 
 const sourceStyles: Record<string, string> = {
@@ -153,6 +155,18 @@ const slaLabels: Record<string, string> = {
     standard: 'Estándar',
     priority: 'Prioritario',
     critical: 'Crítico',
+};
+
+const resolutionStatusLabels: Record<string, string> = {
+    pending_customer_confirmation: 'Esperando confirmacion',
+    closed: 'Cerrado por cliente',
+    reopened: 'Reabierto por cliente',
+};
+
+const resolutionStatusStyles: Record<string, string> = {
+    pending_customer_confirmation: 'border-amber-200 bg-amber-50 text-amber-700',
+    closed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    reopened: 'border-red-200 bg-red-50 text-red-700',
 };
 
 function normalizeRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -272,6 +286,7 @@ const SupportCommandCenter: React.FC = () => {
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
     const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+    const [isResolvingTicket, setIsResolvingTicket] = useState(false);
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
     const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
     const messagesPaneRef = useRef<HTMLDivElement>(null);
@@ -502,6 +517,10 @@ const SupportCommandCenter: React.FC = () => {
                     channel: 'realtime',
                     notify_client: true,
                     delivery_status: 'inserted',
+                    notification: {
+                        play_sound: true,
+                        sound: 'support-reply',
+                    },
                 },
             });
 
@@ -520,9 +539,45 @@ const SupportCommandCenter: React.FC = () => {
     const updateStatus = async (newStatus: string) => {
         if (!selectedTicket) return;
 
+        if (newStatus === 'Resuelto') {
+            setIsResolvingTicket(true);
+            try {
+                const response = await fetch(`${supabaseProjectUrl}/functions/v1/resolve-support-ticket`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ticket_id: selectedTicket.id }),
+                });
+
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
+                    console.error('Admin: error resolving support ticket', payload ?? response.statusText);
+                    return;
+                }
+
+                setSelectedTicket({
+                    ...selectedTicket,
+                    status: 'Resuelto',
+                    resolution_status: 'pending_customer_confirmation',
+                    customer_rating: null,
+                });
+            } catch (error) {
+                console.error('Admin: unexpected error resolving support ticket', error);
+            } finally {
+                setIsResolvingTicket(false);
+            }
+            return;
+        }
+
         const { error } = await supabaseAdmin
             .from('support_tickets')
-            .update({ status: newStatus })
+            .update({
+                status: newStatus,
+                resolution_status: newStatus === 'En_Proceso' ? 'reopened' : 'open',
+                resolution_feedback_token_hash: null,
+            })
             .eq('id', selectedTicket.id);
 
         if (error) {
@@ -530,7 +585,11 @@ const SupportCommandCenter: React.FC = () => {
             return;
         }
 
-        setSelectedTicket({ ...selectedTicket, status: newStatus });
+        setSelectedTicket({
+            ...selectedTicket,
+            status: newStatus,
+            resolution_status: newStatus === 'En_Proceso' ? 'reopened' : 'open',
+        });
     };
 
     const openContactModal = () => {
@@ -720,6 +779,11 @@ const SupportCommandCenter: React.FC = () => {
                                             {ticket.source === 'Email' ? <Mail size={11} /> : <MonitorSmartphone size={11} />}
                                             {ticket.source}
                                         </span>
+                                        {ticket.resolution_status && ticket.resolution_status !== 'open' && (
+                                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${resolutionStatusStyles[ticket.resolution_status] ?? 'border-slate-200 bg-slate-50 text-slate-500'}`}>
+                                                {resolutionStatusLabels[ticket.resolution_status] ?? ticket.resolution_status}
+                                            </span>
+                                        )}
                                     </div>
                                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${ticket.priority === 'Critica' ? 'border-red-200 bg-red-50 text-red-700' : 'border-orange-200 bg-orange-50 text-orange-700'}`}>
                                         {ticket.priority}
@@ -761,6 +825,16 @@ const SupportCommandCenter: React.FC = () => {
                                         <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
                                             {selectedTicket.category}
                                         </span>
+                                        {selectedTicket.resolution_status && selectedTicket.resolution_status !== 'open' && (
+                                            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${resolutionStatusStyles[selectedTicket.resolution_status] ?? 'border-slate-200 bg-white text-slate-600'}`}>
+                                                {resolutionStatusLabels[selectedTicket.resolution_status] ?? selectedTicket.resolution_status}
+                                            </span>
+                                        )}
+                                        {selectedTicket.customer_rating ? (
+                                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
+                                                {selectedTicket.customer_rating}/5 estrellas
+                                            </span>
+                                        ) : null}
                                     </div>
                                     <div className="flex min-w-0 items-center gap-2">
                                         <span className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-black text-slate-500">
@@ -772,14 +846,20 @@ const SupportCommandCenter: React.FC = () => {
                                 </div>
 
                                 <div className="flex shrink-0 gap-2">
-                                    <button onClick={() => updateStatus('En_Proceso')} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                                    <button onClick={() => updateStatus('En_Proceso')} disabled={isResolvingTicket} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
                                         En proceso
                                     </button>
-                                    <button onClick={() => updateStatus('Resuelto')} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700">
-                                        Resolver
+                                    <button onClick={() => updateStatus('Resuelto')} disabled={isResolvingTicket} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
+                                        {isResolvingTicket ? 'Enviando...' : 'Resolver'}
                                     </button>
                                 </div>
                             </div>
+
+                            {selectedTicket.resolution_status === 'pending_customer_confirmation' && (
+                                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                                    Se notifico al cliente para confirmar cierre y valorar la respuesta.
+                                </div>
+                            )}
 
                             {selectedTicket.insight?.summary && (
                                 <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50 p-3">
