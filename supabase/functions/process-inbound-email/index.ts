@@ -46,6 +46,12 @@ interface TriageResult {
     incident_fingerprint: string | null;
     duplicate_signal: boolean;
     ai_tags: string[];
+    customer_improvement_requested: boolean;
+    improvement_title: string | null;
+    improvement_summary: string | null;
+    requested_capability: string | null;
+    customer_impact: string | null;
+    improvement_confidence: number;
 }
 
 interface TenantMatch {
@@ -237,6 +243,66 @@ function buildIncidentFingerprint(category: TicketCategory, affectedModule: stri
     return `${category}:${affectedModule ?? 'general'}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+function truncateText(value: string, maxLength: number) {
+    const clean = value.replace(/\s+/g, ' ').trim();
+    return clean.length > maxLength ? `${clean.slice(0, maxLength - 3)}...` : clean;
+}
+
+function buildImprovementKey(value: string) {
+    return value
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 96) || 'mejora-general';
+}
+
+function detectImprovementSignal(subject: string, body: string, affectedModule: string | null) {
+    const text = `${subject}\n${body}`;
+    const normalized = text.toLowerCase();
+    const patterns = [
+        /ser[ií]a bueno/i,
+        /deber[ií]a(?:n)? (?:tener|permitir|agregar|incluir|hacer|existir)/i,
+        /podr[ií]a(?:n)? (?:agregar|incluir|hacer|poner|crear|permitir)/i,
+        /necesito que (?:el sistema|la app|el pos|el erp)?/i,
+        /queremos que (?:el sistema|la app|el pos|el erp)?/i,
+        /me gustar[ií]a que/i,
+        /hace falta (?:una|un|el|la)?/i,
+        /solicitamos (?:una|un|que)/i,
+        /opci[oó]n para/i,
+        /funci[oó]n para/i,
+        /mejora para/i,
+    ];
+    const isRequest = patterns.some((pattern) => pattern.test(text));
+
+    if (!isRequest) {
+        return {
+            customer_improvement_requested: false,
+            improvement_title: null,
+            improvement_summary: null,
+            requested_capability: null,
+            customer_impact: null,
+            improvement_confidence: 0,
+        };
+    }
+
+    const title = truncateText(subject || body, 90);
+    const requestedCapability = truncateText(body || subject, 220);
+    const impact = normalized.includes('ventas') || normalized.includes('vender') || normalized.includes('cliente')
+        ? 'Puede impactar flujo de ventas o experiencia del cliente.'
+        : 'Solicitud funcional detectada para evaluacion de producto.';
+
+    return {
+        customer_improvement_requested: true,
+        improvement_title: title,
+        improvement_summary: truncateText(`Solicitud de mejora detectada${affectedModule ? ` en ${affectedModule}` : ''}: ${requestedCapability}`, 360),
+        requested_capability: requestedCapability,
+        customer_impact: impact,
+        improvement_confidence: 0.72,
+    };
+}
+
 function heuristicTriage(subject: string, body: string): TriageResult {
     const text = `${subject} ${body}`.toLowerCase();
     const category = text.includes('impres') || text.includes('fiscal') || text.includes('comprobante')
@@ -262,6 +328,7 @@ function heuristicTriage(subject: string, body: string): TriageResult {
         : 'neutral';
     const affectedModule = detectAffectedModule(`${subject} ${body}`, category);
     const incidentFingerprint = buildIncidentFingerprint(category, affectedModule);
+    const improvement = detectImprovementSignal(subject, body, affectedModule);
 
     return {
         category,
@@ -288,8 +355,56 @@ function heuristicTriage(subject: string, body: string): TriageResult {
         detected_identifiers: [],
         incident_fingerprint: incidentFingerprint,
         duplicate_signal: false,
-        ai_tags: [category, affectedModule].filter((tag): tag is string => Boolean(tag)),
+        ai_tags: [
+            category,
+            affectedModule,
+            improvement.customer_improvement_requested ? 'mejora-solicitada' : null,
+        ].filter((tag): tag is string => Boolean(tag)),
+        ...improvement,
     };
+}
+
+async function createCustomerImprovementRequest(
+    supabase: ReturnType<typeof createClient>,
+    params: {
+        ticketId: string;
+        tenantId: string | null;
+        contactId: string | null;
+        source: string;
+        subject: string;
+        body: string;
+        triage: TriageResult;
+    },
+) {
+    if (!params.triage.customer_improvement_requested) return;
+
+    const requestedCapability = params.triage.requested_capability || truncateText(params.body || params.subject, 260);
+    const title = params.triage.improvement_title || truncateText(params.subject || requestedCapability, 90);
+    const duplicateGroupKey = buildImprovementKey(`${params.triage.affected_module ?? 'general'}-${title}`);
+
+    const { error } = await supabase
+        .from('customer_improvement_requests')
+        .upsert({
+            ticket_id: params.ticketId,
+            tenant_id: params.tenantId,
+            contact_id: params.contactId,
+            source: params.source,
+            status: 'Nueva',
+            priority: params.triage.priority,
+            title,
+            request_text: truncateText(params.body || params.subject, 2000),
+            ai_summary: params.triage.improvement_summary || params.triage.summary,
+            requested_capability: requestedCapability,
+            affected_module: params.triage.affected_module,
+            customer_impact: params.triage.customer_impact,
+            duplicate_group_key: duplicateGroupKey,
+            ai_confidence: params.triage.improvement_confidence,
+            detected_by_ai: true,
+        }, { onConflict: 'ticket_id,duplicate_group_key', ignoreDuplicates: true });
+
+    if (error) {
+        console.error('Could not create customer improvement request', error);
+    }
 }
 
 function extractOpenAIText(payload: unknown): string | null {
@@ -335,7 +450,12 @@ async function runAiTriage(params: {
                 input: [
                     {
                         role: 'system',
-                        content: 'Eres un motor de triage para soporte B2B de puntos de venta. Devuelve solo JSON estructurado y no inventes datos.',
+                        content: [
+                            'Eres un motor de triage para soporte B2B de puntos de venta.',
+                            'Distingue incidentes/preguntas de solicitudes de mejora de producto.',
+                            'Marca customer_improvement_requested=true solo si el cliente pide una funcion nueva, cambio de comportamiento, automatizacion o capacidad no existente.',
+                            'Devuelve solo JSON estructurado y no inventes datos.',
+                        ].join(' '),
                     },
                     {
                         role: 'user',
@@ -373,6 +493,12 @@ async function runAiTriage(params: {
                                 'incident_fingerprint',
                                 'duplicate_signal',
                                 'ai_tags',
+                                'customer_improvement_requested',
+                                'improvement_title',
+                                'improvement_summary',
+                                'requested_capability',
+                                'customer_impact',
+                                'improvement_confidence',
                             ],
                             properties: {
                                 category: { type: 'string', enum: ['ventas', 'inventario', 'fiscal', 'hardware', 'pagos', 'red', 'otros'] },
@@ -406,6 +532,12 @@ async function runAiTriage(params: {
                                     maxItems: 8,
                                     items: { type: 'string' },
                                 },
+                                customer_improvement_requested: { type: 'boolean' },
+                                improvement_title: { type: ['string', 'null'] },
+                                improvement_summary: { type: ['string', 'null'] },
+                                requested_capability: { type: ['string', 'null'] },
+                                customer_impact: { type: ['string', 'null'] },
+                                improvement_confidence: { type: 'number', minimum: 0, maximum: 1 },
                             },
                         },
                     },
@@ -425,6 +557,7 @@ async function runAiTriage(params: {
         const parsed = JSON.parse(text) as Omit<TriageResult, 'category'> & { category: string };
         const category = normalizeCategory(parsed.category);
         const affectedModule = parsed.affected_module || detectAffectedModule(`${params.subject} ${params.body}`, category);
+        const heuristicImprovement = detectImprovementSignal(params.subject, params.body, affectedModule);
         return {
             ...parsed,
             category,
@@ -432,6 +565,12 @@ async function runAiTriage(params: {
             incident_fingerprint: parsed.incident_fingerprint || buildIncidentFingerprint(category, affectedModule),
             detected_identifiers: parsed.detected_identifiers || [],
             ai_tags: parsed.ai_tags || [],
+            customer_improvement_requested: parsed.customer_improvement_requested || heuristicImprovement.customer_improvement_requested,
+            improvement_title: parsed.improvement_title || heuristicImprovement.improvement_title,
+            improvement_summary: parsed.improvement_summary || heuristicImprovement.improvement_summary,
+            requested_capability: parsed.requested_capability || heuristicImprovement.requested_capability,
+            customer_impact: parsed.customer_impact || heuristicImprovement.customer_impact,
+            improvement_confidence: Math.max(parsed.improvement_confidence ?? 0, heuristicImprovement.improvement_confidence),
         };
     } catch (error) {
         console.error('OpenAI triage fallback', error);
@@ -519,7 +658,7 @@ Deno.serve(async (request) => {
         if (subjectTicketNumber) {
             const threadedTicket = await supabase
                 .from('support_tickets')
-                .select('id, ticket_number')
+                .select('id, ticket_number, tenant_id, contact_id, subject, source')
                 .eq('ticket_number', subjectTicketNumber)
                 .maybeSingle();
 
@@ -538,6 +677,16 @@ Deno.serve(async (request) => {
                     .from('support_tickets')
                     .update({ status: 'En_Proceso' })
                     .eq('id', threadedTicket.data.id);
+
+                await createCustomerImprovementRequest(supabase, {
+                    ticketId: threadedTicket.data.id,
+                    tenantId: threadedTicket.data.tenant_id ?? null,
+                    contactId: threadedTicket.data.contact_id ?? null,
+                    source: threadedTicket.data.source ?? 'Email',
+                    subject: threadedTicket.data.subject ?? subject,
+                    body,
+                    triage: heuristicTriage(subject, body),
+                });
 
                 if (rawEventId) {
                     await supabase.from('raw_support_events')
@@ -684,6 +833,16 @@ Deno.serve(async (request) => {
             incident_fingerprint: triage.incident_fingerprint,
             duplicate_signal: duplicateSignal,
             ai_tags: triage.ai_tags,
+        });
+
+        await createCustomerImprovementRequest(supabase, {
+            ticketId,
+            tenantId: tenantMatch.id,
+            contactId,
+            source: 'Email',
+            subject,
+            body,
+            triage,
         });
 
         const autoReply = await fetch('https://api.resend.com/emails', {
