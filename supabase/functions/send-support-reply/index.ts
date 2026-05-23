@@ -296,6 +296,11 @@ Deno.serve(async (request) => {
             to: recipientEmail,
             delivery_status: 'sent',
             notified_client: true,
+            notify_client: true,
+            notification: {
+                play_sound: true,
+                sound: 'support-reply',
+            },
         };
 
         if (!adminMessage) {
