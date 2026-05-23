@@ -402,17 +402,35 @@ Deno.serve(async (request) => {
         const message = isClosing
             ? `El cliente confirmo que la solucion fue satisfactoria y cerro el ticket.${ratingLabel}${feedbackLabel}`
             : `El cliente indico que aun necesita ayuda. El ticket fue reabierto.${ratingLabel}${feedbackLabel}`;
+        const feedbackMessageAttachments: Record<string, unknown> = {
+            channel: 'resolution',
+            event: isClosing ? 'customer_closed_ticket' : 'customer_reopened_ticket',
+            rating,
+            feedback,
+        };
+
+        if (!isClosing) {
+            feedbackMessageAttachments.notification = {
+                badge: true,
+                increment_unread: true,
+                play_sound: true,
+                sound: 'support-ticket-reopened',
+                audience: 'admin',
+                title: 'Ticket reabierto por el cliente',
+                body: 'El cliente indicó que necesita más ayuda.',
+            };
+            feedbackMessageAttachments.admin_alert = {
+                badge: true,
+                increment_unread: true,
+                play_sound: true,
+            };
+        }
 
         await supabase.from('ticket_messages').insert({
             ticket_id: supportTicket.id,
             sender_type: 'System',
             message,
-            attachments: {
-                channel: 'resolution',
-                event: isClosing ? 'customer_closed_ticket' : 'customer_reopened_ticket',
-                rating,
-                feedback,
-            },
+            attachments: feedbackMessageAttachments,
         });
 
         let summaryNotified = false;
