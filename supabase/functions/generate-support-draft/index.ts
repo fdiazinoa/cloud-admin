@@ -81,6 +81,8 @@ const clicSupportInstructions = [
     'La respuesta debe estar relacionada con el problema real del ticket y proponer pasos concretos tomados de la base de conocimiento o del contexto.',
     'No des respuestas genericas como "estamos revisando" sin instrucciones operativas.',
     'No inventes rutas, botones ni resultados si la base de conocimiento no lo respalda.',
+    'Si el cliente pregunta como configurar DigiFact, facturacion electronica o e-CF y erp_knowledge_base no contiene una guia exacta de configuracion, no des pasos inventados: di que necesitas validar la guia exacta y pide los prerequisitos minimos.',
+    'No conviertas articulos de errores e-CF/DigiFact en instrucciones de configuracion inicial.',
     'No conviertas rutas internas como /crm/promociones en enlaces ni URL publicas.',
     'No prometas que ya esta resuelto y no menciones informacion interna, rutas de codigo, tokens, claves o que usaste IA.',
     'Si falta informacion, pide maximo dos datos concretos al cliente.',
@@ -145,6 +147,46 @@ function isGenericDraft(value: string) {
     ];
 
     return value.trim().length < 120 || genericSignals.some((signal) => normalized.includes(signal));
+}
+
+function getConversationText(ticket: SupportTicket, messages: MessageRow[]) {
+    const insight = normalizeRelation(ticket.ai_ticket_insights);
+    return [
+        ticket.subject,
+        ticket.category,
+        ticket.source,
+        insight?.summary,
+        insight?.next_best_action,
+        insight?.affected_module,
+        ...messages.map((message) => message.message),
+    ]
+        .filter((value): value is string => Boolean(value && value.trim()))
+        .join('\n')
+        .toLowerCase();
+}
+
+function isElectronicInvoiceConfigurationQuestion(text: string) {
+    const asksConfiguration = /(configur|activar|habilitar|parametr|integrar|conectar|instalar|setup|credencial)/i.test(text);
+    const isElectronicInvoice = /(digifact|facturaci[oó]n electronica|facturaci[oó]n electr[oó]nica|e-?cf|ecf|dgii)/i.test(text);
+
+    return asksConfiguration && isElectronicInvoice;
+}
+
+function knowledgeHasConfigurationGuide(knowledgeMatches: KnowledgeMatch[]) {
+    return knowledgeMatches.some((match) => {
+        const text = `${match.module} ${match.title} ${match.content} ${match.source_path ?? ''}`.toLowerCase();
+        const isTroubleshootingOnly = /(error|rechazo|fallo|incidencia|pendiente)/i.test(match.title);
+        const hasConfigurationSignal = /(configur|activar|habilitar|parametr|integrar|conectar|credencial|ambiente|certificad|secuencia)/i.test(text);
+        const isElectronicInvoiceKnowledge = /(digifact|facturaci[oó]n electronica|facturaci[oó]n electr[oó]nica|e-?cf|ecf|dgii|ncf|comprobante fiscal)/i.test(text);
+
+        return isElectronicInvoiceKnowledge && hasConfigurationSignal && !isTroubleshootingOnly;
+    });
+}
+
+function buildMissingConfigurationGuideDraft(ticket: SupportTicket) {
+    const owner = getTicketOwner(ticket);
+
+    return `Hola ${owner}, para no darte una ruta incorrecta de Clic-ERP, no tengo cargada aqui una guia confirmada de configuracion inicial de DigiFact/facturacion electronica. Lo correcto es validarlo como parametrizacion fiscal antes de indicar menus o pasos.\n\nPara avanzar, confirmanos dos cosas: si la empresa ya tiene credenciales/ambiente DigiFact activo (prueba o produccion) y si ya tiene asignadas sus secuencias e-CF/NCF/RNC emisor. Con eso te guiamos con el flujo exacto y dejamos documentada la configuracion correcta. Si el caso es un error al emitir, envianos folio, NCF/e-CF y captura del rechazo.`;
 }
 
 function isSensitiveKey(key: string) {
@@ -215,6 +257,10 @@ function getTicketOwner(ticket: SupportTicket) {
 }
 
 function buildFallbackDraft(ticket: SupportTicket, messages: MessageRow[]) {
+    if (isElectronicInvoiceConfigurationQuestion(getConversationText(ticket, messages))) {
+        return buildMissingConfigurationGuideDraft(ticket);
+    }
+
     const insight = normalizeRelation(ticket.ai_ticket_insights);
     const subject = `${ticket.subject} ${ticket.category} ${insight?.affected_module ?? ''}`.toLowerCase();
     const owner = getTicketOwner(ticket);
@@ -306,6 +352,14 @@ async function fetchKnowledgeMatches(
 }
 
 function buildKnowledgeFallbackDraft(ticket: SupportTicket, messages: MessageRow[], knowledgeMatches: KnowledgeMatch[]) {
+    const conversationText = getConversationText(ticket, messages);
+    if (
+        isElectronicInvoiceConfigurationQuestion(conversationText)
+        && !knowledgeHasConfigurationGuide(knowledgeMatches)
+    ) {
+        return buildMissingConfigurationGuideDraft(ticket);
+    }
+
     if (!knowledgeMatches.length) return buildFallbackDraft(ticket, messages);
 
     const owner = getTicketOwner(ticket);
@@ -323,6 +377,11 @@ function buildPromptContext(ticket: SupportTicket, messages: MessageRow[], knowl
     const insight = normalizeRelation(ticket.ai_ticket_insights);
 
     return {
+        request_guardrails: {
+            is_electronic_invoice_configuration_question: isElectronicInvoiceConfigurationQuestion(getConversationText(ticket, messages)),
+            knowledge_has_configuration_guide: knowledgeHasConfigurationGuide(knowledgeMatches),
+            rule: 'If this is a DigiFact/e-CF configuration question and knowledge_has_configuration_guide is false, do not provide setup steps, menu names, or routes. Ask for prerequisites and say the exact guide must be validated.',
+        },
         ticket: {
             id: ticket.id,
             number: ticket.ticket_number,
@@ -477,6 +536,8 @@ Deno.serve(async (request) => {
         const conversation = ((messages ?? []) as MessageRow[]).reverse();
         const knowledgeMatches = await fetchKnowledgeMatches(supabase, supportTicket, conversation);
         const fallbackDraft = buildKnowledgeFallbackDraft(supportTicket, conversation, knowledgeMatches);
+        const shouldAvoidInventedConfiguration = isElectronicInvoiceConfigurationQuestion(getConversationText(supportTicket, conversation))
+            && !knowledgeHasConfigurationGuide(knowledgeMatches);
 
         const { data: settings, error: settingsError } = await supabase
             .from('support_integration_settings')
@@ -495,6 +556,19 @@ Deno.serve(async (request) => {
 
         if (provider !== 'openai') {
             return json({ status: 'success', source: 'fallback', draft: fallbackDraft });
+        }
+
+        if (shouldAvoidInventedConfiguration) {
+            return json({
+                status: 'success',
+                source: 'fallback_missing_configuration_guide',
+                draft: fallbackDraft,
+                knowledge_matches: knowledgeMatches.map((match) => ({
+                    module: match.module,
+                    title: match.title,
+                    rank: match.rank,
+                })),
+            });
         }
 
         const { data: secret, error: secretError } = await supabase

@@ -244,6 +244,13 @@ function truncateDraftContext(value: string, maxLength = 180) {
     return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
+function isElectronicInvoiceConfigurationQuestion(text: string) {
+    const asksConfiguration = /(configur|activar|habilitar|parametr|integrar|conectar|instalar|setup|credencial)/i.test(text);
+    const isElectronicInvoice = /(digifact|facturaci[oó]n electronica|facturaci[oó]n electr[oó]nica|e-?cf|ecf|dgii)/i.test(text);
+
+    return asksConfiguration && isElectronicInvoice;
+}
+
 function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
     const subject = `${ticket.subject} ${ticket.category} ${ticket.insight?.affected_module ?? ''}`.toLowerCase();
     const owner = getTicketOwner(ticket);
@@ -256,6 +263,10 @@ function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
         ticket.technical_context?.network_type ? `red ${ticket.technical_context.network_type}` : null,
         ticket.technical_context?.battery_level ? `bateria ${ticket.technical_context.battery_level}` : null,
     ].filter(Boolean).join(', ');
+
+    if (isElectronicInvoiceConfigurationQuestion(`${subject}\n${lastClientMessage ?? ''}`)) {
+        return `${opening} para no darte una ruta incorrecta de Clic-ERP, no tengo cargada aqui una guia confirmada de configuracion inicial de DigiFact/facturacion electronica. Lo correcto es validarlo como parametrizacion fiscal antes de indicar menus o pasos.\n\nPara avanzar, confirmanos dos cosas: si la empresa ya tiene credenciales/ambiente DigiFact activo (prueba o produccion) y si ya tiene asignadas sus secuencias e-CF/NCF/RNC emisor. Con eso te guiamos con el flujo exacto y dejamos documentada la configuracion correcta. Si el caso es un error al emitir, envianos folio, NCF/e-CF y captura del rechazo.`;
+    }
 
     if (/(impres|printer|cocina|comanda|hardware)/i.test(subject)) {
         return `${opening} vamos a validar el hardware del POS.${evidence} Confirma si ocurre en una sola terminal o en todas, revisa conexion/emparejamiento de impresora o scanner, y prueba una reimpresion o recibo de prueba. Si falla, envianos modelo del equipo, terminal afectada, version del POS y foto/captura del error${lastError ? `; tambien vemos "${lastError}" en contexto tecnico.` : '.'}`;

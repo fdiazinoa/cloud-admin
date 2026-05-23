@@ -106,6 +106,7 @@ const clicProductExpertPrompt = [
     'Las suggested_replies deben ser respuestas listas para enviar al cliente, en espanol claro y profesional.',
     'Cada suggested_reply debe mencionar el problema concreto, dar 2 a 4 pasos accionables, indicar que datos/captura enviar si no se resuelve y evitar frases vagas como "estamos revisando" sin instrucciones.',
     'Si no hay suficiente informacion, pide datos exactos: empresa, usuario, terminal, version, folio/NCF/e-CF, cierre/caja, modulo, hora aproximada y captura del error.',
+    'Si el cliente pregunta como configurar DigiFact, facturacion electronica o e-CF, no inventes rutas, menus ni pasos de configuracion. Pide prerequisitos fiscales y responde que se validara la guia exacta de configuracion.',
     'No prometas cambios de producto ni cierres tickets; si parece solicitud de nueva funcion, responde que se registrara para evaluacion.',
 ].join(' ');
 
@@ -315,6 +316,13 @@ function detectImprovementSignal(subject: string, body: string, affectedModule: 
     };
 }
 
+function isElectronicInvoiceConfigurationQuestion(text: string) {
+    const asksConfiguration = /(configur|activar|habilitar|parametr|integrar|conectar|instalar|setup|credencial)/i.test(text);
+    const isElectronicInvoice = /(digifact|facturaci[oó]n electronica|facturaci[oó]n electr[oó]nica|e-?cf|ecf|dgii)/i.test(text);
+
+    return asksConfiguration && isElectronicInvoice;
+}
+
 function buildExpertSuggestedReplies(params: {
     category: TicketCategory;
     priority: TicketPriority;
@@ -325,6 +333,13 @@ function buildExpertSuggestedReplies(params: {
     const text = `${params.subject} ${params.body}`.toLowerCase();
     const moduleLabel = params.affectedModule || params.category;
     const improvement = detectImprovementSignal(params.subject, params.body, params.affectedModule ?? null);
+
+    if (isElectronicInvoiceConfigurationQuestion(text)) {
+        return [
+            'Hola, para no darte una ruta incorrecta de Clic-ERP, necesito validar la guia exacta de configuracion inicial de DigiFact/facturacion electronica antes de indicarte menus o pasos. Confirmanos si ya tienen credenciales/ambiente DigiFact activo (prueba o produccion) y si ya tienen asignadas sus secuencias e-CF/NCF/RNC emisor.',
+            'Hola, este caso es de parametrizacion fiscal DigiFact/e-CF. Antes de guiar la configuracion, confirma si la empresa ya esta habilitada con DigiFact, ambiente que usaran, RNC emisor y secuencias fiscales disponibles. Si el problema es al emitir una factura, envianos folio, NCF/e-CF y captura del rechazo.',
+        ];
+    }
 
     if (improvement.customer_improvement_requested) {
         return [
