@@ -21,7 +21,20 @@ export interface DashboardStats {
     tenantGrowth: DashboardTrendPoint[];
     recentTickets: DashboardTicket[];
     expiringSubscriptions: DashboardExpiringSubscription[];
+    supportSatisfaction: DashboardSupportSatisfaction;
     lastUpdatedAt: string;
+}
+
+export interface DashboardSupportSatisfaction {
+    totalResponses: number;
+    excellent: DashboardSatisfactionBucket;
+    good: DashboardSatisfactionBucket;
+    bad: DashboardSatisfactionBucket;
+}
+
+export interface DashboardSatisfactionBucket {
+    count: number;
+    percentage: number;
 }
 
 export interface DashboardTrendPoint {
@@ -427,6 +440,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
         tenantGrowth: buildTenantGrowth(tenantRows),
         recentTickets,
         expiringSubscriptions,
+        supportSatisfaction: buildSupportSatisfaction(ticketRows),
         lastUpdatedAt: new Date().toISOString(),
     };
 }
@@ -448,6 +462,7 @@ type DashboardTicketRow = {
     priority: string;
     status: string;
     tenant_id?: string | null;
+    customer_rating?: number | null;
     created_at: string;
 };
 
@@ -482,7 +497,7 @@ async function getDashboardSubscriptions(): Promise<DashboardSubscriptionRow[]> 
 async function getDashboardTickets(): Promise<DashboardTicketRow[]> {
     const { data, error } = await supabaseAdmin
         .from("support_tickets")
-        .select("id,subject,priority,status,tenant_id,created_at")
+        .select("id,subject,priority,status,tenant_id,customer_rating,created_at")
         .order("created_at", { ascending: false });
 
     if (error) {
@@ -491,6 +506,34 @@ async function getDashboardTickets(): Promise<DashboardTicketRow[]> {
     }
 
     return (data as DashboardTicketRow[]) || [];
+}
+
+function buildSupportSatisfaction(tickets: DashboardTicketRow[]): DashboardSupportSatisfaction {
+    const ratings = tickets
+        .map((ticket) => ticket.customer_rating)
+        .filter((rating): rating is number => typeof rating === "number" && rating >= 1 && rating <= 5);
+    const totalResponses = ratings.length;
+    const excellent = ratings.filter((rating) => rating === 5).length;
+    const good = ratings.filter((rating) => rating >= 3 && rating <= 4).length;
+    const bad = ratings.filter((rating) => rating <= 2).length;
+
+    const percentage = (count: number) => totalResponses ? Math.round((count / totalResponses) * 100) : 0;
+
+    return {
+        totalResponses,
+        excellent: {
+            count: excellent,
+            percentage: percentage(excellent),
+        },
+        good: {
+            count: good,
+            percentage: percentage(good),
+        },
+        bad: {
+            count: bad,
+            percentage: percentage(bad),
+        },
+    };
 }
 
 function buildTenantGrowth(tenants: Array<Pick<Tenant, "created_at">>): DashboardTrendPoint[] {
