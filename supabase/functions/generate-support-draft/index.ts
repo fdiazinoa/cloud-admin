@@ -48,6 +48,17 @@ interface MessageRow {
     created_at: string;
 }
 
+interface KnowledgeMatch {
+    id: string;
+    module: string;
+    title: string;
+    content: string;
+    tags?: string[] | null;
+    source?: string | null;
+    source_path?: string | null;
+    rank?: number | null;
+}
+
 interface IntegrationSettingsRow {
     ai_provider?: 'openai' | 'anthropic' | 'disabled' | null;
     ai_model?: string | null;
@@ -205,7 +216,63 @@ function buildFallbackDraft(ticket: SupportTicket, messages: MessageRow[]) {
     return `${opening}${evidence} Vamos a revisar el historial del ticket, las senales tecnicas y los ultimos eventos registrados para proponer el siguiente paso concreto. Les confirmamos tan pronto tengamos el diagnostico.`;
 }
 
-function buildPromptContext(ticket: SupportTicket, messages: MessageRow[]) {
+function buildKnowledgeSearchText(ticket: SupportTicket, messages: MessageRow[]) {
+    const insight = normalizeRelation(ticket.ai_ticket_insights);
+    const lastClientMessages = messages
+        .filter((message) => message.sender_type === 'Client')
+        .slice(-4)
+        .map((message) => message.message);
+
+    return [
+        ticket.subject,
+        ticket.category,
+        ticket.source,
+        insight?.summary,
+        insight?.next_best_action,
+        insight?.urgency_reason,
+        insight?.affected_module,
+        insight?.detected_identifiers?.join(' '),
+        insight?.ai_tags?.join(' '),
+        ...lastClientMessages,
+    ]
+        .filter((value): value is string => Boolean(value && value.trim()))
+        .join(' ');
+}
+
+async function fetchKnowledgeMatches(
+    supabase: ReturnType<typeof createClient>,
+    ticket: SupportTicket,
+    messages: MessageRow[],
+) {
+    const queryText = buildKnowledgeSearchText(ticket, messages);
+    if (!queryText.trim()) return [];
+
+    const { data, error } = await supabase.rpc('search_support_knowledge', {
+        query_text: queryText,
+        match_limit: 5,
+    });
+
+    if (error) {
+        console.error('generate-support-draft knowledge search failed', describeError(error));
+        return [];
+    }
+
+    return (data ?? []) as KnowledgeMatch[];
+}
+
+function buildKnowledgeFallbackDraft(ticket: SupportTicket, messages: MessageRow[], knowledgeMatches: KnowledgeMatch[]) {
+    if (!knowledgeMatches.length) return buildFallbackDraft(ticket, messages);
+
+    const owner = getTicketOwner(ticket);
+    const primary = knowledgeMatches[0];
+    const secondary = knowledgeMatches[1];
+    const mainGuidance = truncateText(primary.content, 700);
+    const extraGuidance = secondary ? ` Tambien validar: ${truncateText(secondary.content, 260)}` : '';
+
+    return `Hola ${owner}, para este caso de "${ticket.subject}", puedes revisar estos pasos: ${mainGuidance}${extraGuidance}`;
+}
+
+function buildPromptContext(ticket: SupportTicket, messages: MessageRow[], knowledgeMatches: KnowledgeMatch[]) {
     const contact = normalizeRelation(ticket.support_contacts);
     const tenant = normalizeRelation(ticket.tenants);
     const insight = normalizeRelation(ticket.ai_ticket_insights);
@@ -229,6 +296,15 @@ function buildPromptContext(ticket: SupportTicket, messages: MessageRow[]) {
             sender_type: message.sender_type,
             message: truncateText(message.message, 1000),
             created_at: message.created_at,
+        })),
+        erp_knowledge_base: knowledgeMatches.map((match) => ({
+            module: match.module,
+            title: match.title,
+            content: truncateText(match.content, 950),
+            tags: match.tags ?? [],
+            source: match.source,
+            source_path: match.source_path,
+            rank: match.rank,
         })),
     };
 }
@@ -270,8 +346,11 @@ async function generateOpenAiDraft(apiKey: string, model: string, context: unkno
                 'Eres un agente senior de soporte para Cloud Admin, POS y ERP.',
                 'Genera solamente el texto del borrador que se enviara al cliente.',
                 'Responde en espanol claro, profesional y directo.',
-                'La respuesta debe estar relacionada con el problema real del ticket y proponer pasos concretos.',
-                'No inventes resultados, no prometas que ya esta resuelto y no menciones informacion interna, tokens, claves o que usaste IA.',
+                'Usa primero erp_knowledge_base cuando tenga resultados relacionados con el ticket.',
+                'La respuesta debe estar relacionada con el problema real del ticket y proponer pasos concretos tomados de la base de conocimiento o del contexto.',
+                'No inventes rutas, botones ni resultados si la base de conocimiento no lo respalda.',
+                'No conviertas rutas internas como /crm/promociones en enlaces ni URL publicas.',
+                'No prometas que ya esta resuelto y no menciones informacion interna, rutas de codigo, tokens, claves o que usaste IA.',
                 'Si falta informacion, pide maximo dos datos concretos al cliente.',
                 'Mantente breve: 1 a 3 parrafos.',
             ].join(' '),
@@ -362,7 +441,8 @@ Deno.serve(async (request) => {
 
         const supportTicket = ticket as SupportTicket;
         const conversation = ((messages ?? []) as MessageRow[]).reverse();
-        const fallbackDraft = buildFallbackDraft(supportTicket, conversation);
+        const knowledgeMatches = await fetchKnowledgeMatches(supabase, supportTicket, conversation);
+        const fallbackDraft = buildKnowledgeFallbackDraft(supportTicket, conversation, knowledgeMatches);
 
         const { data: settings, error: settingsError } = await supabase
             .from('support_integration_settings')
@@ -396,9 +476,19 @@ Deno.serve(async (request) => {
 
         const apiKey = await decryptSecret(secret as SecretRow);
         const model = settingsRow?.ai_model?.trim() || DEFAULT_OPENAI_MODEL;
-        const draft = await generateOpenAiDraft(apiKey, model, buildPromptContext(supportTicket, conversation));
+        const draft = await generateOpenAiDraft(apiKey, model, buildPromptContext(supportTicket, conversation, knowledgeMatches));
 
-        return json({ status: 'success', source: 'openai', model, draft });
+        return json({
+            status: 'success',
+            source: knowledgeMatches.length ? 'openai_knowledge_base' : 'openai',
+            model,
+            draft,
+            knowledge_matches: knowledgeMatches.map((match) => ({
+                module: match.module,
+                title: match.title,
+                rank: match.rank,
+            })),
+        });
     } catch (error) {
         console.error('generate-support-draft failed', error);
         return json({
