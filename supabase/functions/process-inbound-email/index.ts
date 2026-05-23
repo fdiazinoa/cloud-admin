@@ -244,6 +244,7 @@ function findPhoneCandidate(text: string) {
 
 function detectAffectedModule(text: string, category: TicketCategory) {
     const normalized = text.toLowerCase();
+    if (normalized.includes('activo fijo') || normalized.includes('activos fijos') || normalized.includes('depreci')) return 'Activos fijos';
     if (normalized.includes('impres') || normalized.includes('recibo') || normalized.includes('comprobante')) return 'Impresión fiscal';
     if (normalized.includes('internet') || normalized.includes('wifi') || normalized.includes('red') || normalized.includes('timeout')) return 'Conectividad';
     if (normalized.includes('inventario') || normalized.includes('producto') || normalized.includes('stock')) return 'Inventario';
@@ -271,26 +272,31 @@ function buildImprovementKey(value: string) {
         .slice(0, 96) || 'mejora-general';
 }
 
+const improvementRequestPatterns = [
+    /ser[ií]a bueno/i,
+    /deber[ií]a(?:n)? (?:tener|permitir|agregar|incluir|hacer|existir)/i,
+    /podr[ií]a(?:n)? (?:agregar|incluir|hacer|poner|crear|permitir)/i,
+    /necesito que (?:el sistema|la app|el pos|el erp)?/i,
+    /queremos que (?:el sistema|la app|el pos|el erp)?/i,
+    /me gustar[ií]a que/i,
+    /hace falta (?:una|un|el|la)?/i,
+    /solicitamos (?:una|un|que|como mejora)/i,
+    /sugeri(?:mos|ria|r[ií]a|do|da|encia).{0,80}(?:mejora|cambio|funci[oó]n|m[oó]dulo|modulo|sistema)/i,
+    /(?:proponemos|recomendamos).{0,80}(?:mejora|cambio|funci[oó]n|m[oó]dulo|modulo|sistema)/i,
+    /opci[oó]n para/i,
+    /funci[oó]n para/i,
+    /mejora para/i,
+    /no permita(?:n)? .{0,100}(?:duplic|repet|m[aá]s de una vez|mas de una vez|depreci)/i,
+    /evit(?:a|ar|e).{0,100}(?:duplic|repet|m[aá]s de una vez|mas de una vez)/i,
+    /poder (?:aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)/i,
+    /(?:aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar).{0,80}(?:por|seg[uú]n) (?:forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)/i,
+    /promocion(?:es)? .{0,100}(?:forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)/i,
+];
+
 function detectImprovementSignal(subject: string, body: string, affectedModule: string | null) {
     const text = `${subject}\n${body}`;
     const normalized = text.toLowerCase();
-    const patterns = [
-        /ser[ií]a bueno/i,
-        /deber[ií]a(?:n)? (?:tener|permitir|agregar|incluir|hacer|existir)/i,
-        /podr[ií]a(?:n)? (?:agregar|incluir|hacer|poner|crear|permitir)/i,
-        /necesito que (?:el sistema|la app|el pos|el erp)?/i,
-        /queremos que (?:el sistema|la app|el pos|el erp)?/i,
-        /me gustar[ií]a que/i,
-        /hace falta (?:una|un|el|la)?/i,
-        /solicitamos (?:una|un|que)/i,
-        /opci[oó]n para/i,
-        /funci[oó]n para/i,
-        /mejora para/i,
-        /poder (?:aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)/i,
-        /(?:aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar).{0,80}(?:por|seg[uú]n) (?:forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)/i,
-        /promocion(?:es)? .{0,100}(?:forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)/i,
-    ];
-    const isRequest = patterns.some((pattern) => pattern.test(text));
+    const isRequest = improvementRequestPatterns.some((pattern) => pattern.test(text));
 
     if (!isRequest) {
         return {
@@ -305,7 +311,9 @@ function detectImprovementSignal(subject: string, body: string, affectedModule: 
 
     const title = truncateText(subject || body, 90);
     const requestedCapability = truncateText(body || subject, 220);
-    const impact = normalized.includes('ventas') || normalized.includes('vender') || normalized.includes('cliente')
+    const impact = normalized.includes('duplic') || normalized.includes('repet') || normalized.includes('depreci')
+        ? 'Puede evitar duplicidad operativa o contable.'
+        : normalized.includes('ventas') || normalized.includes('vender') || normalized.includes('cliente')
         ? 'Puede impactar flujo de ventas o experiencia del cliente.'
         : 'Solicitud funcional detectada para evaluacion de producto.';
 
