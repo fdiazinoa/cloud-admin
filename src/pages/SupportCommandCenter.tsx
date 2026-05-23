@@ -3,10 +3,13 @@ import {
     AlertTriangle,
     BatteryLow,
     Clock3,
+    ExternalLink,
+    Image as ImageIcon,
     Link2,
     Mail,
     MessageSquare,
     MonitorSmartphone,
+    Paperclip,
     Send,
     Sparkles,
     UserPlus,
@@ -83,6 +86,17 @@ interface Message {
     message: string;
     attachments?: unknown;
     created_at: string;
+}
+
+interface MessageAttachment {
+    id?: string;
+    name?: string;
+    mime_type?: string;
+    size_bytes?: number;
+    bucket?: string;
+    path?: string;
+    uploaded_at?: string;
+    signed_url?: string | null;
 }
 
 interface ContactFormState {
@@ -175,6 +189,41 @@ function getTicketNumberLabel(ticket: Ticket) {
 
 function getTicketRecipientEmail(ticket: Ticket) {
     return ticket.contact?.email || ticket.external_sender_email || '';
+}
+
+function normalizeMessageAttachments(value: unknown): MessageAttachment[] {
+    if (!Array.isArray(value)) return [];
+
+    return value
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+        .map((item) => ({
+            id: typeof item.id === 'string' ? item.id : undefined,
+            name: typeof item.name === 'string' ? item.name : undefined,
+            mime_type: typeof item.mime_type === 'string' ? item.mime_type : undefined,
+            size_bytes: typeof item.size_bytes === 'number' ? item.size_bytes : undefined,
+            bucket: typeof item.bucket === 'string' ? item.bucket : undefined,
+            path: typeof item.path === 'string' ? item.path : undefined,
+            uploaded_at: typeof item.uploaded_at === 'string' ? item.uploaded_at : undefined,
+            signed_url: typeof item.signed_url === 'string' ? item.signed_url : null,
+        }))
+        .filter((attachment) => Boolean(attachment.name || attachment.path || attachment.signed_url));
+}
+
+function formatAttachmentSize(sizeBytes?: number) {
+    if (!sizeBytes || sizeBytes <= 0) return 'Tamano no disponible';
+    if (sizeBytes < 1024) return `${sizeBytes} B`;
+    if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+    return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getAttachmentName(attachment: MessageAttachment) {
+    if (attachment.name) return attachment.name;
+    if (attachment.path) return attachment.path.split('/').filter(Boolean).at(-1) ?? 'Adjunto';
+    return 'Adjunto';
+}
+
+function isImageAttachment(attachment: MessageAttachment) {
+    return attachment.mime_type?.startsWith('image/') ?? false;
 }
 
 function truncateDraftContext(value: string, maxLength = 180) {
@@ -336,6 +385,27 @@ const SupportCommandCenter: React.FC = () => {
         let mounted = true;
 
         const fetchMessages = async () => {
+            try {
+                const response = await fetch(`${supabaseProjectUrl}/functions/v1/get-support-messages`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ticket_id: selectedTicketId }),
+                });
+
+                if (response.ok) {
+                    const payload = await response.json() as { messages?: Message[] };
+                    if (mounted) setMessages(payload.messages ?? []);
+                    return;
+                }
+
+                console.error('Admin: error fetching signed support messages', response.statusText);
+            } catch (error) {
+                console.error('Admin: unexpected error fetching signed support messages', error);
+            }
+
             const { data, error } = await supabaseAdmin.from('ticket_messages')
                 .select('*')
                 .eq('ticket_id', selectedTicketId)
@@ -358,7 +428,14 @@ const SupportCommandCenter: React.FC = () => {
                 table: 'ticket_messages',
                 filter: `ticket_id=eq.${selectedTicketId}`,
             }, (payload) => {
-                if (mounted) setMessages((previous) => [...previous, payload.new as Message]);
+                if (mounted) {
+                    const nextMessage = payload.new as Message;
+                    if (normalizeMessageAttachments(nextMessage.attachments).length) {
+                        void fetchMessages();
+                        return;
+                    }
+                    setMessages((previous) => [...previous, nextMessage]);
+                }
             })
             .subscribe();
 
@@ -722,16 +799,82 @@ const SupportCommandCenter: React.FC = () => {
                         </div>
 
                         <div ref={messagesPaneRef} className="flex-1 space-y-4 overflow-y-auto p-6">
-                            {messages.map((message) => (
-                                <div key={message.id} className={`flex ${message.sender_type === 'Admin' ? 'justify-end' : message.sender_type === 'System' ? 'justify-center' : 'justify-start'}`}>
-                                    <div className={`max-w-[72%] rounded-2xl px-4 py-3 text-sm shadow-sm ${message.sender_type === 'Admin' ? 'rounded-tr-sm bg-blue-600 text-white' : message.sender_type === 'System' ? 'border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-tl-sm border border-slate-200 bg-white text-slate-700'}`}>
-                                        <div className="mb-1 text-[10px] font-bold uppercase opacity-70">
-                                            {message.sender_type === 'Admin' ? 'Cloud Admin' : message.sender_type === 'System' ? 'Sistema' : getContactLabel(selectedTicket)}
+                            {messages.map((message) => {
+                                const attachments = normalizeMessageAttachments(message.attachments);
+                                const isAdminMessage = message.sender_type === 'Admin';
+                                const isSystemMessage = message.sender_type === 'System';
+
+                                return (
+                                    <div key={message.id} className={`flex ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}>
+                                        <div className={`max-w-[72%] rounded-2xl px-4 py-3 text-sm shadow-sm ${isAdminMessage ? 'rounded-tr-sm bg-blue-600 text-white' : isSystemMessage ? 'border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-tl-sm border border-slate-200 bg-white text-slate-700'}`}>
+                                            <div className="mb-1 text-[10px] font-bold uppercase opacity-70">
+                                                {isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}
+                                            </div>
+                                            <p className="whitespace-pre-wrap break-words">{message.message}</p>
+
+                                            {attachments.length ? (
+                                                <div className="mt-3 grid gap-2">
+                                                    {attachments.map((attachment, index) => {
+                                                        const fileName = getAttachmentName(attachment);
+                                                        const canOpen = Boolean(attachment.signed_url);
+                                                        const content = (
+                                                            <>
+                                                                <div className={`h-16 w-20 shrink-0 overflow-hidden rounded-lg border ${isAdminMessage ? 'border-white/20 bg-white/10' : 'border-slate-200 bg-slate-50'}`}>
+                                                                    {canOpen && isImageAttachment(attachment) ? (
+                                                                        <img
+                                                                            src={attachment.signed_url ?? undefined}
+                                                                            alt={fileName}
+                                                                            className="h-full w-full object-cover"
+                                                                            loading="lazy"
+                                                                        />
+                                                                    ) : (
+                                                                        <div className={`flex h-full w-full items-center justify-center ${isAdminMessage ? 'text-white/80' : 'text-slate-400'}`}>
+                                                                            {isImageAttachment(attachment) ? <ImageIcon size={22} /> : <Paperclip size={22} />}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                <div className="min-w-0 flex-1">
+                                                                    <div className="flex min-w-0 items-center gap-1">
+                                                                        <span className="truncate text-xs font-bold">{fileName}</span>
+                                                                        {canOpen && <ExternalLink className="shrink-0 opacity-70" size={12} />}
+                                                                    </div>
+                                                                    <p className={`mt-1 text-[11px] ${isAdminMessage ? 'text-white/75' : 'text-slate-500'}`}>
+                                                                        {formatAttachmentSize(attachment.size_bytes)}
+                                                                    </p>
+                                                                    {!canOpen && (
+                                                                        <p className={`mt-1 text-[11px] font-medium ${isAdminMessage ? 'text-white/70' : 'text-amber-700'}`}>
+                                                                            Archivo no disponible
+                                                                        </p>
+                                                                    )}
+                                                                </div>
+                                                            </>
+                                                        );
+
+                                                        const className = `flex min-w-0 items-center gap-3 rounded-xl border p-2 text-left ${isAdminMessage ? 'border-white/20 bg-white/10 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`;
+                                                        const hoverClassName = isAdminMessage ? 'hover:bg-white/15' : 'hover:bg-slate-100';
+
+                                                        return canOpen ? (
+                                                            <a
+                                                                key={attachment.id ?? `${fileName}-${index}`}
+                                                                href={attachment.signed_url ?? undefined}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className={`${className} ${hoverClassName}`}
+                                                            >
+                                                                {content}
+                                                            </a>
+                                                        ) : (
+                                                            <div key={attachment.id ?? `${fileName}-${index}`} className={className}>
+                                                                {content}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ) : null}
                                         </div>
-                                        {message.message}
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2 shadow-sm">
                                 {selectedTicket.insight?.suggested_replies?.length ? (
                                     <div className="mb-3 flex gap-2 overflow-x-auto">
