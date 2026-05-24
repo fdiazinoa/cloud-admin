@@ -39,7 +39,11 @@ type PublicTerminalRecord = {
     id: string;
     tenant_id: string;
     device_token?: string | null;
+    device_id?: string | null;
+    current_device_id?: string | null;
     name?: string | null;
+    terminal_name?: string | null;
+    label?: string | null;
 };
 
 const tokenKeys = new Set([
@@ -181,6 +185,13 @@ function isLocalPosTenant(tenant: TenantRecord) {
     return tenant.type === "pos_only" && tenant.cloud_sync === false;
 }
 
+function getPublicTerminalDeviceId(terminal: PublicTerminalRecord | null) {
+    return terminal?.device_token
+        || terminal?.device_id
+        || terminal?.current_device_id
+        || null;
+}
+
 async function insertAudit(
     supabase: ReturnType<typeof createClient>,
     payload: {
@@ -319,7 +330,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         const { data: publicTerminalData, error: terminalError } = await supabase
             .schema("public")
             .from("terminals")
-            .select("id,tenant_id,device_token,name")
+            .select("*")
             .eq("tenant_id", tenantId)
             .eq("id", terminalId)
             .maybeSingle();
@@ -332,7 +343,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             return;
         }
 
-        const previousDeviceId = registry?.device_id || publicTerminal?.device_token || null;
+        const previousDeviceId = registry?.device_id || getPublicTerminalDeviceId(publicTerminal);
         if (previousDeviceId && previousDeviceId === newDeviceId) {
             sendJson(response, 400, {
                 error: "SAME_DEVICE_ID",
