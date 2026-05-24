@@ -8,6 +8,15 @@ export interface PosApkRelease {
     direct_download_url: string | null;
     checksum_sha256: string | null;
     changelog: string | null;
+    release_type: string | null;
+    release_status: string | null;
+    summary: string | null;
+    bugs_fixed: string[] | null;
+    new_features: string[] | null;
+    internal_changes: string[] | null;
+    validation_checklist: string[] | null;
+    install_notes: string | null;
+    rollout_scope: string | null;
     is_latest: boolean;
     published_at: string;
     created_at: string;
@@ -20,6 +29,15 @@ export interface CreatePosApkReleaseInput {
     apkUrl: string;
     checksumSha256?: string;
     changelog?: string;
+    releaseType?: string;
+    releaseStatus?: string;
+    summary?: string;
+    bugsFixed?: string[];
+    newFeatures?: string[];
+    internalChanges?: string[];
+    validationChecklist?: string[];
+    installNotes?: string;
+    rolloutScope?: string;
     isLatest: boolean;
 }
 
@@ -42,6 +60,12 @@ export function extractGoogleDriveFileId(value: string): string | null {
 export function buildDirectDownloadUrl(value: string): string {
     const fileId = extractGoogleDriveFileId(value);
     return fileId ? `https://drive.google.com/uc?export=download&id=${fileId}` : value.trim();
+}
+
+function normalizeList(values?: string[]): string[] {
+    return (values ?? [])
+        .map((value) => value.trim())
+        .filter(Boolean);
 }
 
 export async function getPosApkReleases(): Promise<PosApkRelease[]> {
@@ -77,6 +101,15 @@ export async function createPosApkRelease(input: CreatePosApkReleaseInput): Prom
             direct_download_url: directDownloadUrl,
             checksum_sha256: input.checksumSha256?.trim() || null,
             changelog: input.changelog?.trim() || null,
+            release_type: input.releaseType?.trim() || null,
+            release_status: input.releaseStatus?.trim() || null,
+            summary: input.summary?.trim() || null,
+            bugs_fixed: normalizeList(input.bugsFixed),
+            new_features: normalizeList(input.newFeatures),
+            internal_changes: normalizeList(input.internalChanges),
+            validation_checklist: normalizeList(input.validationChecklist),
+            install_notes: input.installNotes?.trim() || null,
+            rollout_scope: input.rolloutScope?.trim() || null,
             is_latest: input.isLatest,
         })
         .select('*')
