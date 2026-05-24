@@ -395,15 +395,9 @@ export const Tenants: React.FC = () => {
 
         const newDeviceId = takeoverFormData.newDeviceId.trim();
         const reason = takeoverFormData.reason.trim();
-        const previousDeviceId = getTerminalCurrentDeviceId(takeoverTerminal);
 
         if (!takeoverFormData.terminalId || !newDeviceId || !reason) {
             alert('Selecciona terminal, indica el nuevo device_id y registra el motivo del cambio.');
-            return;
-        }
-
-        if (previousDeviceId && previousDeviceId === newDeviceId) {
-            alert('El nuevo device_id no puede ser igual al dispositivo anterior.');
             return;
         }
 
