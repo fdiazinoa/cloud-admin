@@ -185,6 +185,10 @@ function isLocalPosTenant(tenant: TenantRecord) {
     return tenant.type === "pos_only" && tenant.cloud_sync === false;
 }
 
+function isUuid(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function getPublicTerminalDeviceId(terminal: PublicTerminalRecord | null) {
     return terminal?.device_token
         || terminal?.device_id
@@ -327,16 +331,19 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             registry = (data as RegistryRecord | null) || null;
         }
 
-        const { data: publicTerminalData, error: terminalError } = await supabase
-            .schema("public")
-            .from("terminals")
-            .select("*")
-            .eq("tenant_id", tenantId)
-            .eq("id", terminalId)
-            .maybeSingle();
+        let publicTerminal: PublicTerminalRecord | null = null;
+        if (isUuid(terminalId)) {
+            const { data: publicTerminalData, error: terminalError } = await supabase
+                .schema("public")
+                .from("terminals")
+                .select("*")
+                .eq("tenant_id", tenantId)
+                .eq("id", terminalId)
+                .maybeSingle();
 
-        if (terminalError) throw terminalError;
-        const publicTerminal = publicTerminalData as PublicTerminalRecord | null;
+            if (terminalError) throw terminalError;
+            publicTerminal = publicTerminalData as PublicTerminalRecord | null;
+        }
 
         if (!registry && !publicTerminal) {
             sendJson(response, 404, { error: "TERMINAL_NOT_FOUND", message: "Terminal no encontrada para este tenant." });
