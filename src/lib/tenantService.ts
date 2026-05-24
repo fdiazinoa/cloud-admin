@@ -234,6 +234,26 @@ export interface TerminalLocalRebuildResult {
     message?: string;
 }
 
+export interface RequestTerminalErpReadinessInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    deviceId: string;
+    terminalName?: string | null;
+}
+
+export interface TerminalErpReadinessResult {
+    status: string;
+    erpTenantId?: string | null;
+    companyId?: string | null;
+    storeId?: string | null;
+    terminalId?: string | null;
+    profileStatus?: string | null;
+    checks?: Record<string, unknown>;
+    erp_readiness?: Record<string, unknown>;
+    message?: string;
+}
+
 export async function createTenant(input: CreateTenantInput): Promise<{ tenantId: string; tempPassword: string }> {
     return provisionTenant(supabaseAdmin as unknown as SupabaseAdminClient, input);
 }
@@ -580,6 +600,33 @@ export async function requestTerminalLocalRebuild(input: RequestTerminalLocalReb
     return (payload || { status: "success" }) as TerminalLocalRebuildResult;
 }
 
+export async function requestTerminalErpReadiness(input: RequestTerminalErpReadinessInput): Promise<TerminalErpReadinessResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-pos-erp-readiness`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            device_id: input.deviceId,
+            terminal_name: input.terminalName || null,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo preparar el contexto ERP del POS.");
+    }
+
+    return (payload || { status: "pending" }) as TerminalErpReadinessResult;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
         supabaseAdmin.from("tenants").select("id,name,status,created_at"),
@@ -863,6 +910,7 @@ export const tenantService = {
     getTenantTerminalOverview,
     requestTerminalTakeover,
     requestTerminalLocalRebuild,
+    requestTerminalErpReadiness,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
