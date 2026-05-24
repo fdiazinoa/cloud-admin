@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, CheckCircle2, RefreshCcw } from 'lucide-react';
 import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
@@ -32,6 +32,9 @@ export const Tenants: React.FC = () => {
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
+    const [takeoverTerminal, setTakeoverTerminal] = useState<TenantTerminalSnapshot | null>(null);
+    const [isTakeoverModalOpen, setIsTakeoverModalOpen] = useState(false);
+    const [isTakeoverSubmitting, setIsTakeoverSubmitting] = useState(false);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [updatingStatusTenantId, setUpdatingStatusTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
@@ -58,6 +61,13 @@ export const Tenants: React.FC = () => {
         email: '',
         password: '',
         products: getDefaultTenantProducts() as TenantProductSelection,
+    });
+    const [takeoverFormData, setTakeoverFormData] = useState({
+        terminalId: '',
+        newDeviceId: '',
+        deviceName: '',
+        reason: '',
+        confirmTakeover: false,
     });
 
     const getErrorMessage = (error: unknown) => {
@@ -305,6 +315,7 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalOpen(false);
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
+        closeTakeoverModal();
     };
 
     const handleToggleTerminalStatus = async (terminalId: string, currentStatus: boolean) => {
@@ -327,6 +338,103 @@ export const Tenants: React.FC = () => {
             alert(`Error al cambiar el estado de la terminal: ${errorMessage}`);
         }
     };
+
+    const isLocalPosTenant = (tenant?: Tenant | null) => tenant?.type === 'pos_only' && tenant.cloud_sync === false;
+
+    const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => terminal.terminal_id || terminal.id;
+
+    const getTerminalCurrentDeviceId = (terminal: TenantTerminalSnapshot) => (
+        terminal.registry?.current_device_id
+        || terminal.registry?.device_id
+        || terminal.device_token
+        || ''
+    );
+
+    const openTakeoverModal = (terminal: TenantTerminalSnapshot) => {
+        setTakeoverTerminal(terminal);
+        setTakeoverFormData({
+            terminalId: getTerminalTakeoverId(terminal),
+            newDeviceId: '',
+            deviceName: terminal.name || '',
+            reason: '',
+            confirmTakeover: false,
+        });
+        setIsTakeoverModalOpen(true);
+    };
+
+    const closeTakeoverModal = () => {
+        setIsTakeoverModalOpen(false);
+        setTakeoverTerminal(null);
+        setTakeoverFormData({
+            terminalId: '',
+            newDeviceId: '',
+            deviceName: '',
+            reason: '',
+            confirmTakeover: false,
+        });
+    };
+
+    const handleTakeoverTerminalChange = (terminalId: string) => {
+        const selectedTerminal = tenantTerminals.find((terminal) => getTerminalTakeoverId(terminal) === terminalId) || null;
+        setTakeoverTerminal(selectedTerminal);
+        setTakeoverFormData((current) => ({
+            ...current,
+            terminalId,
+            deviceName: selectedTerminal?.name || current.deviceName,
+        }));
+    };
+
+    const handleTerminalTakeover = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedTenantForTerminals || !takeoverTerminal) return;
+
+        if (!isLocalPosTenant(selectedTenantForTerminals)) {
+            alert('La recuperacion de terminal solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.');
+            return;
+        }
+
+        const newDeviceId = takeoverFormData.newDeviceId.trim();
+        const reason = takeoverFormData.reason.trim();
+        const previousDeviceId = getTerminalCurrentDeviceId(takeoverTerminal);
+
+        if (!takeoverFormData.terminalId || !newDeviceId || !reason) {
+            alert('Selecciona terminal, indica el nuevo device_id y registra el motivo del cambio.');
+            return;
+        }
+
+        if (previousDeviceId && previousDeviceId === newDeviceId) {
+            alert('El nuevo device_id no puede ser igual al dispositivo anterior.');
+            return;
+        }
+
+        if (!takeoverFormData.confirmTakeover) {
+            alert('Confirma que la tablet anterior quedara revocada antes de ejecutar la recuperacion.');
+            return;
+        }
+
+        setIsTakeoverSubmitting(true);
+        try {
+            const result = await tenantService.requestTerminalTakeover({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId: takeoverFormData.terminalId,
+                registryId: takeoverTerminal.registry?.id || null,
+                newDeviceId,
+                deviceName: takeoverFormData.deviceName.trim() || undefined,
+                reason,
+                confirmTakeover: takeoverFormData.confirmTakeover,
+            });
+            alert(result.message || 'Terminal reasignada correctamente. La tablet anterior fue revocada. Inicia sesion/autentica la nueva tablet para continuar.');
+            closeTakeoverModal();
+            const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+            setTenantTerminals(data);
+        } catch (err: unknown) {
+            console.error('Error requesting terminal takeover:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setIsTakeoverSubmitting(false);
+        }
+    };
+
     const handleUpdateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingTenant) return;
@@ -1045,12 +1153,152 @@ export const Tenants: React.FC = () => {
                                                         </table>
                                                     </div>
                                                 </div>
+
+                                                {isLocalPosTenant(selectedTenantForTerminals) ? (
+                                                    <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                                        <div>
+                                                            <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Recuperacion POS local</p>
+                                                            <p className="mt-1 text-sm text-amber-800">
+                                                                Reasigna esta terminal a una tablet nueva sin borrar ventas historicas.
+                                                            </p>
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openTakeoverModal(terminal)}
+                                                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors"
+                                                        >
+                                                            <RefreshCcw size={16} />
+                                                            Reemplazar tablet
+                                                        </button>
+                                                    </div>
+                                                ) : null}
                                             </div>
                                         );
                                     })}
                                 </div>
                             )}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {isTakeoverModalOpen && selectedTenantForTerminals && takeoverTerminal && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div>
+                                <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-700">
+                                    <RefreshCcw size={14} />
+                                    Disaster Recovery
+                                </div>
+                                <h3 className="mt-3 font-black text-lg text-slate-800">Tomar control de terminal</h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    Solo disponible para POS local. POS + ERP mantiene su flujo actual.
+                                </p>
+                            </div>
+                            <button type="button" onClick={closeTakeoverModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleTerminalTakeover} className="p-6 space-y-5">
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                <p className="font-bold">Antes de continuar:</p>
+                                <ul className="mt-2 list-disc space-y-1 pl-5">
+                                    <li>La tablet anterior quedara revocada.</li>
+                                    <li>La nueva tablet debera autenticarse de nuevo contra el ERP.</li>
+                                    <li>No se borran ventas historicas.</li>
+                                    <li>El POS anterior ya no podra sincronizar.</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Terminal a recuperar <span className="text-red-500">*</span></label>
+                                <select
+                                    required
+                                    value={takeoverFormData.terminalId}
+                                    onChange={e => handleTakeoverTerminalChange(e.target.value)}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                >
+                                    {tenantTerminals.map((terminal) => {
+                                        const terminalId = getTerminalTakeoverId(terminal);
+                                        return (
+                                            <option key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} value={terminalId}>
+                                                {terminal.name} · {terminalId || 'Sin ID'}
+                                            </option>
+                                        );
+                                    })}
+                                </select>
+                                <p className="mt-2 text-xs text-slate-500">
+                                    Dispositivo actual: <span className="font-mono">{getTerminalCurrentDeviceId(takeoverTerminal) || 'N/D'}</span>
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Nuevo device_id <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        type="text"
+                                        value={takeoverFormData.newDeviceId}
+                                        onChange={e => setTakeoverFormData({ ...takeoverFormData, newDeviceId: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 font-mono"
+                                        placeholder="nuevo-device-id"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Nombre de dispositivo</label>
+                                    <input
+                                        type="text"
+                                        value={takeoverFormData.deviceName}
+                                        onChange={e => setTakeoverFormData({ ...takeoverFormData, deviceName: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Tablet Caja 1"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Motivo del cambio <span className="text-red-500">*</span></label>
+                                <textarea
+                                    required
+                                    value={takeoverFormData.reason}
+                                    onChange={e => setTakeoverFormData({ ...takeoverFormData, reason: e.target.value })}
+                                    className="w-full min-h-[96px] px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 resize-y"
+                                    placeholder="Ej. Tablet danada, perdida o reemplazo por garantia."
+                                />
+                            </div>
+
+                            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    checked={takeoverFormData.confirmTakeover}
+                                    onChange={e => setTakeoverFormData({ ...takeoverFormData, confirmTakeover: e.target.checked })}
+                                    className="mt-1 h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                                />
+                                <span>
+                                    Confirmo que deseo revocar la tablet anterior y que la nueva tablet debera iniciar sesion/autenticarse de nuevo.
+                                </span>
+                            </label>
+
+                            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 border-t border-slate-100 pt-5">
+                                <button
+                                    type="button"
+                                    onClick={closeTakeoverModal}
+                                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isTakeoverSubmitting}
+                                    className="px-5 py-3 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    {isTakeoverSubmitting ? <Loader2 className="animate-spin" size={18} /> : <RefreshCcw size={18} />}
+                                    Ejecutar recuperacion
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
