@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from "./supabase";
+import { supabase, supabaseAdmin, supabaseServiceRoleKey } from "./supabase";
 import type {
     Distributor,
     Tenant,
@@ -396,8 +396,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
 }
 
 export async function requestTerminalTakeover(input: RequestTerminalTakeoverInput): Promise<TerminalTakeoverResult> {
-    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-takeover`;
-    const response = await fetch(endpoint, {
+    const response = await fetch("/api/terminal-takeover", {
         method: "POST",
         headers: {
             Authorization: `Bearer ${supabaseServiceRoleKey}`,
