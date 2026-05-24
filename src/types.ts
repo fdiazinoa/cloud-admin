@@ -57,10 +57,12 @@ export interface TenantTerminalRegistryEntry {
     app_version?: string | null;
     app_version_code?: number | null;
     last_takeover_at?: string | null;
+    last_rebuild_at?: string | null;
     previous_device_id?: string | null;
     current_device_id?: string | null;
     revocation_reason?: string | null;
     requires_pos_reauth?: boolean | null;
+    requires_full_bootstrap?: boolean | null;
     is_primary?: boolean | null;
     status?: string | null;
     last_seen_at?: string | null;

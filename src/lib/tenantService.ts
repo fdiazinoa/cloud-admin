@@ -91,6 +91,22 @@ export interface TerminalTakeoverResult {
     message?: string;
 }
 
+export interface RequestTerminalLocalRebuildInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    reason: string;
+    confirmRebuild: boolean;
+}
+
+export interface TerminalLocalRebuildResult {
+    status: string;
+    terminal?: unknown;
+    device_id?: string | null;
+    requires_full_bootstrap?: boolean;
+    message?: string;
+}
+
 function normalizeOptional(value?: string): string | null {
     if (!value) return null;
     const trimmed = value.trim();
@@ -438,6 +454,33 @@ export async function requestTerminalTakeover(input: RequestTerminalTakeoverInpu
     return (payload || { status: "success" }) as TerminalTakeoverResult;
 }
 
+export async function requestTerminalLocalRebuild(input: RequestTerminalLocalRebuildInput): Promise<TerminalLocalRebuildResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-local-rebuild`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            reason: input.reason,
+            confirm_rebuild: input.confirmRebuild,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo preparar la reconstruccion local del POS.");
+    }
+
+    return (payload || { status: "success" }) as TerminalLocalRebuildResult;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
         supabaseAdmin.from("tenants").select("id,name,status,created_at"),
@@ -650,6 +693,7 @@ export const tenantService = {
     getDistributors,
     getTenantTerminalOverview,
     requestTerminalTakeover,
+    requestTerminalLocalRebuild,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,

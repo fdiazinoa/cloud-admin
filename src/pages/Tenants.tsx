@@ -34,6 +34,9 @@ export const Tenants: React.FC = () => {
     const [takeoverTerminal, setTakeoverTerminal] = useState<TenantTerminalSnapshot | null>(null);
     const [isTakeoverModalOpen, setIsTakeoverModalOpen] = useState(false);
     const [isTakeoverSubmitting, setIsTakeoverSubmitting] = useState(false);
+    const [rebuildTerminal, setRebuildTerminal] = useState<TenantTerminalSnapshot | null>(null);
+    const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
+    const [isRebuildSubmitting, setIsRebuildSubmitting] = useState(false);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
@@ -64,6 +67,10 @@ export const Tenants: React.FC = () => {
         deviceName: '',
         reason: '',
         confirmTakeover: false,
+    });
+    const [rebuildFormData, setRebuildFormData] = useState({
+        reason: '',
+        confirmRebuild: false,
     });
 
     const getErrorMessage = (error: unknown) => {
@@ -273,6 +280,7 @@ export const Tenants: React.FC = () => {
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
         closeTakeoverModal();
+        closeRebuildModal();
     };
 
     const isLocalPosTenant = (tenant?: Tenant | null) => tenant?.type === 'pos_only' && tenant.cloud_sync === false;
@@ -307,6 +315,24 @@ export const Tenants: React.FC = () => {
             deviceName: '',
             reason: '',
             confirmTakeover: false,
+        });
+    };
+
+    const openRebuildModal = (terminal: TenantTerminalSnapshot) => {
+        setRebuildTerminal(terminal);
+        setRebuildFormData({
+            reason: '',
+            confirmRebuild: false,
+        });
+        setIsRebuildModalOpen(true);
+    };
+
+    const closeRebuildModal = () => {
+        setIsRebuildModalOpen(false);
+        setRebuildTerminal(null);
+        setRebuildFormData({
+            reason: '',
+            confirmRebuild: false,
         });
     };
 
@@ -368,6 +394,55 @@ export const Tenants: React.FC = () => {
             alert(getErrorMessage(err));
         } finally {
             setIsTakeoverSubmitting(false);
+        }
+    };
+
+    const handleTerminalLocalRebuild = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedTenantForTerminals || !rebuildTerminal) return;
+
+        if (!isLocalPosTenant(selectedTenantForTerminals)) {
+            alert('La reconstruccion local solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.');
+            return;
+        }
+
+        const terminalId = getTerminalTakeoverId(rebuildTerminal);
+        const reason = rebuildFormData.reason.trim();
+        const currentDeviceId = getTerminalCurrentDeviceId(rebuildTerminal);
+
+        if (!terminalId || !reason) {
+            alert('Selecciona una terminal y registra el motivo de la reconstruccion.');
+            return;
+        }
+
+        if (!currentDeviceId) {
+            alert('Esta terminal no tiene device_id autorizado para reconstruir la base local.');
+            return;
+        }
+
+        if (!rebuildFormData.confirmRebuild) {
+            alert('Confirma que se forzara un bootstrap completo sin revocar el dispositivo actual.');
+            return;
+        }
+
+        setIsRebuildSubmitting(true);
+        try {
+            const result = await tenantService.requestTerminalLocalRebuild({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: rebuildTerminal.registry?.id || null,
+                reason,
+                confirmRebuild: rebuildFormData.confirmRebuild,
+            });
+            alert(result.message || 'Reconstruccion local preparada. El POS debera descargar nuevamente su estado desde el ERP sin cambiar de dispositivo.');
+            closeRebuildModal();
+            const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+            setTenantTerminals(data);
+        } catch (err: unknown) {
+            console.error('Error requesting terminal local rebuild:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setIsRebuildSubmitting(false);
         }
     };
 
@@ -979,21 +1054,31 @@ export const Tenants: React.FC = () => {
                                                 </div>
 
                                                 {isLocalPosTenant(selectedTenantForTerminals) ? (
-                                                    <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                                    <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                                         <div>
                                                             <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Recuperacion POS local</p>
                                                             <p className="mt-1 text-sm text-amber-800">
-                                                                Reasigna esta terminal a una tablet nueva sin borrar ventas historicas.
+                                                                Elige reemplazo de hardware o reconstruccion de BD local sin cambiar el dispositivo.
                                                             </p>
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => openTakeoverModal(terminal)}
-                                                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors"
-                                                        >
-                                                            <RefreshCcw size={16} />
-                                                            Reemplazar tablet
-                                                        </button>
+                                                        <div className="flex flex-col gap-2 sm:flex-row">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openRebuildModal(terminal)}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-700 shadow-sm hover:bg-amber-100 transition-colors"
+                                                            >
+                                                                <RefreshCcw size={16} />
+                                                                Reconstruir base local
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openTakeoverModal(terminal)}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors"
+                                                            >
+                                                                <RefreshCcw size={16} />
+                                                                Reemplazar tablet
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 ) : null}
                                             </div>
@@ -1002,6 +1087,93 @@ export const Tenants: React.FC = () => {
                                 </div>
                             )}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {isRebuildModalOpen && selectedTenantForTerminals && rebuildTerminal && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div>
+                                <div className="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-700">
+                                    <RefreshCcw size={14} />
+                                    Rebuild local
+                                </div>
+                                <h3 className="mt-3 font-black text-lg text-slate-800">Reconstruir base local del POS</h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    Para la misma tablet cuando se corrompe la BD local. No cambia el device_id.
+                                </p>
+                            </div>
+                            <button type="button" onClick={closeRebuildModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleTerminalLocalRebuild} className="p-6 space-y-5">
+                            <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                <p className="font-bold">Antes de continuar:</p>
+                                <ul className="mt-2 list-disc space-y-1 pl-5">
+                                    <li>Se mantiene el mismo device_id autorizado.</li>
+                                    <li>No se revoca la tablet actual.</li>
+                                    <li>El POS debera descargar un bootstrap completo desde el ERP.</li>
+                                    <li>Si habia ventas locales no sincronizadas, deben auditarse antes de reconstruir.</li>
+                                </ul>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Terminal</p>
+                                    <p className="mt-1 font-bold text-slate-800">{rebuildTerminal.name}</p>
+                                    <p className="mt-1 text-xs font-mono text-slate-500">{getTerminalTakeoverId(rebuildTerminal) || 'N/D'}</p>
+                                </div>
+                                <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Device actual</p>
+                                    <p className="mt-1 font-mono text-slate-700 break-all">{getTerminalCurrentDeviceId(rebuildTerminal) || 'N/D'}</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Motivo de la reconstruccion <span className="text-red-500">*</span></label>
+                                <textarea
+                                    required
+                                    value={rebuildFormData.reason}
+                                    onChange={e => setRebuildFormData({ ...rebuildFormData, reason: e.target.value })}
+                                    className="w-full min-h-[96px] px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800 resize-y"
+                                    placeholder="Ej. BD local corrupta, reinstalacion del POS en la misma tablet o reparacion de datos locales."
+                                />
+                            </div>
+
+                            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    checked={rebuildFormData.confirmRebuild}
+                                    onChange={e => setRebuildFormData({ ...rebuildFormData, confirmRebuild: e.target.checked })}
+                                    className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span>
+                                    Confirmo que es la misma tablet y deseo forzar un bootstrap completo sin revocar el dispositivo actual.
+                                </span>
+                            </label>
+
+                            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 border-t border-slate-100 pt-5">
+                                <button
+                                    type="button"
+                                    onClick={closeRebuildModal}
+                                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isRebuildSubmitting}
+                                    className="px-5 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    {isRebuildSubmitting ? <Loader2 className="animate-spin" size={18} /> : <RefreshCcw size={18} />}
+                                    Preparar reconstruccion
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
