@@ -1,12 +1,13 @@
 import React from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, ShieldAlert, BadgeDollarSign, Headset, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, ShieldAlert, BadgeDollarSign, Headset, Lightbulb, LogOut } from 'lucide-react';
 
 const navItems = [
     { path: '/', label: 'Global Dashboard', icon: LayoutDashboard },
     { path: '/tenants', label: 'Gestión de Tenants', icon: Users },
     { path: '/plans', label: 'Planes SaaS', icon: BadgeDollarSign },
     { path: '/support', label: 'Helpdesk & Soporte', icon: Headset },
+    { path: '/mejoras', label: 'Mejoras solicitadas', icon: Lightbulb },
     { path: '/kill-switch', label: 'Kill Switch', icon: ShieldAlert },
 ];
 

@@ -5,6 +5,7 @@ import { Tenants } from './pages/Tenants'
 import { KillSwitch } from './pages/KillSwitch'
 import { Plans } from './pages/Plans'
 import SupportCommandCenter from './pages/SupportCommandCenter'
+import { CustomerImprovements } from './pages/CustomerImprovements'
 
 function App() {
     return (
@@ -15,6 +16,7 @@ function App() {
                     <Route path="tenants" element={<Tenants />} />
                     <Route path="plans" element={<Plans />} />
                     <Route path="support" element={<SupportCommandCenter />} />
+                    <Route path="mejoras" element={<CustomerImprovements />} />
                     <Route path="kill-switch" element={<KillSwitch />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />
