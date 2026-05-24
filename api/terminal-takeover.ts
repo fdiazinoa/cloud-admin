@@ -21,6 +21,7 @@ type TakeoverPayload = {
 type TenantRecord = {
     id: string;
     name: string;
+    slug?: string | null;
     email: string;
     status: string;
     type?: string | null;
@@ -44,6 +45,22 @@ type PublicTerminalRecord = {
     name?: string | null;
     terminal_name?: string | null;
     label?: string | null;
+};
+
+type ErpTenantRecord = {
+    id: string;
+    name?: string | null;
+    config?: Record<string, unknown> | null;
+};
+
+type ErpTerminalRecord = {
+    id: string;
+    store_id?: string | null;
+    device_id?: string | null;
+    name?: string | null;
+    config?: Record<string, unknown> | null;
+    last_seen?: string | null;
+    created_at?: string | null;
 };
 
 const tokenKeys = new Set([
@@ -98,6 +115,14 @@ async function readBody(request: ApiRequest) {
 
 function stringValue(value: unknown) {
     return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function normalizedText(value: unknown) {
+    return typeof value === "string" ? value.trim().toUpperCase() : "";
 }
 
 function isAuthorizedTakeoverRequest(request: ApiRequest) {
@@ -196,6 +221,139 @@ function getPublicTerminalDeviceId(terminal: PublicTerminalRecord | null) {
         || null;
 }
 
+function getTerminalMatchScore(
+    terminal: ErpTerminalRecord,
+    candidates: Set<string>,
+    terminalName: string | null,
+) {
+    const config = objectValue(terminal.config);
+    const metadata = objectValue(config.metadata);
+    const values = [
+        terminal.id,
+        terminal.device_id,
+        terminal.name,
+        metadata.terminal_id,
+        metadata.erp_terminal_id,
+        metadata.terminal_name,
+        metadata.station_number,
+        config.station_number,
+    ].map(normalizedText).filter(Boolean);
+
+    if (values.some((value) => candidates.has(value) && value === normalizedText(terminal.id))) return 100;
+    if (values.some((value) => candidates.has(value) && value === normalizedText(terminal.device_id))) return 90;
+    if (normalizedText(metadata.terminal_id) && candidates.has(normalizedText(metadata.terminal_id))) return 80;
+    if (normalizedText(metadata.erp_terminal_id) && candidates.has(normalizedText(metadata.erp_terminal_id))) return 80;
+    if (terminalName && normalizedText(terminal.name) === normalizedText(terminalName)) return 60;
+    if (terminalName && normalizedText(metadata.terminal_name) === normalizedText(terminalName)) return 60;
+    return values.some((value) => candidates.has(value)) ? 50 : 0;
+}
+
+async function resolveErpTenant(
+    supabase: ReturnType<typeof createClient>,
+    tenant: TenantRecord,
+): Promise<ErpTenantRecord | null> {
+    const publicClient = supabase.schema("public");
+
+    const lookups = [
+        publicClient.from("erp_tenants").select("id,name,config").eq("config->>cloudAdminTenantId", tenant.id).maybeSingle(),
+        publicClient.from("erp_tenants").select("id,name,config").eq("id", tenant.id).maybeSingle(),
+    ];
+
+    if (tenant.slug) {
+        lookups.push(publicClient.from("erp_tenants").select("id,name,config").eq("name", tenant.slug).maybeSingle());
+    }
+
+    for (const lookup of lookups) {
+        const { data, error } = await lookup;
+        if (error && error.code !== "PGRST116") throw error;
+        if (data) return data as ErpTenantRecord;
+    }
+
+    const { data, error } = await publicClient
+        .from("erp_tenants")
+        .select("id,name,config");
+
+    if (error) throw error;
+
+    const tenantSlug = normalizedText(tenant.slug);
+    const tenantEmail = normalizedText(tenant.email);
+
+    return ((data as ErpTenantRecord[] | null) || []).find((erpTenant) => {
+        const config = objectValue(erpTenant.config);
+        const contact = objectValue(config.contact);
+        return normalizedText(config.cloudAdminTenantId) === normalizedText(tenant.id)
+            || (tenantSlug && normalizedText(config.cloudAdminCompanyId) === tenantSlug)
+            || (tenantSlug && normalizedText(erpTenant.name) === tenantSlug)
+            || (tenantEmail && normalizedText(contact.email) === tenantEmail)
+            || (tenantEmail && normalizedText(contact.contactEmail) === tenantEmail);
+    }) || null;
+}
+
+async function resolveErpTerminal(
+    supabase: ReturnType<typeof createClient>,
+    params: {
+        erpTenantId: string;
+        terminalId: string;
+        registry: RegistryRecord | null;
+        publicTerminal: PublicTerminalRecord | null;
+    },
+): Promise<ErpTerminalRecord | null> {
+    const publicClient = supabase.schema("public");
+
+    if (isUuid(params.terminalId)) {
+        const { data, error } = await publicClient
+            .from("erp_terminals")
+            .select("id,store_id,device_id,name,config,last_seen,created_at")
+            .eq("id", params.terminalId)
+            .maybeSingle();
+
+        if (error && error.code !== "PGRST116") throw error;
+        if (data) return data as ErpTerminalRecord;
+    }
+
+    const { data: stores, error: storesError } = await publicClient
+        .from("erp_stores")
+        .select("id")
+        .eq("tenant_id", params.erpTenantId);
+
+    if (storesError) throw storesError;
+
+    const storeIds = ((stores as Array<{ id: string }> | null) || []).map((store) => store.id).filter(Boolean);
+    if (storeIds.length === 0) return null;
+
+    const { data: terminals, error: terminalsError } = await publicClient
+        .from("erp_terminals")
+        .select("id,store_id,device_id,name,config,last_seen,created_at")
+        .in("store_id", storeIds);
+
+    if (terminalsError) throw terminalsError;
+
+    const candidates = new Set([
+        params.terminalId,
+        params.registry?.terminal_id,
+        params.registry?.device_id,
+        params.publicTerminal?.id,
+        params.publicTerminal?.device_token,
+        params.publicTerminal?.device_id,
+        params.publicTerminal?.current_device_id,
+    ].map(normalizedText).filter(Boolean));
+
+    const terminalName = params.registry?.terminal_name
+        || params.publicTerminal?.name
+        || params.publicTerminal?.terminal_name
+        || params.publicTerminal?.label
+        || null;
+
+    return ((terminals as ErpTerminalRecord[] | null) || [])
+        .map((terminal) => ({
+            terminal,
+            score: getTerminalMatchScore(terminal, candidates, terminalName),
+            ts: new Date(terminal.last_seen || terminal.created_at || 0).getTime() || 0,
+        }))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => b.score - a.score || b.ts - a.ts)[0]?.terminal || null;
+}
+
 async function insertAudit(
     supabase: ReturnType<typeof createClient>,
     payload: {
@@ -286,7 +444,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
 
         const { data: tenantData, error: tenantError } = await supabase
             .from("tenants")
-            .select("id,name,email,status,type,cloud_sync")
+            .select("id,name,slug,email,status,type,cloud_sync")
             .eq("id", tenantId)
             .maybeSingle();
 
@@ -350,7 +508,32 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             return;
         }
 
-        const previousDeviceId = registry?.device_id || getPublicTerminalDeviceId(publicTerminal);
+        const erpTenant = await resolveErpTenant(supabase, tenant);
+        if (!erpTenant) {
+            sendJson(response, 404, {
+                error: "ERP_TENANT_NOT_FOUND",
+                message: "Tenant no encontrado en ERP para este tenant de Cloud-Admin.",
+            });
+            return;
+        }
+
+        const erpTerminal = await resolveErpTerminal(supabase, {
+            erpTenantId: erpTenant.id,
+            terminalId,
+            registry,
+            publicTerminal,
+        });
+
+        if (!erpTerminal) {
+            sendJson(response, 404, {
+                error: "ERP_TERMINAL_NOT_FOUND",
+                message: "Terminal no encontrada en ERP para este tenant.",
+            });
+            return;
+        }
+
+        const erpTerminalId = erpTerminal.id;
+        const previousDeviceId = erpTerminal.device_id || registry?.device_id || getPublicTerminalDeviceId(publicTerminal);
         if (previousDeviceId && previousDeviceId === newDeviceId) {
             sendJson(response, 400, {
                 error: "SAME_DEVICE_ID",
@@ -372,19 +555,25 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 registry_id: registry?.id || null,
                 source: "cloud-admin-vercel",
                 device_name: deviceName,
+                erp_tenant_id: erpTenant.id,
+                erp_terminal_id: erpTerminalId,
             },
         });
 
-        const erpResponse = await fetch(`${getEnv("ERP_API_URL", "CLOUD_ADMIN_ERP_API_URL").replace(/\/$/, "")}/api/settings/terminals/${encodeURIComponent(terminalId)}/takeover`, {
+        const erpResponse = await fetch(`${getEnv("ERP_API_URL", "CLOUD_ADMIN_ERP_API_URL").replace(/\/$/, "")}/api/settings/terminals/${encodeURIComponent(erpTerminalId)}/takeover`, {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${getEnv("ERP_TAKEOVER_SERVICE_TOKEN", "ERP_SERVICE_TOKEN", "CLOUD_ADMIN_ERP_SERVICE_TOKEN")}`,
                 "Content-Type": "application/json",
-                "X-Tenant-Id": tenantId,
+                "X-Tenant-Id": erpTenant.id,
+                "X-Cloud-Admin-Tenant-Id": tenantId,
+                "X-Actor-User-Id": actorUserId || "",
+                "X-Actor-Email": actorEmail || "",
             },
             body: JSON.stringify({
                 device_id: newDeviceId,
                 device_name: deviceName || undefined,
+                takeover_scope: "LOCAL_POS",
             }),
         });
 
@@ -407,6 +596,8 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 erp_error_code: erpErrorCode,
                 metadata: {
                     success: false,
+                    erp_tenant_id: erpTenant.id,
+                    erp_terminal_id: erpTerminalId,
                     erp_payload: sanitizePayload(erpPayload),
                 },
             });
@@ -475,6 +666,8 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             metadata: {
                 success: true,
                 registry_update_error: registryUpdateError,
+                erp_tenant_id: erpTenant.id,
+                erp_terminal_id: erpTerminalId,
                 erp_payload: sanitizePayload(erpPayload),
             },
         });
