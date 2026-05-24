@@ -234,6 +234,72 @@ function normalizeDuplicateKey(value: string) {
         .slice(0, 80) || 'mejora-manual';
 }
 
+function normalizeForAnalysis(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+}
+
+function getPrimaryClientMessage(messages: Message[]) {
+    return messages.find((message) => message.sender_type === 'Client')?.message.trim() ?? '';
+}
+
+function inferImprovementModule(ticket: Ticket, requestText: string) {
+    const text = normalizeForAnalysis([
+        ticket.subject,
+        ticket.category,
+        requestText,
+    ].join(' '));
+
+    if (/(api|integracion|webhook|agente|configurable|parametrizacion|configuracion|endpoint)/.test(text)) return 'Integraciones / API ERP';
+    if (/(digifact|facturacion electronica|e-?cf|ecf|ncf|dgii|fiscal|comprobante)/.test(text)) return 'Facturacion electronica / Fiscal';
+    if (/(promocion|descuento|oferta|forma de pago|metodo de pago|tipo de cliente|lista de precio)/.test(text)) return 'Promociones';
+    if (/(activo fijo|activos fijos|depreciacion|depreciar|asiento|entrada de diario|referencia de asiento)/.test(text)) return 'Activos fijos / Contabilidad';
+    if (/(inventario|stock|producto|catalogo|categoria|almacen|sucursal)/.test(text)) return 'Inventario / Catalogo';
+    if (/(venta|factura|cotizacion|pedido|cliente|cobro)/.test(text)) return 'Ventas / Facturacion';
+    if (/(caja|cierre|cuadre|turno|pago|z\b|pos)/.test(text)) return 'Caja / POS';
+    if (/(sync|sincron|cloud|viajar|enviar|offline|internet|conexion|red)/.test(text)) return 'Sincronizacion Cloud';
+    if (/(impresora|impresion|comanda|ticket|scanner|lector|hardware|terminal)/.test(text)) return 'Hardware POS';
+
+    const insightModule = ticket.insight?.affected_module?.trim();
+    if (insightModule && !/no detectado|pendiente/i.test(insightModule)) return insightModule;
+
+    if (ticket.category && ticket.category !== 'Otros') return ticket.category;
+
+    return 'Pendiente de clasificar';
+}
+
+function recommendImprovementImpact(ticket: Ticket, requestText: string, module: string) {
+    const text = normalizeForAnalysis(`${ticket.subject} ${module} ${requestText}`);
+
+    if (/(duplic|repet|mas de una vez|m[aá]s de una vez)/.test(text)) {
+        return 'Evita registros duplicados y reduce retrabajo operativo, conciliaciones manuales y riesgo de errores contables.';
+    }
+
+    if (/(bloquea|no permite|no puedo|error|falla|cierre|caja|venta|factura|facturacion)/.test(text)) {
+        return 'Reduce friccion en operaciones criticas y ayuda a evitar interrupciones en ventas, facturacion o cierre de caja.';
+    }
+
+    if (/(api|integracion|webhook|agente|configurable|endpoint)/.test(text)) {
+        return 'Facilita parametrizaciones e integraciones sin intervencion tecnica recurrente, acelerando implementaciones y soporte.';
+    }
+
+    if (/(promocion|descuento|forma de pago|tipo de cliente|lista de precio)/.test(text)) {
+        return 'Permite configurar reglas comerciales con mayor precision, reduciendo ajustes manuales y diferencias al facturar.';
+    }
+
+    if (/(depreci|activo fijo|asiento|contabilidad)/.test(text)) {
+        return 'Mejora el control contable y reduce errores de procesamiento mensual, especialmente en cierres y auditorias.';
+    }
+
+    if (/(sync|sincron|cloud|offline|red|internet|viajar)/.test(text)) {
+        return 'Aumenta la confiabilidad del flujo Cloud/POS/ERP y reduce revisiones manuales por datos pendientes de sincronizar.';
+    }
+
+    return 'Ayuda a documentar una necesidad funcional del cliente para evaluar prioridad, alcance e impacto antes de planificar desarrollo.';
+}
+
 function normalizeMessageAttachments(value: unknown): MessageAttachment[] {
     if (!Array.isArray(value)) return [];
 
@@ -782,12 +848,15 @@ const SupportCommandCenter: React.FC = () => {
     const openImprovementModal = () => {
         if (!selectedTicket) return;
 
-        const lastClientMessage = [...messages].reverse().find((message) => message.sender_type === 'Client');
+        const primaryClientMessage = getPrimaryClientMessage(messages);
+        const requestedCapability = primaryClientMessage || selectedTicket.subject;
+        const affectedModule = inferImprovementModule(selectedTicket, requestedCapability);
+
         setImprovementDraft({
             title: selectedTicket.subject,
-            requestedCapability: lastClientMessage?.message || selectedTicket.subject,
-            affectedModule: selectedTicket.insight?.affected_module || selectedTicket.category || '',
-            customerImpact: '',
+            requestedCapability,
+            affectedModule,
+            customerImpact: recommendImprovementImpact(selectedTicket, requestedCapability, affectedModule),
             priority: selectedTicket.priority === 'Critica' ? 'Alta' : 'Media',
         });
         setImprovementError(null);
@@ -1415,7 +1484,10 @@ const SupportCommandCenter: React.FC = () => {
                             </div>
 
                             <label className="block">
-                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Modulo afectado</span>
+                                <span className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                                    Modulo afectado
+                                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700">Sugerido por IA</span>
+                                </span>
                                 <input
                                     value={improvementDraft.affectedModule}
                                     onChange={(event) => updateImprovementDraft('affectedModule', event.target.value)}
@@ -1436,7 +1508,10 @@ const SupportCommandCenter: React.FC = () => {
                             </label>
 
                             <label className="block">
-                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Impacto operativo</span>
+                                <span className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                                    Impacto operativo
+                                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700">Sugerido por IA</span>
+                                </span>
                                 <textarea
                                     value={improvementDraft.customerImpact}
                                     onChange={(event) => updateImprovementDraft('customerImpact', event.target.value)}
