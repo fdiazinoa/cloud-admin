@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin, supabaseServiceRoleKey } from "./supabase";
+import { supabase, supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from "./supabase";
 import type {
     Distributor,
     Tenant,
@@ -215,6 +215,22 @@ export interface TerminalTakeoverResult {
     previous_device_id?: string | null;
     new_device_id?: string;
     requires_auth?: boolean;
+    message?: string;
+}
+
+export interface RequestTerminalLocalRebuildInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    reason: string;
+    confirmRebuild: boolean;
+}
+
+export interface TerminalLocalRebuildResult {
+    status: string;
+    terminal?: unknown;
+    device_id?: string | null;
+    requires_full_bootstrap?: boolean;
     message?: string;
 }
 
@@ -537,6 +553,33 @@ export async function requestTerminalTakeover(input: RequestTerminalTakeoverInpu
     return (payload || { status: "success" }) as TerminalTakeoverResult;
 }
 
+export async function requestTerminalLocalRebuild(input: RequestTerminalLocalRebuildInput): Promise<TerminalLocalRebuildResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-local-rebuild`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            reason: input.reason,
+            confirm_rebuild: input.confirmRebuild,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo preparar la reconstruccion local del POS.");
+    }
+
+    return (payload || { status: "success" }) as TerminalLocalRebuildResult;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
         supabaseAdmin.from("tenants").select("id,name,status,created_at"),
@@ -819,6 +862,7 @@ export const tenantService = {
     getDistributors,
     getTenantTerminalOverview,
     requestTerminalTakeover,
+    requestTerminalLocalRebuild,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
