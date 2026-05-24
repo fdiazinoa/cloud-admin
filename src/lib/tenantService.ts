@@ -87,6 +87,118 @@ function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | n
     return null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asText(value: unknown): string {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeKey(value: unknown): string {
+    return asText(value).toUpperCase();
+}
+
+async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, string>> {
+    try {
+        const { data: erpTenant, error: erpTenantError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_tenants")
+            .select("id")
+            .eq("config->>cloudAdminTenantId", tenantId)
+            .maybeSingle();
+
+        if (erpTenantError) {
+            console.warn("ERP tenant lookup unavailable for terminal binding status:", erpTenantError);
+            return new Map();
+        }
+
+        const erpTenantId = (erpTenant as { id?: string } | null)?.id;
+        if (!erpTenantId) return new Map();
+
+        const { data: stores, error: storesError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_stores")
+            .select("id")
+            .eq("tenant_id", erpTenantId);
+
+        if (storesError) {
+            console.warn("ERP store lookup unavailable for terminal binding status:", storesError);
+            return new Map();
+        }
+
+        const storeIds = ((stores as Array<{ id?: string }> | null) || [])
+            .map((store) => store.id)
+            .filter((id): id is string => Boolean(id));
+
+        if (storeIds.length === 0) return new Map();
+
+        const { data: terminals, error: terminalsError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_terminals")
+            .select("id,device_id,name,config,last_seen,created_at")
+            .in("store_id", storeIds);
+
+        if (terminalsError) {
+            console.warn("ERP terminal lookup unavailable for terminal binding status:", terminalsError);
+            return new Map();
+        }
+
+        const bindings = new Map<string, string>();
+        for (const terminal of ((terminals as Array<Record<string, unknown>> | null) || [])) {
+            const deviceId = asText(terminal.device_id);
+            if (!deviceId) continue;
+
+            const config = asRecord(terminal.config);
+            const metadata = asRecord(config.metadata);
+            [
+                terminal.id,
+                metadata.terminal_id,
+                metadata.erp_terminal_id,
+            ].forEach((candidate) => {
+                const key = normalizeKey(candidate);
+                if (key) bindings.set(key, deviceId);
+            });
+        }
+
+        return bindings;
+    } catch (error) {
+        console.warn("ERP terminal binding status lookup failed:", error);
+        return new Map();
+    }
+}
+
+function applyRegistryBindingStatus(
+    registries: TenantTerminalRegistryEntry[],
+    bindings: Map<string, string>,
+): TenantTerminalRegistryEntry[] {
+    if (bindings.size === 0) return registries;
+
+    return registries.map((registry) => {
+        const lookupKeys = [
+            registry.terminal_id,
+            registry.terminal_name,
+            registry.device_id,
+        ].map(normalizeKey).filter(Boolean);
+
+        const authorizedDeviceId = lookupKeys
+            .map((key) => bindings.get(key))
+            .find((value): value is string => Boolean(value));
+
+        const isRevoked = Boolean(
+            authorizedDeviceId
+            && registry.device_id
+            && normalizeKey(registry.device_id) !== normalizeKey(authorizedDeviceId)
+        );
+
+        return {
+            ...registry,
+            authorized_device_id: authorizedDeviceId || registry.authorized_device_id || null,
+            is_revoked: isRevoked,
+        };
+    });
+}
+
 export interface RequestTerminalTakeoverInput {
     tenantId: string;
     terminalId: string;
@@ -262,6 +374,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     } else {
         registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
     }
+
+    registryRows = applyRegistryBindingStatus(registryRows, await loadErpTerminalBindings(tenantId));
 
     if (terminalsRes.error && registryRes.error) {
         throw terminalsRes.error;

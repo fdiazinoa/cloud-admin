@@ -4,6 +4,7 @@ import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, 
 import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
+import { getPosApkReleases, type PosApkRelease } from '../lib/posApkReleases';
 import {
     deriveProductsFromTenant,
     deriveTenantConfigFromProducts,
@@ -30,6 +31,7 @@ export const Tenants: React.FC = () => {
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
+    const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkRelease | null>(null);
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
     const [takeoverTerminal, setTakeoverTerminal] = useState<TenantTerminalSnapshot | null>(null);
@@ -302,8 +304,12 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalLoading(true);
 
         try {
-            const data = await tenantService.getTenantTerminalOverview(tenant.id);
+            const [data, releases] = await Promise.all([
+                tenantService.getTenantTerminalOverview(tenant.id),
+                getPosApkReleases(),
+            ]);
             setTenantTerminals(data);
+            setLatestPosApkRelease(releases.find((release) => release.is_latest) || releases[0] || null);
         } catch (err) {
             console.error('Error fetching tenant terminals:', err);
             alert('No se pudieron cargar las terminales de este tenant.');
@@ -316,6 +322,7 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalOpen(false);
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
+        setLatestPosApkRelease(null);
         closeTakeoverModal();
     };
 
@@ -546,10 +553,17 @@ export const Tenants: React.FC = () => {
     };
 
     const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
+        if (terminal.registry?.is_revoked) return 'REVOCADA';
         const registryStatus = (terminal.registry?.status || '').toUpperCase();
         if (registryStatus === 'ONLINE') return 'ONLINE';
         if (registryStatus === 'OFFLINE') return 'OFFLINE';
         return terminal.is_active ? 'ACTIVA' : 'INACTIVA';
+    };
+
+    const getRegistryStatusClassName = (statusLabel: string) => {
+        if (statusLabel === 'ONLINE') return 'bg-emerald-100 text-emerald-700';
+        if (statusLabel === 'REVOCADA') return 'bg-rose-100 text-rose-700';
+        return 'bg-slate-100 text-slate-500';
     };
 
     const getApkVersionKey = (terminal: TenantTerminalSnapshot) => {
@@ -569,6 +583,14 @@ export const Tenants: React.FC = () => {
     };
 
     const referenceVersionCandidate = (() => {
+        if (latestPosApkRelease) {
+            return {
+                key: `${latestPosApkRelease.version_name}::${latestPosApkRelease.version_code}`,
+                label: `APK v${latestPosApkRelease.version_name} (${latestPosApkRelease.version_code})`,
+                source: 'APK POS',
+            };
+        }
+
         const primary = tenantTerminals.find((terminal) => terminal.registry?.is_primary && getApkVersionKey(terminal));
         if (primary) {
             return {
@@ -602,11 +624,16 @@ export const Tenants: React.FC = () => {
     })();
 
     const referenceVersionKey = referenceVersionCandidate?.key || '';
-    const outOfVersionCount = tenantTerminals.filter((terminal) => {
+    const registryTerminals = tenantTerminals.flatMap((terminal) => (
+        terminal.registries?.length
+            ? terminal.registries.map((registry) => ({ ...terminal, registry }))
+            : [terminal]
+    ));
+    const outOfVersionCount = registryTerminals.filter((terminal) => {
         const terminalVersionKey = getApkVersionKey(terminal);
         return Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
     }).length;
-    const missingVersionCount = tenantTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
+    const missingVersionCount = registryTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
 
     const normalizeIp = (value?: string | null) => (value || '').trim();
 
@@ -686,11 +713,12 @@ export const Tenants: React.FC = () => {
         if (terminal.registry) return 'Cliente con endpoint';
         return 'Cliente / catálogo';
     };
-    const onlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
-    const offlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
-    const masterTerminalCount = tenantTerminals.filter((terminal) => terminal.registry?.is_primary).length;
-    const clientTerminalCount = tenantTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
-    const publishedEndpointCount = tenantTerminals.filter((terminal) => Boolean(terminal.registry)).length;
+    const onlineTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
+    const offlineTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
+    const revokedTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'REVOCADA').length;
+    const masterTerminalCount = registryTerminals.filter((terminal) => terminal.registry?.is_primary && getRegistryStatusLabel(terminal) === 'ONLINE').length;
+    const clientTerminalCount = registryTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
+    const publishedEndpointCount = registryTerminals.filter((terminal) => Boolean(terminal.registry)).length;
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -1064,7 +1092,7 @@ export const Tenants: React.FC = () => {
                                 </p>
                                 <p className="mt-2">
                                     {referenceVersionCandidate
-                                        ? <>Versión de referencia: <span className="font-bold">{referenceVersionCandidate.label}</span> reportada por <span className="font-bold">{referenceVersionCandidate.source}</span>.</>
+                                        ? <>Versión de referencia: <span className="font-bold">v {referenceVersionCandidate.label}</span> desde <span className="font-bold">{referenceVersionCandidate.source}</span>.</>
                                         : <>Aún no hay versión de APK reportada por las terminales de este tenant.</>}
                                     {missingVersionCount > 0 ? <> <span className="font-bold">{missingVersionCount}</span> terminal(es) todavía no reportan versión.</> : null}
                                 </p>
@@ -1080,8 +1108,8 @@ export const Tenants: React.FC = () => {
                                     <p className="mt-2 text-3xl font-black text-slate-800">{publishedEndpointCount}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Offline / sin reporte</p>
-                                    <p className="mt-2 text-3xl font-black text-slate-800">{Math.max(tenantTerminals.length - onlineTerminalCount, offlineTerminalCount)}</p>
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Revocadas / offline</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{revokedTerminalCount + offlineTerminalCount}</p>
                                 </div>
                             </div>
 
@@ -1097,15 +1125,16 @@ export const Tenants: React.FC = () => {
                             ) : (
                                 <div className="grid grid-cols-1 gap-6">
                                     {tenantTerminals.map((terminal) => {
-                                        const statusLabel = getRegistryStatusLabel(terminal);
-                                        const isOnline = statusLabel === 'ONLINE';
+                                        const hasOnlineRegistry = (terminal.registries || []).some((reg) => (
+                                            getRegistryStatusLabel({ ...terminal, registry: reg }) === 'ONLINE'
+                                        ));
                                         
                                         return (
                                             <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
                                                 <div className="bg-slate-50 border-b border-slate-100 p-5 flex items-center justify-between">
                                                     <div className="flex items-center gap-4">
-                                                        <div className={`rounded-2xl p-3 ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
-                                                            {isOnline ? <Wifi size={20} /> : <WifiOff size={20} />}
+                                                        <div className={`rounded-2xl p-3 ${hasOnlineRegistry ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
+                                                            {hasOnlineRegistry ? <Wifi size={20} /> : <WifiOff size={20} />}
                                                         </div>
                                                         <div>
                                                             <div className="flex items-center gap-3">
@@ -1149,7 +1178,6 @@ export const Tenants: React.FC = () => {
                                                                 {(terminal.registries || []).map((reg, idx) => {
                                                                     const mockTerminal = { ...terminal, registry: reg };
                                                                     const rStatusLabel = getRegistryStatusLabel(mockTerminal);
-                                                                    const rIsOnline = rStatusLabel === 'ONLINE';
                                                                     const rVersionKey = getApkVersionKey(mockTerminal);
                                                                     const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
                                                                     const prefLanIp = getPreferredLanIp(mockTerminal);
@@ -1157,13 +1185,16 @@ export const Tenants: React.FC = () => {
                                                                     return (
                                                                         <tr key={reg.id || idx} className={`hover:bg-slate-50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/20' : ''}`}>
                                                                             <td className="px-4 py-3 align-top">
-                                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center w-min ${rIsOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center w-min ${getRegistryStatusClassName(rStatusLabel)}`}>
                                                                                     {rStatusLabel}
                                                                                 </span>
                                                                             </td>
                                                                             <td className="px-4 py-3 align-top">
                                                                                 <p className="font-mono font-bold text-slate-700 text-[11px] mb-0.5">{reg.device_id || terminal.device_token || 'N/D'}</p>
-                                                                                <p className="text-[10px] text-slate-500">{reg.hostname || 'N/D'}</p>
+                                                                                <p className="text-[10px] text-slate-500">{reg.hostname || 'N/D'} · T {reg.terminal_id || terminal.terminal_id || 'N/D'}</p>
+                                                                                {reg.is_revoked && reg.authorized_device_id ? (
+                                                                                    <p className="text-[10px] font-bold text-rose-600">Autorizado: {reg.authorized_device_id}</p>
+                                                                                ) : null}
                                                                             </td>
                                                                             <td className="px-4 py-3 align-top">
                                                                                 <p className="font-mono text-emerald-700 font-bold text-[11px] mb-0.5">{prefLanIp}</p>
@@ -1173,6 +1204,9 @@ export const Tenants: React.FC = () => {
                                                                                 <div className="flex flex-col items-start gap-0.5">
                                                                                     <span className="font-mono text-slate-700 text-[11px]">v {formatApkVersion(mockTerminal)}</span>
                                                                                     {rIsOutOfVersion && <span className="text-[10px] text-amber-600 font-bold">Desfasado</span>}
+                                                                                    {rIsOutOfVersion && referenceVersionCandidate ? (
+                                                                                        <span className="text-[10px] font-bold text-slate-500">Última: v {referenceVersionCandidate.label}</span>
+                                                                                    ) : null}
                                                                                 </div>
                                                                             </td>
                                                                             <td className="px-4 py-3 align-top text-right">
