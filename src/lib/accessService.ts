@@ -1,4 +1,5 @@
 import { supabaseAdmin } from './supabase';
+import type { User } from '@supabase/supabase-js';
 import type {
     CloudAdminPermissionKey,
     CloudAdminPermissions,
@@ -59,7 +60,8 @@ export interface UpdateCloudAdminUserInput {
 
 export interface CreatedCloudAdminUser {
     user: CloudAdminUser;
-    tempPassword: string;
+    tempPassword?: string | null;
+    authLinkType: 'created' | 'linked_existing';
 }
 
 function normalizeEmail(value: string) {
@@ -84,6 +86,54 @@ function normalizePermissions(permissions: Partial<CloudAdminPermissions>) {
         ...emptyPermissions,
         ...permissions,
     };
+}
+
+function isDuplicateAuthEmailError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error || '');
+    return /already.*registered|already.*exists|email.*exists/i.test(message);
+}
+
+function buildCloudAdminAuthMetadata(
+    profile: CloudAdminProfile,
+    input: CreateCloudAdminUserInput | UpdateCloudAdminUserInput,
+    existingUser?: User | null,
+) {
+    return {
+        user_metadata: {
+            ...(existingUser?.user_metadata || {}),
+            full_name: input.fullName.trim(),
+            phone: input.phone?.trim() || null,
+            cloud_admin: true,
+        },
+        app_metadata: {
+            ...(existingUser?.app_metadata || {}),
+            cloud_admin: true,
+            cloud_admin_profile_id: profile.id,
+            cloud_admin_profile_code: profile.code,
+            cloud_admin_level: profile.level,
+            cloud_admin_permissions: normalizePermissions(profile.permissions || {}),
+            cloud_admin_status: input.status,
+        },
+    };
+}
+
+async function findAuthUserByEmail(email: string): Promise<User | null> {
+    const perPage = 100;
+    for (let page = 1; page <= 20; page += 1) {
+        const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+        if (error) throw error;
+        const users = data.users || [];
+        const match = users.find((user) => normalizeEmail(user.email || '') === email);
+        if (match) return match;
+        if (users.length < perPage) return null;
+    }
+    return null;
+}
+
+async function getAuthUserById(userId: string): Promise<User | null> {
+    const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (error) throw error;
+    return data.user || null;
 }
 
 function withProfile(user: CloudAdminUser, profiles: CloudAdminProfile[]) {
@@ -183,27 +233,48 @@ export async function createCloudAdminUser(input: CreateCloudAdminUserInput): Pr
     const tempPassword = generateTempPassword();
     const profile = await getProfile(input.profileId);
 
+    const { data: existingCloudAdminUser, error: existingCloudAdminError } = await supabaseAdmin
+        .from('cloud_admin_users')
+        .select('id')
+        .eq('email', email)
+        .maybeSingle();
+
+    if (existingCloudAdminError) throw existingCloudAdminError;
+    if (existingCloudAdminUser) {
+        throw new Error('Este usuario ya tiene acceso registrado en Cloud-Admin.');
+    }
+
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
         email,
         password: tempPassword,
         email_confirm: true,
-        user_metadata: {
-            full_name: input.fullName.trim(),
-            phone: input.phone?.trim() || null,
-            cloud_admin: true,
-        },
-        app_metadata: {
-            cloud_admin: true,
-            cloud_admin_profile_id: profile.id,
-            cloud_admin_profile_code: profile.code,
-            cloud_admin_level: profile.level,
-            cloud_admin_permissions: normalizePermissions(profile.permissions || {}),
-        },
+        ...buildCloudAdminAuthMetadata(profile, input),
     });
 
-    if (authError) throw authError;
-    const authUserId = authData.user?.id;
-    if (!authUserId) throw new Error('No se pudo crear el usuario de autenticación.');
+    let authUserId = authData.user?.id || null;
+    let authUserCreated = Boolean(authUserId);
+    let authLinkType: CreatedCloudAdminUser['authLinkType'] = 'created';
+    let passwordToReturn: string | null = tempPassword;
+
+    if (authError) {
+        if (!isDuplicateAuthEmailError(authError)) throw authError;
+
+        const existingAuthUser = await findAuthUserByEmail(email);
+        if (!existingAuthUser?.id) throw authError;
+
+        const { error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(
+            existingAuthUser.id,
+            buildCloudAdminAuthMetadata(profile, input, existingAuthUser),
+        );
+        if (updateAuthError) throw updateAuthError;
+
+        authUserId = existingAuthUser.id;
+        authUserCreated = false;
+        authLinkType = 'linked_existing';
+        passwordToReturn = null;
+    }
+
+    if (!authUserId) throw new Error('No se pudo resolver el usuario de autenticación.');
 
     const { data, error } = await supabaseAdmin
         .from('cloud_admin_users')
@@ -216,6 +287,7 @@ export async function createCloudAdminUser(input: CreateCloudAdminUserInput): Pr
             status: input.status,
             metadata: {
                 created_from: 'cloud_admin',
+                auth_link_type: authLinkType,
                 profile_code: profile.code,
             },
         })
@@ -223,11 +295,13 @@ export async function createCloudAdminUser(input: CreateCloudAdminUserInput): Pr
         .single();
 
     if (error) {
-        await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        if (authUserCreated) {
+            await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        }
         throw error;
     }
 
-    return { user: { ...(data as CloudAdminUser), profile }, tempPassword };
+    return { user: { ...(data as CloudAdminUser), profile }, tempPassword: passwordToReturn, authLinkType };
 }
 
 export async function updateCloudAdminUser(userId: string, input: UpdateCloudAdminUserInput): Promise<CloudAdminUser> {
@@ -251,20 +325,9 @@ export async function updateCloudAdminUser(userId: string, input: UpdateCloudAdm
     const user = data as CloudAdminUser;
 
     if (user.auth_user_id) {
+        const authUser = await getAuthUserById(user.auth_user_id);
         const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(user.auth_user_id, {
-            user_metadata: {
-                full_name: input.fullName.trim(),
-                phone: input.phone?.trim() || null,
-                cloud_admin: true,
-            },
-            app_metadata: {
-                cloud_admin: true,
-                cloud_admin_profile_id: profile.id,
-                cloud_admin_profile_code: profile.code,
-                cloud_admin_level: profile.level,
-                cloud_admin_permissions: normalizePermissions(profile.permissions || {}),
-                cloud_admin_status: input.status,
-            },
+            ...buildCloudAdminAuthMetadata(profile, input, authUser),
         });
         if (authError) throw authError;
     }
@@ -280,7 +343,10 @@ export async function deleteCloudAdminUser(user: CloudAdminUser): Promise<void> 
 
     if (error) throw error;
 
-    if (user.auth_user_id) {
+    const authLinkType = user.metadata?.auth_link_type;
+    const wasCreatedByCloudAdmin = user.metadata?.created_from === 'cloud_admin' && authLinkType !== 'linked_existing';
+
+    if (user.auth_user_id && wasCreatedByCloudAdmin) {
         const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(user.auth_user_id);
         if (authError) throw authError;
     }

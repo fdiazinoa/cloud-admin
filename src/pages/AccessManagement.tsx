@@ -36,7 +36,7 @@ export const AccessManagement: React.FC = () => {
     const [editingUser, setEditingUser] = useState<CloudAdminUser | null>(null);
     const [profileForm, setProfileForm] = useState(defaultProfileForm);
     const [userForm, setUserForm] = useState(defaultUserForm);
-    const [newPassword, setNewPassword] = useState<string | null>(null);
+    const [userNotice, setUserNotice] = useState<{ title: string; message: string; tempPassword?: string | null } | null>(null);
 
     const activeProfiles = useMemo(() => profiles.filter((profile) => profile.is_active), [profiles]);
     const stats = useMemo(() => ({
@@ -128,13 +128,24 @@ export const AccessManagement: React.FC = () => {
     const saveUser = async (event: React.FormEvent) => {
         event.preventDefault();
         setSaving(true);
-        setNewPassword(null);
+        setUserNotice(null);
         try {
             if (editingUser) {
                 await accessService.updateCloudAdminUser(editingUser.id, userForm);
             } else {
                 const result = await accessService.createCloudAdminUser(userForm);
-                setNewPassword(result.tempPassword);
+                if (result.authLinkType === 'linked_existing') {
+                    setUserNotice({
+                        title: 'Usuario vinculado',
+                        message: 'El email ya existía en Auth; se vinculó al perfil Cloud-Admin sin cambiar su clave actual.',
+                    });
+                } else {
+                    setUserNotice({
+                        title: 'Usuario creado',
+                        message: 'Comparte esta clave temporal para el primer acceso.',
+                        tempPassword: result.tempPassword,
+                    });
+                }
             }
             resetUserForm();
             await loadAccess();
@@ -165,7 +176,7 @@ export const AccessManagement: React.FC = () => {
     };
 
     const deleteUser = async (user: CloudAdminUser) => {
-        if (!confirm(`Eliminar el usuario ${user.email}? Esta acción también elimina su acceso Auth.`)) return;
+        if (!confirm(`Eliminar el acceso Cloud-Admin de ${user.email}? Si el usuario fue creado desde este módulo también se eliminará su Auth; si ya existía en ERP solo se desvincula de Cloud-Admin.`)) return;
         setSaving(true);
         try {
             await accessService.deleteCloudAdminUser(user);
@@ -189,8 +200,8 @@ export const AccessManagement: React.FC = () => {
     };
 
     const copyPassword = async () => {
-        if (!newPassword) return;
-        await navigator.clipboard.writeText(newPassword);
+        if (!userNotice?.tempPassword) return;
+        await navigator.clipboard.writeText(userNotice.tempPassword);
     };
 
     return (
@@ -221,20 +232,25 @@ export const AccessManagement: React.FC = () => {
                     <Metric label="Alto acceso" value={stats.highAccess} tone="amber" />
                 </div>
 
-                {newPassword ? (
+                {userNotice ? (
                     <div className="flex flex-col gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
                         <div>
-                            <p className="text-sm font-black text-emerald-800">Usuario creado</p>
-                            <p className="text-xs text-emerald-700">Clave temporal: <span className="font-mono font-bold">{newPassword}</span></p>
+                            <p className="text-sm font-black text-emerald-800">{userNotice.title}</p>
+                            <p className="text-xs text-emerald-700">
+                                {userNotice.message}
+                                {userNotice.tempPassword ? <> Clave temporal: <span className="font-mono font-bold">{userNotice.tempPassword}</span></> : null}
+                            </p>
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => void copyPassword()}
-                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
-                        >
-                            <Copy size={14} />
-                            Copiar clave
-                        </button>
+                        {userNotice.tempPassword ? (
+                            <button
+                                type="button"
+                                onClick={() => void copyPassword()}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700"
+                            >
+                                <Copy size={14} />
+                                Copiar clave
+                            </button>
+                        ) : null}
                     </div>
                 ) : null}
 
