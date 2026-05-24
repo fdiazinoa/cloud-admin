@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb } from 'lucide-react';
+import { LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
 
 const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -9,6 +9,7 @@ const navItems = [
     { path: '/support', label: 'Helpdesk & Soporte', icon: Headset },
     { path: '/mejoras', label: 'Mejoras solicitadas', icon: Lightbulb },
     { path: '/configuracion', label: 'Configuración', icon: Settings },
+    { path: '/accesos', label: 'Usuarios y perfiles', icon: UserCog },
     { path: '/kill-switch', label: 'Kill Switch', icon: ShieldPlus },
 ];
 
