@@ -719,6 +719,9 @@ export const Tenants: React.FC = () => {
     const masterTerminalCount = registryTerminals.filter((terminal) => terminal.registry?.is_primary && getRegistryStatusLabel(terminal) === 'ONLINE').length;
     const clientTerminalCount = registryTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
     const publishedEndpointCount = registryTerminals.filter((terminal) => Boolean(terminal.registry)).length;
+    const terminalLicenseLimit = selectedTenantForTerminals?.max_pos_terminals;
+    const activeLicensedTerminalCount = masterTerminalCount > 0 ? masterTerminalCount : onlineTerminalCount;
+    const isTerminalLicenseOverLimit = typeof terminalLicenseLimit === 'number' && activeLicensedTerminalCount > terminalLicenseLimit;
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -1058,15 +1061,18 @@ export const Tenants: React.FC = () => {
 
                         <div className="p-6 overflow-y-auto space-y-6">
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                <div className={`rounded-2xl border px-4 py-4 ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
-                                    <p className={`text-xs font-bold uppercase tracking-wider ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'text-red-700' : 'text-slate-500'}`}>Terminales listadas</p>
-                                    <p className={`mt-2 text-3xl font-black ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'text-red-700' : 'text-slate-800'}`}>
-                                        {tenantTerminals.length}
-                                        {typeof selectedTenantForTerminals.max_pos_terminals === 'number' && (
-                                            <span className={`text-sm font-bold ml-2 ${tenantTerminals.length > selectedTenantForTerminals.max_pos_terminals ? 'text-red-500' : 'text-slate-400'}`}>
-                                                / {selectedTenantForTerminals.max_pos_terminals} permitidas
+                                <div className={`rounded-2xl border px-4 py-4 ${isTerminalLicenseOverLimit ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                                    <p className={`text-xs font-bold uppercase tracking-wider ${isTerminalLicenseOverLimit ? 'text-red-700' : 'text-slate-500'}`}>Licencia POS</p>
+                                    <p className={`mt-2 text-3xl font-black ${isTerminalLicenseOverLimit ? 'text-red-700' : 'text-slate-800'}`}>
+                                        {activeLicensedTerminalCount}
+                                        {typeof terminalLicenseLimit === 'number' && (
+                                            <span className={`text-sm font-bold ml-2 ${isTerminalLicenseOverLimit ? 'text-red-500' : 'text-slate-400'}`}>
+                                                / {terminalLicenseLimit} permitida{terminalLicenseLimit === 1 ? '' : 's'}
                                             </span>
                                         )}
+                                    </p>
+                                    <p className="mt-2 text-[11px] font-semibold text-slate-500">
+                                        {tenantTerminals.length} grupo(s) listados · {publishedEndpointCount} registro(s)
                                     </p>
                                 </div>
                                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
