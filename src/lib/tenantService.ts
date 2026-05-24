@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin } from "./supabase";
+import { supabase, supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from "./supabase";
 import type {
     Distributor,
     Tenant,
@@ -85,6 +85,25 @@ function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | n
     if (haystack.includes("phone")) return "phone";
 
     return null;
+}
+
+export interface RequestTerminalTakeoverInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    newDeviceId: string;
+    deviceName?: string;
+    reason: string;
+    confirmTakeover: boolean;
+}
+
+export interface TerminalTakeoverResult {
+    status: string;
+    terminal?: unknown;
+    previous_device_id?: string | null;
+    new_device_id?: string;
+    requires_auth?: boolean;
+    message?: string;
 }
 
 export async function createTenant(input: CreateTenantInput): Promise<{ tenantId: string; tempPassword: string }> {
@@ -376,6 +395,35 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     });
 }
 
+export async function requestTerminalTakeover(input: RequestTerminalTakeoverInput): Promise<TerminalTakeoverResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-takeover`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            device_id: input.newDeviceId,
+            device_name: input.deviceName || null,
+            reason: input.reason,
+            confirm_takeover: input.confirmTakeover,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo ejecutar la recuperacion de terminal.");
+    }
+
+    return (payload || { status: "success" }) as TerminalTakeoverResult;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
         supabaseAdmin.from("tenants").select("id,name,status,created_at"),
@@ -657,6 +705,7 @@ export const tenantService = {
     deleteTenant,
     getDistributors,
     getTenantTerminalOverview,
+    requestTerminalTakeover,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
