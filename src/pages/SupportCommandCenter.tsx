@@ -6,6 +6,8 @@ import {
     ExternalLink,
     Image as ImageIcon,
     Link2,
+    Lightbulb,
+    Loader2,
     Mail,
     MessageSquare,
     MonitorSmartphone,
@@ -22,6 +24,7 @@ import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../li
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
 
 type Sentiment = 'frustrated' | 'neutral' | 'positive';
+type ImprovementPriority = 'Baja' | 'Media' | 'Alta' | 'Critica';
 
 interface TechnicalContext {
     app_version?: string;
@@ -109,6 +112,14 @@ interface ContactFormState {
     sla: string;
 }
 
+interface ImprovementDraft {
+    title: string;
+    requestedCapability: string;
+    affectedModule: string;
+    customerImpact: string;
+    priority: ImprovementPriority;
+}
+
 interface DraftResponse {
     draft?: string;
     error?: string;
@@ -149,6 +160,14 @@ const emptyContactForm: ContactFormState = {
     email: '',
     companyName: '',
     sla: 'standard',
+};
+
+const initialImprovementDraft: ImprovementDraft = {
+    title: '',
+    requestedCapability: '',
+    affectedModule: '',
+    customerImpact: '',
+    priority: 'Media',
 };
 
 const slaLabels: Record<string, string> = {
@@ -203,6 +222,16 @@ function getTicketNumberLabel(ticket: Ticket) {
 
 function getTicketRecipientEmail(ticket: Ticket) {
     return ticket.contact?.email || ticket.external_sender_email || '';
+}
+
+function normalizeDuplicateKey(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80) || 'mejora-manual';
 }
 
 function normalizeMessageAttachments(value: unknown): MessageAttachment[] {
@@ -330,6 +359,11 @@ const SupportCommandCenter: React.FC = () => {
     const [isResolvingTicket, setIsResolvingTicket] = useState(false);
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
     const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
+    const [isImprovementModalOpen, setIsImprovementModalOpen] = useState(false);
+    const [isSavingImprovement, setIsSavingImprovement] = useState(false);
+    const [improvementDraft, setImprovementDraft] = useState<ImprovementDraft>(initialImprovementDraft);
+    const [improvementError, setImprovementError] = useState<string | null>(null);
+    const [improvementNotice, setImprovementNotice] = useState<string | null>(null);
     const messagesPaneRef = useRef<HTMLDivElement>(null);
     const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -743,6 +777,146 @@ const SupportCommandCenter: React.FC = () => {
         } finally {
             setIsGeneratingDraft(false);
         }
+    };
+
+    const openImprovementModal = () => {
+        if (!selectedTicket) return;
+
+        const lastClientMessage = [...messages].reverse().find((message) => message.sender_type === 'Client');
+        setImprovementDraft({
+            title: selectedTicket.subject,
+            requestedCapability: lastClientMessage?.message || selectedTicket.subject,
+            affectedModule: selectedTicket.insight?.affected_module || selectedTicket.category || '',
+            customerImpact: '',
+            priority: selectedTicket.priority === 'Critica' ? 'Alta' : 'Media',
+        });
+        setImprovementError(null);
+        setImprovementNotice(null);
+        setIsImprovementModalOpen(true);
+    };
+
+    const closeImprovementModal = () => {
+        if (isSavingImprovement) return;
+        setIsImprovementModalOpen(false);
+        setImprovementDraft(initialImprovementDraft);
+        setImprovementError(null);
+    };
+
+    const updateImprovementDraft = <K extends keyof ImprovementDraft>(field: K, value: ImprovementDraft[K]) => {
+        setImprovementDraft((current) => ({ ...current, [field]: value }));
+    };
+
+    const handleCreateImprovement = async () => {
+        if (!selectedTicket) return;
+
+        const title = improvementDraft.title.trim();
+        const requestedCapability = improvementDraft.requestedCapability.trim();
+        const affectedModule = improvementDraft.affectedModule.trim();
+        const customerImpact = improvementDraft.customerImpact.trim();
+
+        if (!title || !requestedCapability) {
+            setImprovementError('Completa el titulo y la solicitud antes de registrarla.');
+            return;
+        }
+
+        setIsSavingImprovement(true);
+        setImprovementError(null);
+
+        const duplicateGroupKey = normalizeDuplicateKey(`${selectedTicket.id}-${title}`);
+        const payload = {
+            ticket_id: selectedTicket.id,
+            tenant_id: selectedTicket.tenant_id,
+            contact_id: selectedTicket.contact?.id,
+            source: 'HelpDesk manual',
+            status: 'Nueva',
+            priority: improvementDraft.priority,
+            title,
+            request_text: requestedCapability,
+            ai_summary: null,
+            requested_capability: requestedCapability,
+            affected_module: affectedModule || selectedTicket.insight?.affected_module || selectedTicket.category,
+            customer_impact: customerImpact || 'Registrada manualmente desde HelpDesk para evaluacion de producto.',
+            duplicate_group_key: duplicateGroupKey,
+            ai_confidence: null,
+            detected_by_ai: false,
+        };
+
+        let improvementId: string | null = null;
+        let alreadyExisted = false;
+
+        const { data: existing, error: existingError } = await supabaseAdmin
+            .from('customer_improvement_requests')
+            .select('id')
+            .eq('ticket_id', selectedTicket.id)
+            .eq('duplicate_group_key', duplicateGroupKey)
+            .maybeSingle();
+
+        if (existingError) {
+            console.error('Admin: error checking duplicate customer improvement', existingError);
+            setImprovementError('No se pudo validar si la mejora ya existia.');
+            setIsSavingImprovement(false);
+            return;
+        }
+
+        if (existing?.id) {
+            improvementId = existing.id;
+            alreadyExisted = true;
+        } else {
+            const { data: inserted, error: insertError } = await supabaseAdmin
+                .from('customer_improvement_requests')
+                .insert(payload)
+                .select('id')
+                .single();
+
+            if (insertError) {
+                console.error('Admin: error creating customer improvement', insertError);
+                setImprovementError('No se pudo registrar la mejora solicitada.');
+                setIsSavingImprovement(false);
+                return;
+            }
+
+            improvementId = inserted.id;
+        }
+
+        const message = alreadyExisted
+            ? `Confirmamos que tu solicitud "${title}" ya estaba registrada como mejora funcional para evaluacion del equipo de producto. Te avisaremos cuando tengamos una decision o avance.`
+            : `Registramos tu solicitud "${title}" como mejora funcional para evaluacion del equipo de producto. Te avisaremos cuando tengamos una decision o avance.`;
+
+        const { error: messageError } = await supabaseAdmin.from('ticket_messages').insert({
+            ticket_id: selectedTicket.id,
+            message,
+            sender_type: 'Admin',
+            attachments: {
+                channel: 'customer_improvement',
+                event: alreadyExisted ? 'customer_improvement_already_registered' : 'customer_improvement_registered',
+                improvement_request_id: improvementId,
+                manual: true,
+                notify_client: true,
+                notification: {
+                    badge: true,
+                    increment_unread: true,
+                    play_sound: true,
+                    sound: 'support-improvement-registered',
+                    title: 'Solicitud registrada como mejora',
+                    body: message,
+                },
+                client_alert: {
+                    badge: true,
+                    increment_unread: true,
+                },
+            },
+        });
+
+        if (messageError) {
+            console.error('Admin: error notifying customer improvement', messageError);
+            setImprovementNotice('La mejora fue registrada, pero no se pudo insertar la notificacion en el ticket.');
+        } else {
+            setImprovementNotice(alreadyExisted ? 'La mejora ya existia; se notifico al cliente.' : 'Mejora registrada y cliente notificado.');
+            setIsImprovementModalOpen(false);
+            setImprovementDraft(initialImprovementDraft);
+        }
+
+        setIsSavingImprovement(false);
     };
 
     return (
@@ -1171,6 +1345,13 @@ const SupportCommandCenter: React.FC = () => {
                         <section>
                             <h4 className="mb-2 text-xs font-semibold text-slate-500">Acciones rápidas</h4>
                             <div className="space-y-2">
+                                <button
+                                    onClick={openImprovementModal}
+                                    className="flex w-full items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs font-medium text-amber-800 hover:bg-amber-100"
+                                >
+                                    Marcar como mejora
+                                    <Lightbulb size={13} />
+                                </button>
                                 <button className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-600 hover:bg-slate-50">
                                     Forzar Sync Inbox
                                     <Link2 size={13} />
@@ -1183,6 +1364,121 @@ const SupportCommandCenter: React.FC = () => {
                         </section>
                     </div>
                 </aside>
+            )}
+
+            {isImprovementModalOpen && selectedTicket && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+                    <div className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+                            <div>
+                                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">
+                                    <Lightbulb size={14} />
+                                    Mejora solicitada
+                                </div>
+                                <h2 className="text-lg font-black text-slate-900">Enviar caso a mejoras</h2>
+                                <p className="mt-1 text-sm text-slate-500">Se creara una oportunidad vinculada al ticket y se notificara al cliente.</p>
+                            </div>
+                            <button
+                                onClick={closeImprovementModal}
+                                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"
+                                aria-label="Cerrar"
+                                type="button"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4 p-5">
+                            <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Titulo</span>
+                                    <input
+                                        value={improvementDraft.title}
+                                        onChange={(event) => updateImprovementDraft('title', event.target.value)}
+                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                        placeholder="Ej. Promociones por forma de pago"
+                                    />
+                                </label>
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Prioridad</span>
+                                    <select
+                                        value={improvementDraft.priority}
+                                        onChange={(event) => updateImprovementDraft('priority', event.target.value as ImprovementPriority)}
+                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    >
+                                        <option value="Baja">Baja</option>
+                                        <option value="Media">Media</option>
+                                        <option value="Alta">Alta</option>
+                                        <option value="Critica">Critica</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Modulo afectado</span>
+                                <input
+                                    value={improvementDraft.affectedModule}
+                                    onChange={(event) => updateImprovementDraft('affectedModule', event.target.value)}
+                                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    placeholder="ERP, POS, Promociones, Activos fijos..."
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Solicitud del cliente</span>
+                                <textarea
+                                    value={improvementDraft.requestedCapability}
+                                    onChange={(event) => updateImprovementDraft('requestedCapability', event.target.value)}
+                                    rows={4}
+                                    className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    placeholder="Describe lo que el cliente esta solicitando..."
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Impacto operativo</span>
+                                <textarea
+                                    value={improvementDraft.customerImpact}
+                                    onChange={(event) => updateImprovementDraft('customerImpact', event.target.value)}
+                                    rows={3}
+                                    className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    placeholder="Ej. Evita doble digitacion, reduce errores, desbloquea cierre de caja..."
+                                />
+                            </label>
+
+                            {improvementError && (
+                                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                                    {improvementError}
+                                </div>
+                            )}
+                            {improvementNotice && (
+                                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">
+                                    {improvementNotice}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+                            <button
+                                onClick={closeImprovementModal}
+                                disabled={isSavingImprovement}
+                                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                type="button"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleCreateImprovement}
+                                disabled={isSavingImprovement}
+                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                type="button"
+                            >
+                                {isSavingImprovement ? <Loader2 className="animate-spin" size={16} /> : <Lightbulb size={16} />}
+                                Registrar y notificar
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {isContactModalOpen && selectedTicket && (
