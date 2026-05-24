@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle, Trash2, RefreshCcw } from 'lucide-react';
-import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
+import type { Distributor, Tenant, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import {
@@ -37,6 +37,7 @@ export const Tenants: React.FC = () => {
     const [rebuildTerminal, setRebuildTerminal] = useState<TenantTerminalSnapshot | null>(null);
     const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
     const [isRebuildSubmitting, setIsRebuildSubmitting] = useState(false);
+    const [erpReadinessSubmittingKey, setErpReadinessSubmittingKey] = useState<string | null>(null);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
@@ -294,6 +295,69 @@ export const Tenants: React.FC = () => {
         || ''
     );
 
+    const getTerminalKey = (terminal: TenantTerminalSnapshot) => `${terminal.id}-${terminal.registry?.id || 'catalog'}`;
+
+    const getReadinessValue = (readiness: TenantTerminalErpReadiness | null | undefined, keys: string[]) => {
+        if (!readiness) return null;
+        for (const key of keys) {
+            const value = readiness[key];
+            if (typeof value === 'string' && value.trim()) return value.trim();
+            if (typeof value === 'number') return String(value);
+        }
+        return null;
+    };
+
+    const getReadinessCheckValue = (readiness: TenantTerminalErpReadiness | null | undefined, keys: string[]) => {
+        const checks = readiness?.checks;
+        if (!checks || typeof checks !== 'object') return null;
+
+        for (const key of keys) {
+            const value = checks[key];
+            if (typeof value === 'boolean') return value;
+            if (typeof value === 'number') return value > 0;
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                if (['true', 'ready', 'active', 'available', 'ok', 'yes'].includes(normalized)) return true;
+                if (['false', 'missing', 'draft', 'empty', 'no'].includes(normalized)) return false;
+            }
+            if (value && typeof value === 'object') {
+                const record = value as Record<string, unknown>;
+                const ready = record.ready ?? record.exists ?? record.available ?? record.enabled;
+                if (typeof ready === 'boolean') return ready;
+                const count = record.count ?? record.total;
+                if (typeof count === 'number') return count > 0;
+            }
+        }
+
+        return null;
+    };
+
+    const getErpReadinessStatus = (terminal: TenantTerminalSnapshot) => (
+        terminal.registry?.erp_readiness?.status?.toString().toLowerCase() || 'missing'
+    );
+
+    const getReadinessBadgeClasses = (status: string) => {
+        if (status === 'ready') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        if (status === 'pending') return 'border-blue-200 bg-blue-50 text-blue-700';
+        if (status === 'missing_catalog') return 'border-amber-200 bg-amber-50 text-amber-700';
+        if (status === 'error') return 'border-red-200 bg-red-50 text-red-700';
+        return 'border-slate-200 bg-slate-50 text-slate-600';
+    };
+
+    const getReadinessLabel = (status: string) => {
+        if (status === 'ready') return 'ERP listo';
+        if (status === 'pending') return 'ERP pendiente';
+        if (status === 'missing_catalog') return 'Catalogo faltante';
+        if (status === 'error') return 'ERP con error';
+        return 'ERP sin validar';
+    };
+
+    const getCheckLabel = (value: boolean | null, readyLabel: string, missingLabel: string) => {
+        if (value === true) return readyLabel;
+        if (value === false) return missingLabel;
+        return 'N/D';
+    };
+
     const openTakeoverModal = (terminal: TenantTerminalSnapshot) => {
         setTakeoverTerminal(terminal);
         setTakeoverFormData({
@@ -334,6 +398,52 @@ export const Tenants: React.FC = () => {
             reason: '',
             confirmRebuild: false,
         });
+    };
+
+    const requestErpReadinessForTerminal = async (
+        terminal: TenantTerminalSnapshot,
+        options?: { deviceId?: string; terminalName?: string; silent?: boolean },
+    ) => {
+        if (!selectedTenantForTerminals) return null;
+
+        const terminalId = getTerminalTakeoverId(terminal);
+        const deviceId = options?.deviceId || getTerminalCurrentDeviceId(terminal);
+
+        if (!terminalId || !deviceId) {
+            if (!options?.silent) {
+                alert('Esta terminal necesita terminal_id y device_id antes de preparar el contexto ERP.');
+            }
+            return null;
+        }
+
+        const result = await tenantService.requestTerminalErpReadiness({
+            tenantId: selectedTenantForTerminals.id,
+            terminalId,
+            registryId: terminal.registry?.id || null,
+            deviceId,
+            terminalName: options?.terminalName || terminal.name,
+        });
+
+        const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+        setTenantTerminals(data);
+        return result;
+    };
+
+    const handleRetryErpReadiness = async (terminal: TenantTerminalSnapshot) => {
+        const key = getTerminalKey(terminal);
+        setErpReadinessSubmittingKey(key);
+
+        try {
+            const result = await requestErpReadinessForTerminal(terminal);
+            alert(result?.message || (result?.status === 'ready'
+                ? 'Contexto ERP listo para operar.'
+                : 'POS vinculado, pero el contexto ERP aun no esta listo.'));
+        } catch (err: unknown) {
+            console.error('Error requesting POS ERP readiness:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setErpReadinessSubmittingKey(null);
+        }
     };
 
     const handleTakeoverTerminalChange = (terminalId: string) => {
@@ -385,7 +495,21 @@ export const Tenants: React.FC = () => {
                 reason,
                 confirmTakeover: takeoverFormData.confirmTakeover,
             });
-            alert(result.message || 'Terminal reasignada correctamente. La tablet anterior fue revocada. Inicia sesion/autentica la nueva tablet para continuar.');
+            let readinessMessage = '';
+            try {
+                const readiness = await requestErpReadinessForTerminal(takeoverTerminal, {
+                    deviceId: newDeviceId,
+                    terminalName: takeoverFormData.deviceName.trim() || takeoverTerminal.name,
+                    silent: true,
+                });
+                readinessMessage = readiness?.status === 'ready'
+                    ? '\n\nContexto ERP listo para operar.'
+                    : '\n\nPOS vinculado, pero el contexto ERP aun no esta listo.';
+            } catch (readinessError) {
+                console.warn('Terminal takeover completed but ERP readiness failed:', readinessError);
+                readinessMessage = '\n\nLa terminal fue reasignada, pero no se pudo validar el contexto ERP.';
+            }
+            alert(`${result.message || 'Terminal reasignada correctamente. La tablet anterior fue revocada. Inicia sesion/autentica la nueva tablet para continuar.'}${readinessMessage}`);
             closeTakeoverModal();
             const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
             setTenantTerminals(data);
@@ -434,7 +558,17 @@ export const Tenants: React.FC = () => {
                 reason,
                 confirmRebuild: rebuildFormData.confirmRebuild,
             });
-            alert(result.message || 'Reconstruccion local preparada. El POS debera descargar nuevamente su estado desde el ERP sin cambiar de dispositivo.');
+            let readinessMessage = '';
+            try {
+                const readiness = await requestErpReadinessForTerminal(rebuildTerminal, { silent: true });
+                readinessMessage = readiness?.status === 'ready'
+                    ? '\n\nContexto ERP listo para operar.'
+                    : '\n\nPOS vinculado, pero el contexto ERP aun no esta listo.';
+            } catch (readinessError) {
+                console.warn('Local rebuild completed but ERP readiness failed:', readinessError);
+                readinessMessage = '\n\nLa reconstruccion fue preparada, pero no se pudo validar el contexto ERP.';
+            }
+            alert(`${result.message || 'Reconstruccion local preparada. El POS debera descargar nuevamente su estado desde el ERP sin cambiar de dispositivo.'}${readinessMessage}`);
             closeRebuildModal();
             const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
             setTenantTerminals(data);
@@ -577,6 +711,7 @@ export const Tenants: React.FC = () => {
     const missingVersionCount = tenantTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
     const onlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
     const offlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
+    const erpReadyTerminalCount = tenantTerminals.filter((terminal) => getErpReadinessStatus(terminal) === 'ready').length;
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -901,7 +1036,7 @@ export const Tenants: React.FC = () => {
                         </div>
 
                         <div className="p-6 overflow-y-auto space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Terminales listadas</p>
                                     <p className="mt-2 text-3xl font-black text-slate-800">{tenantTerminals.length}</p>
@@ -917,6 +1052,10 @@ export const Tenants: React.FC = () => {
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Endpoints Offline / sin reporte</p>
                                     <p className="mt-2 text-3xl font-black text-slate-800">{Math.max(tenantTerminals.length - onlineTerminalCount, offlineTerminalCount)}</p>
+                                </div>
+                                <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-blue-700">ERP listo</p>
+                                    <p className="mt-2 text-3xl font-black text-blue-700">{erpReadyTerminalCount}</p>
                                 </div>
                             </div>
 
@@ -949,6 +1088,15 @@ export const Tenants: React.FC = () => {
                                         const terminalVersionKey = getApkVersionKey(terminal);
                                         const isOutOfVersion = Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
                                         const hasVersion = Boolean(terminalVersionKey);
+                                        const erpReadiness = terminal.registry?.erp_readiness || null;
+                                        const erpReadinessStatus = getErpReadinessStatus(terminal);
+                                        const erpTenantId = getReadinessValue(erpReadiness, ['erpTenantId', 'erp_tenant_id']);
+                                        const profileStatus = getReadinessValue(erpReadiness, ['profileStatus', 'profile_status']) || (erpReadinessStatus === 'ready' ? 'READY' : 'MISSING');
+                                        const catalogReady = getReadinessCheckValue(erpReadiness, ['catalog', 'catalogReady', 'catalog_ready', 'items', 'itemsReady', 'items_ready']);
+                                        const seriesReady = getReadinessCheckValue(erpReadiness, ['documentSeries', 'document_series', 'series', 'sequences', 'sequencesReady', 'sequences_ready']);
+                                        const lastSyncAt = getReadinessValue(erpReadiness, ['lastSyncEventAt', 'last_sync_event_at', 'lastSyncAt', 'last_sync_at']);
+                                        const lastSyncType = getReadinessValue(erpReadiness, ['lastSyncEventType', 'last_sync_event_type', 'lastSyncStatus', 'last_sync_status']);
+                                        const isReadinessSubmitting = erpReadinessSubmittingKey === getTerminalKey(terminal);
 
                                         return (
                                             <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
@@ -978,6 +1126,9 @@ export const Tenants: React.FC = () => {
                                                                     : 'bg-slate-100 text-slate-500'
                                                         }`}>
                                                             {isOutOfVersion ? 'Fuera de versión' : hasVersion ? 'Versión reportada' : 'Sin versión'}
+                                                        </span>
+                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
+                                                            {getReadinessLabel(erpReadinessStatus)}
                                                         </span>
                                                     </div>
                                                 </div>
@@ -1051,6 +1202,61 @@ export const Tenants: React.FC = () => {
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Creada</p>
                                                         <p className="mt-1 text-slate-700">{formatDateTime(terminal.created_at)}</p>
                                                     </div>
+                                                </div>
+
+                                                <div className={`mt-5 rounded-2xl border px-4 py-4 ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
+                                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                                        <div>
+                                                            <p className="text-xs font-bold uppercase tracking-wider">Preparacion ERP</p>
+                                                            <p className="mt-1 text-sm font-bold">{getReadinessLabel(erpReadinessStatus)}</p>
+                                                            {erpReadinessStatus !== 'ready' ? (
+                                                                <p className="mt-1 text-sm">
+                                                                    POS vinculado, pero el contexto ERP aun no esta listo.
+                                                                </p>
+                                                            ) : null}
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void handleRetryErpReadiness(terminal)}
+                                                            disabled={isReadinessSubmitting}
+                                                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                        >
+                                                            {isReadinessSubmitting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                            Reintentar preparacion ERP
+                                                        </button>
+                                                    </div>
+
+                                                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">ERP tenant</p>
+                                                            <p className="mt-1 font-mono break-all">{erpTenantId || 'No vinculado'}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal profile</p>
+                                                            <p className="mt-1 font-bold uppercase">{profileStatus}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Catalogo</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(catalogReady, 'Disponible', 'Vacio / faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Secuencias</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(seriesReady, 'Disponibles', 'Faltantes')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo evento sync</p>
+                                                            <p className="mt-1">
+                                                                {lastSyncAt ? formatDateTime(lastSyncAt) : 'N/D'}
+                                                                {lastSyncType ? <span className="font-mono"> · {lastSyncType}</span> : null}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+
+                                                    {erpReadiness?.checked_at ? (
+                                                        <p className="mt-3 text-xs opacity-75">
+                                                            Ultima validacion ERP: {formatDateTime(erpReadiness.checked_at)}
+                                                        </p>
+                                                    ) : null}
                                                 </div>
 
                                                 {isLocalPosTenant(selectedTenantForTerminals) ? (
