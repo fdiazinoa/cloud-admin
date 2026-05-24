@@ -1,6 +1,14 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
 
+interface LayoutProps {
+    adminName?: string | null;
+    adminEmail?: string | null;
+    adminRole?: string | null;
+    signingOut?: boolean;
+    onSignOut: () => void;
+}
+
 const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/tenants', label: 'Tenants', icon: Users },
@@ -13,7 +21,17 @@ const navItems = [
     { path: '/kill-switch', label: 'Kill Switch', icon: ShieldPlus },
 ];
 
-export const Layout: React.FC = () => {
+function getInitials(name?: string | null, email?: string | null) {
+    const source = name?.trim() || email?.split('@')[0] || 'AD';
+    return source
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part.charAt(0).toUpperCase())
+        .join('') || 'AD';
+}
+
+export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole, signingOut = false, onSignOut }) => {
     return (
         <div className="bg-slate-50 text-slate-900 antialiased min-h-screen flex font-['Public_Sans']">
             {/* BEGIN: Navigation Sidebar */}
@@ -43,15 +61,20 @@ export const Layout: React.FC = () => {
                 </nav>
                 <div className="p-4 border-t border-slate-800">
                     <div className="flex items-center gap-3 p-2 bg-slate-800/50 rounded-xl mb-4">
-                        <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold">AD</div>
+                        <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold">{getInitials(adminName, adminEmail)}</div>
                         <div className="flex-1 overflow-hidden">
-                            <p className="text-xs font-semibold truncate">admin@clicpos.com</p>
-                            <p className="text-[10px] text-slate-400">Super Admin</p>
+                            <p className="text-xs font-semibold truncate">{adminEmail || 'Sin correo'}</p>
+                            <p className="text-[10px] text-slate-400 truncate">{adminRole || 'Cloud Admin'}</p>
                         </div>
                     </div>
-                    <button className="flex items-center gap-3 text-slate-400 hover:text-white w-full px-2 py-2 transition-colors text-sm font-medium">
+                    <button
+                        type="button"
+                        onClick={onSignOut}
+                        disabled={signingOut}
+                        className="flex items-center gap-3 text-slate-400 hover:text-white disabled:opacity-60 w-full px-2 py-2 transition-colors text-sm font-medium"
+                    >
                         <LogOut size={16} />
-                        <span>Cerrar Sesión</span>
+                        <span>{signingOut ? 'Cerrando...' : 'Cerrar Sesión'}</span>
                     </button>
                 </div>
             </aside>
