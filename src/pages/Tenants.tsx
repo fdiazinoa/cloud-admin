@@ -64,6 +64,7 @@ export const Tenants: React.FC = () => {
     });
     const [takeoverFormData, setTakeoverFormData] = useState({
         terminalId: '',
+        registryId: '',
         newDeviceId: '',
         deviceName: '',
         reason: '',
@@ -343,6 +344,41 @@ export const Tenants: React.FC = () => {
 
     const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => terminal.terminal_id || terminal.id;
 
+    const getTakeoverSelectionKey = (terminalId: string, registryId?: string | null) => (
+        registryId ? `registry:${registryId}` : `terminal:${terminalId}`
+    );
+
+    const getTakeoverOptions = () => tenantTerminals.flatMap((terminal) => {
+        const registries = terminal.registries?.length
+            ? terminal.registries
+            : terminal.registry
+                ? [terminal.registry]
+                : [];
+
+        if (registries.length === 0) {
+            const terminalId = getTerminalTakeoverId(terminal);
+            return [{
+                key: getTakeoverSelectionKey(terminalId),
+                terminal,
+                terminalId,
+                registryId: '',
+                label: `${terminal.name} · ${terminalId || 'Sin ID'} · ${terminal.device_token || 'N/D'}`,
+            }];
+        }
+
+        return registries.map((registry) => {
+            const terminalId = registry.terminal_id || getTerminalTakeoverId(terminal);
+            const deviceId = registry.current_device_id || registry.device_id || terminal.device_token || 'N/D';
+            return {
+                key: getTakeoverSelectionKey(terminalId, registry.id),
+                terminal: { ...terminal, registry },
+                terminalId,
+                registryId: registry.id || '',
+                label: `${terminal.name} · Terminal ${terminalId || 'Sin ID'} · ${deviceId}`,
+            };
+        });
+    });
+
     const getTerminalCurrentDeviceId = (terminal: TenantTerminalSnapshot) => (
         terminal.registry?.current_device_id
         || terminal.registry?.device_id
@@ -354,6 +390,7 @@ export const Tenants: React.FC = () => {
         setTakeoverTerminal(terminal);
         setTakeoverFormData({
             terminalId: getTerminalTakeoverId(terminal),
+            registryId: terminal.registry?.id || '',
             newDeviceId: '',
             deviceName: terminal.name || '',
             reason: '',
@@ -367,6 +404,7 @@ export const Tenants: React.FC = () => {
         setTakeoverTerminal(null);
         setTakeoverFormData({
             terminalId: '',
+            registryId: '',
             newDeviceId: '',
             deviceName: '',
             reason: '',
@@ -374,13 +412,14 @@ export const Tenants: React.FC = () => {
         });
     };
 
-    const handleTakeoverTerminalChange = (terminalId: string) => {
-        const selectedTerminal = tenantTerminals.find((terminal) => getTerminalTakeoverId(terminal) === terminalId) || null;
-        setTakeoverTerminal(selectedTerminal);
+    const handleTakeoverTerminalChange = (selectionKey: string) => {
+        const selectedOption = getTakeoverOptions().find((option) => option.key === selectionKey) || null;
+        setTakeoverTerminal(selectedOption?.terminal || null);
         setTakeoverFormData((current) => ({
             ...current,
-            terminalId,
-            deviceName: selectedTerminal?.name || current.deviceName,
+            terminalId: selectedOption?.terminalId || '',
+            registryId: selectedOption?.registryId || '',
+            deviceName: selectedOption?.terminal.name || current.deviceName,
         }));
     };
 
@@ -411,7 +450,7 @@ export const Tenants: React.FC = () => {
             const result = await tenantService.requestTerminalTakeover({
                 tenantId: selectedTenantForTerminals.id,
                 terminalId: takeoverFormData.terminalId,
-                registryId: takeoverTerminal.registry?.id || null,
+                registryId: takeoverFormData.registryId || takeoverTerminal.registry?.id || null,
                 newDeviceId,
                 deviceName: takeoverFormData.deviceName.trim() || undefined,
                 reason,
@@ -1210,18 +1249,15 @@ export const Tenants: React.FC = () => {
                                 <label className="block text-sm font-bold text-slate-700 mb-1">Terminal a recuperar <span className="text-red-500">*</span></label>
                                 <select
                                     required
-                                    value={takeoverFormData.terminalId}
+                                    value={getTakeoverSelectionKey(takeoverFormData.terminalId, takeoverFormData.registryId)}
                                     onChange={e => handleTakeoverTerminalChange(e.target.value)}
                                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
                                 >
-                                    {tenantTerminals.map((terminal) => {
-                                        const terminalId = getTerminalTakeoverId(terminal);
-                                        return (
-                                            <option key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} value={terminalId}>
-                                                {terminal.name} · {terminalId || 'Sin ID'}
-                                            </option>
-                                        );
-                                    })}
+                                    {getTakeoverOptions().map((option) => (
+                                        <option key={option.key} value={option.key}>
+                                            {option.label}
+                                        </option>
+                                    ))}
                                 </select>
                                 <p className="mt-2 text-xs text-slate-500">
                                     Dispositivo actual: <span className="font-mono">{getTerminalCurrentDeviceId(takeoverTerminal) || 'N/D'}</span>
