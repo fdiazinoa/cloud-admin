@@ -8,6 +8,7 @@ import { Configuration } from './pages/Configuration'
 import { PosApkReleases } from './pages/PosApkReleases'
 import SupportCommandCenter from './pages/SupportCommandCenter'
 import { CustomerImprovements } from './pages/CustomerImprovements'
+import { AccessManagement } from './pages/AccessManagement'
 
 function App() {
     return (
@@ -21,6 +22,7 @@ function App() {
                     <Route path="support" element={<SupportCommandCenter />} />
                     <Route path="mejoras" element={<CustomerImprovements />} />
                     <Route path="configuracion" element={<Configuration />} />
+                    <Route path="accesos" element={<AccessManagement />} />
                     <Route path="kill-switch" element={<KillSwitch />} />
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />

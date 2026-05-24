@@ -112,3 +112,48 @@ export interface Subscription {
     end_date?: string;
     is_active: boolean;
 }
+
+export type CloudAdminUserStatus = 'active' | 'invited' | 'suspended';
+
+export type CloudAdminPermissionKey =
+    | 'dashboard'
+    | 'tenants'
+    | 'plans'
+    | 'support'
+    | 'improvements'
+    | 'apk'
+    | 'terminal_recovery'
+    | 'billing'
+    | 'settings'
+    | 'kill_switch'
+    | 'users';
+
+export type CloudAdminPermissions = Record<CloudAdminPermissionKey, boolean>;
+
+export interface CloudAdminProfile {
+    id: string;
+    code: string;
+    name: string;
+    description?: string | null;
+    level: number;
+    permissions: Partial<CloudAdminPermissions>;
+    is_system: boolean;
+    is_active: boolean;
+    created_at: string;
+    updated_at?: string | null;
+}
+
+export interface CloudAdminUser {
+    id: string;
+    auth_user_id?: string | null;
+    email: string;
+    full_name: string;
+    profile_id?: string | null;
+    status: CloudAdminUserStatus;
+    phone?: string | null;
+    metadata?: Record<string, unknown> | null;
+    last_sign_in_at?: string | null;
+    created_at: string;
+    updated_at?: string | null;
+    profile?: CloudAdminProfile | null;
+}
