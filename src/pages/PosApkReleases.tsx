@@ -1,13 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+    Bug,
     CheckCircle2,
     Clipboard,
     Download,
     ExternalLink,
+    FileText,
+    ListChecks,
     Loader2,
     PackageCheck,
     Save,
     Smartphone,
+    Sparkles,
 } from 'lucide-react';
 import {
     buildDirectDownloadUrl,
@@ -22,7 +26,32 @@ const defaultForm = {
     apkUrl: '',
     checksumSha256: '',
     changelog: '',
+    releaseType: 'bugfix',
+    releaseStatus: 'available',
+    summary: '',
+    bugsFixed: '',
+    newFeatures: '',
+    internalChanges: '',
+    validationChecklist: '',
+    installNotes: '',
+    rolloutScope: 'Todos los tenants',
     isLatest: true,
+};
+
+const releaseTypeLabels: Record<string, string> = {
+    bugfix: 'Corrección de bugs',
+    feature: 'Nueva funcionalidad',
+    improvement: 'Mejora operativa',
+    hotfix: 'Hotfix urgente',
+    beta: 'Versión de prueba',
+};
+
+const releaseStatusLabels: Record<string, string> = {
+    draft: 'Borrador',
+    internal_testing: 'Prueba interna',
+    beta: 'Beta',
+    available: 'Disponible',
+    retired: 'Retirado',
 };
 
 function formatDateTime(value?: string | null) {
@@ -43,6 +72,50 @@ function getErrorMessage(error: unknown) {
     }
     return String(error);
 }
+
+function linesToList(value: string): string[] {
+    return value
+        .split('\n')
+        .map((line) => line.replace(/^[-*]\s*/, '').trim())
+        .filter(Boolean);
+}
+
+function listLabel(values?: string[] | null, empty = 'No registrado') {
+    const cleanValues = (values ?? []).filter(Boolean);
+    return cleanValues.length > 0 ? cleanValues : [empty];
+}
+
+const ReleaseList: React.FC<{
+    title: string;
+    items?: string[] | null;
+    icon: React.ElementType;
+    tone: 'rose' | 'emerald' | 'blue' | 'amber';
+    empty?: string;
+}> = ({ title, items, icon: Icon, tone, empty }) => {
+    const tones = {
+        rose: 'bg-rose-50 text-rose-700 border-rose-100',
+        emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+        blue: 'bg-blue-50 text-blue-700 border-blue-100',
+        amber: 'bg-amber-50 text-amber-700 border-amber-100',
+    };
+
+    return (
+        <div className={`rounded-2xl border px-4 py-3 ${tones[tone]}`}>
+            <div className="mb-2 flex items-center gap-2">
+                <Icon size={15} />
+                <p className="text-xs font-black uppercase tracking-widest">{title}</p>
+            </div>
+            <ul className="space-y-1 text-sm font-semibold leading-relaxed">
+                {listLabel(items, empty).map((item) => (
+                    <li key={item} className="flex gap-2">
+                        <span aria-hidden="true">-</span>
+                        <span>{item}</span>
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+};
 
 const CopyButton: React.FC<{ value: string; label?: string }> = ({ value, label = 'Copiar' }) => {
     const [copied, setCopied] = useState(false);
@@ -118,6 +191,15 @@ export const PosApkReleases: React.FC = () => {
                 apkUrl: form.apkUrl,
                 checksumSha256: form.checksumSha256,
                 changelog: form.changelog,
+                releaseType: form.releaseType,
+                releaseStatus: form.releaseStatus,
+                summary: form.summary,
+                bugsFixed: linesToList(form.bugsFixed),
+                newFeatures: linesToList(form.newFeatures),
+                internalChanges: linesToList(form.internalChanges),
+                validationChecklist: linesToList(form.validationChecklist),
+                installNotes: form.installNotes,
+                rolloutScope: form.rolloutScope,
                 isLatest: form.isLatest,
             });
 
@@ -218,6 +300,43 @@ export const PosApkReleases: React.FC = () => {
                                     <p className="mt-2 whitespace-pre-line text-sm font-medium leading-relaxed text-slate-700">{latestRelease.changelog}</p>
                                 </div>
                             ) : null}
+
+                            <div className="grid gap-3 lg:grid-cols-2">
+                                <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Tipo / estado</p>
+                                    <p className="mt-1 text-sm font-black text-slate-800">
+                                        {releaseTypeLabels[latestRelease.release_type || ''] || latestRelease.release_type || 'Sin clasificar'}
+                                    </p>
+                                    <p className="mt-1 text-xs font-bold text-slate-500">
+                                        {releaseStatusLabels[latestRelease.release_status || ''] || latestRelease.release_status || 'Estado no definido'}
+                                    </p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Alcance recomendado</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-700">{latestRelease.rollout_scope || 'Todos los tenants'}</p>
+                                </div>
+                            </div>
+
+                            {latestRelease.summary ? (
+                                <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Resumen soporte</p>
+                                    <p className="mt-2 text-sm font-medium leading-relaxed text-slate-700">{latestRelease.summary}</p>
+                                </div>
+                            ) : null}
+
+                            <div className="grid gap-3 lg:grid-cols-2">
+                                <ReleaseList title="Soluciona" items={latestRelease.bugs_fixed} icon={Bug} tone="rose" empty="No hay bugs documentados" />
+                                <ReleaseList title="Agrega" items={latestRelease.new_features} icon={Sparkles} tone="emerald" empty="No hay funciones nuevas documentadas" />
+                                <ReleaseList title="Cambios internos" items={latestRelease.internal_changes} icon={FileText} tone="blue" empty="No hay cambios internos documentados" />
+                                <ReleaseList title="Validación" items={latestRelease.validation_checklist} icon={ListChecks} tone="amber" empty="No hay checklist QA documentado" />
+                            </div>
+
+                            {latestRelease.install_notes ? (
+                                <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3">
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">Notas de instalación</p>
+                                    <p className="mt-2 whitespace-pre-line text-sm font-semibold leading-relaxed text-amber-900">{latestRelease.install_notes}</p>
+                                </div>
+                            ) : null}
                         </div>
                     ) : (
                         <div className="px-6 py-12 text-center text-sm font-medium text-slate-500">
@@ -275,6 +394,45 @@ export const PosApkReleases: React.FC = () => {
                             />
                         </label>
 
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Tipo</span>
+                                <select
+                                    value={form.releaseType}
+                                    onChange={(event) => updateForm('releaseType', event.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                >
+                                    {Object.entries(releaseTypeLabels).map(([value, label]) => (
+                                        <option key={value} value={value}>{label}</option>
+                                    ))}
+                                </select>
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Estado</span>
+                                <select
+                                    value={form.releaseStatus}
+                                    onChange={(event) => updateForm('releaseStatus', event.target.value)}
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                >
+                                    {Object.entries(releaseStatusLabels).map(([value, label]) => (
+                                        <option key={value} value={value}>{label}</option>
+                                    ))}
+                                </select>
+                            </label>
+                        </div>
+
+                        <label className="block">
+                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Resumen</span>
+                            <textarea
+                                value={form.summary}
+                                onChange={(event) => updateForm('summary', event.target.value)}
+                                rows={3}
+                                placeholder="Qué resuelve este APK y cuándo debe instalarse"
+                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                            />
+                        </label>
+
                         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">URL de descarga</p>
                             <p className="mt-1 break-all font-mono text-xs text-slate-600">{previewDownloadUrl || 'Pendiente'}</p>
@@ -298,6 +456,71 @@ export const PosApkReleases: React.FC = () => {
                                 rows={4}
                                 placeholder="Cambios importantes para soporte"
                                 className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                            />
+                        </label>
+
+                        <label className="block">
+                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Soluciona bugs</span>
+                            <textarea
+                                value={form.bugsFixed}
+                                onChange={(event) => updateForm('bugsFixed', event.target.value)}
+                                rows={4}
+                                placeholder={'Un punto por línea\nEj: Corrige sincronización de ventas al cierre Z'}
+                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                            />
+                        </label>
+
+                        <label className="block">
+                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Agrega funcionalidades</span>
+                            <textarea
+                                value={form.newFeatures}
+                                onChange={(event) => updateForm('newFeatures', event.target.value)}
+                                rows={4}
+                                placeholder={'Un punto por línea\nEj: Valida versión superior al iniciar POS'}
+                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                            />
+                        </label>
+
+                        <label className="block">
+                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Cambios internos</span>
+                            <textarea
+                                value={form.internalChanges}
+                                onChange={(event) => updateForm('internalChanges', event.target.value)}
+                                rows={3}
+                                placeholder={'Un punto por línea\nEj: Ajusta cola offline de sincronización'}
+                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                            />
+                        </label>
+
+                        <label className="block">
+                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Checklist QA</span>
+                            <textarea
+                                value={form.validationChecklist}
+                                onChange={(event) => updateForm('validationChecklist', event.target.value)}
+                                rows={4}
+                                placeholder={'Un punto por línea\nLogin\nVenta contado\nCierre Z\nSincronización cloud\ne-CF'}
+                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                            />
+                        </label>
+
+                        <label className="block">
+                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Notas de instalación</span>
+                            <textarea
+                                value={form.installNotes}
+                                onChange={(event) => updateForm('installNotes', event.target.value)}
+                                rows={3}
+                                placeholder="Ej: Sincronizar antes de actualizar. No reinstalar si hay ventas pendientes."
+                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                            />
+                        </label>
+
+                        <label className="block">
+                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Clientes recomendados</span>
+                            <input
+                                value={form.rolloutScope}
+                                onChange={(event) => updateForm('rolloutScope', event.target.value)}
+                                placeholder="Todos los tenants / Solo DigiFact / Beta testers"
+                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                             />
                         </label>
 
@@ -332,6 +555,7 @@ export const PosApkReleases: React.FC = () => {
                         <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
                             <tr>
                                 <th className="px-6 py-4">Versión</th>
+                                <th className="px-6 py-4">Release</th>
                                 <th className="px-6 py-4">Fecha</th>
                                 <th className="px-6 py-4">Estado</th>
                                 <th className="px-6 py-4 text-right">Acciones</th>
@@ -344,11 +568,22 @@ export const PosApkReleases: React.FC = () => {
                                         <p className="font-black text-slate-800">POS {release.version_name}</p>
                                         <p className="text-xs font-mono text-slate-400">Build {release.version_code}</p>
                                     </td>
+                                    <td className="px-6 py-4">
+                                        <p className="text-xs font-black uppercase text-slate-700">
+                                            {releaseTypeLabels[release.release_type || ''] || release.release_type || 'Sin clasificar'}
+                                        </p>
+                                        <p className="mt-1 max-w-xs truncate text-xs font-medium text-slate-500">
+                                            {release.summary || release.changelog || 'Sin resumen'}
+                                        </p>
+                                    </td>
                                     <td className="px-6 py-4 text-slate-600">{formatDateTime(release.published_at)}</td>
                                     <td className="px-6 py-4">
                                         <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ${release.is_latest ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                                             {release.is_latest ? 'Último' : 'Histórico'}
                                         </span>
+                                        <p className="mt-2 text-[10px] font-bold uppercase text-slate-400">
+                                            {releaseStatusLabels[release.release_status || ''] || release.release_status || 'Sin estado'}
+                                        </p>
                                     </td>
                                     <td className="px-6 py-4 text-right">
                                         <div className="flex justify-end gap-2">
@@ -368,7 +603,7 @@ export const PosApkReleases: React.FC = () => {
                             ))}
                             {releases.length === 0 && !loading ? (
                                 <tr>
-                                    <td colSpan={4} className="px-6 py-10 text-center text-sm font-medium text-slate-500">
+                                    <td colSpan={5} className="px-6 py-10 text-center text-sm font-medium text-slate-500">
                                         No hay releases registrados.
                                     </td>
                                 </tr>
