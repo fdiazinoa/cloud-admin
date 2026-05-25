@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
 
 interface LayoutProps {
@@ -32,6 +32,9 @@ function getInitials(name?: string | null, email?: string | null) {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole, signingOut = false, onSignOut }) => {
+    const location = useLocation();
+    const isImmersiveWorkspace = location.pathname === '/support';
+
     return (
         <div className="bg-slate-50 text-slate-900 antialiased min-h-screen flex font-['Public_Sans']">
             {/* BEGIN: Navigation Sidebar */}
@@ -81,7 +84,7 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
             {/* END: Navigation Sidebar */}
 
             {/* BEGIN: Main Content Container */}
-            <main className="flex-1 flex flex-col min-w-0 overflow-auto">
+            <main className={`flex min-w-0 flex-1 flex-col ${isImmersiveWorkspace ? 'min-h-0 overflow-hidden' : 'overflow-auto'}`}>
                 {/* BEGIN: Slim Header */}
                 <header className="h-16 border-b border-slate-200 bg-white/80 sticky top-0 z-10 flex items-center justify-between px-8 backdrop-blur-md">
                     <div className="flex items-center gap-4">
@@ -104,7 +107,7 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                 </header>
                 {/* END: Slim Header */}
                 
-                <div className="flex-1 overflow-auto p-0">
+                <div className={`flex-1 p-0 ${isImmersiveWorkspace ? 'min-h-0 overflow-hidden' : 'overflow-auto'}`}>
                     <Outlet />
                 </div>
             </main>
