@@ -105,6 +105,15 @@ const categoryMap: Record<string, TicketCategory> = {
 };
 
 const supportAttachmentsBucket = 'support-attachments';
+const clicProductExpertPrompt = [
+    'Eres un especialista senior de soporte de Clic-ERP y Clic-POS para comercios en Republica Dominicana.',
+    'Conoces operaciones reales de caja, cierre Z, ventas POS, sincronizacion cloud, e-CF/NCF, DGII/Digifact, inventario, productos, promociones, pagos, terminales Android, impresoras, red y usuarios del ERP.',
+    'Devuelve solo JSON estructurado y no inventes datos.',
+    'Las suggested_replies deben ser respuestas listas para enviar al cliente, en espanol claro y profesional.',
+    'Cada suggested_reply debe: mencionar el problema concreto, dar 2 a 4 pasos accionables, indicar que datos/captura enviar si no se resuelve, y evitar frases vagas como "estamos revisando" sin instrucciones.',
+    'Si no hay suficiente informacion para diagnosticar, pide datos exactos: empresa, usuario, terminal, version, folio/NCF/e-CF, cierre/caja, modulo, hora aproximada y captura del error.',
+    'No prometas cambios de producto ni cierres tickets; si parece solicitud de nueva funcion, clasificala como mejora solicitada y responde que se registrara para evaluacion.',
+].join(' ');
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), {
@@ -128,7 +137,7 @@ function describeError(error: unknown) {
 
         try {
             return JSON.stringify(record);
-        } catch (_) {
+        } catch {
             return String(error);
         }
     }
@@ -370,7 +379,7 @@ function buildThreadSubject(ticketNumber: number | string, subject: string) {
         .replace(ticketToken, '')
         .trim() || 'Solicitud técnica';
 
-    return `Re: ${ticketToken} ${cleanSubject}`;
+    return `${ticketToken} Re: ${cleanSubject}`;
 }
 
 function mergeEmailThreadContext(
@@ -422,6 +431,110 @@ function buildIncidentFingerprint(category: TicketCategory, affectedModule: stri
     return `${category}:${affectedModule ?? 'general'}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+function buildExpertSuggestedReplies(params: {
+    category: TicketCategory;
+    priority: TicketPriority;
+    subject: string;
+    body: string;
+    affectedModule?: string | null;
+}) {
+    const text = `${params.subject} ${params.body}`.toLowerCase();
+    const moduleLabel = params.affectedModule || params.category;
+    const isFeatureRequest = [
+        'necesito que',
+        'queremos que',
+        'seria bueno',
+        'sería bueno',
+        'me gustaria',
+        'me gustaría',
+        'opcion para',
+        'opción para',
+        'funcion para',
+        'función para',
+        'hace falta',
+    ].some((phrase) => text.includes(phrase));
+
+    if (isFeatureRequest) {
+        return [
+            `Hola, gracias por la sugerencia. Por lo que nos indicas, esto es una mejora funcional para Clic-ERP/Clic-POS en el area de ${moduleLabel}. La vamos a registrar para evaluacion de producto con el caso de uso, impacto operativo y prioridad. Para documentarla bien, envianos un ejemplo del flujo actual, que resultado esperas y si aplica a una sucursal, caja o usuario especifico.`,
+            `Hola, lo que solicitas parece una nueva capacidad del sistema, no un incidente tecnico. Vamos a dejarla registrada como mejora solicitada por cliente. Para poder evaluarla correctamente, por favor confirma: modulo donde la necesitas, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.`,
+        ];
+    }
+
+    if (params.category === 'Fiscal' || /e-cf|ecf|ncf|dgii|digifact|fiscal|comprobante|factura/.test(text)) {
+        return [
+            'Hola, revisemos el flujo fiscal en Clic-ERP/Clic-POS. Primero confirma que el comprobante tenga tipo NCF/e-CF correcto, RNC o consumidor final valido, secuencia disponible y que la terminal tenga internet estable. Luego intenta reenviar solo ese comprobante desde el historial de ventas/facturas. Si vuelve a fallar, envianos el folio, NCF/e-CF, hora exacta y captura del mensaje para validar respuesta de DGII/Digifact.',
+            'Hola, para este error fiscal evita recrear la venta hasta confirmar el estado del comprobante. Verifica si la factura quedo completada localmente, si aparece con e-CF pendiente/error y si hay conectividad en la caja. Con el folio, NCF/e-CF y captura podemos revisar si es rechazo de datos, secuencia, token/proveedor fiscal o sincronizacion.',
+        ];
+    }
+
+    if (params.category === 'Red' || /sync|sincron|internet|red|wifi|cloud|nube|enviar|subir/.test(text)) {
+        return [
+            'Hola, esto parece un caso de sincronizacion entre Clic-POS y Cloud/ERP. Por favor valida internet en la terminal, fecha/hora correcta del dispositivo y que no haya VPN o red bloqueando la salida. Luego fuerza sincronizacion desde el POS y confirma si las ventas quedan en cola o si alguna transaccion muestra error. Envianos hora del cierre/caja, usuario, terminal y una captura del estado de sync.',
+            'Hola, para proteger las ventas, no borres datos ni reinstales el POS. Primero confirma que las ventas esten visibles en el historial local y que el cierre Z exista. Despues intenta sincronizar con una red estable. Si no viajan al ERP, necesitamos terminal, version del POS, cantidad de transacciones pendientes, hora del cierre y ultimo error mostrado.',
+        ];
+    }
+
+    if (params.category === 'Hardware' || /impres|printer|terminal|tablet|scanner|bateria|batería/.test(text)) {
+        return [
+            'Hola, vamos a validar el hardware del POS. Confirma si el problema ocurre en una sola terminal o en todas, revisa conexion de la impresora/scanner, bateria y red, y prueba imprimir un recibo de prueba desde la configuracion del POS. Si falla, envianos modelo del equipo, terminal afectada, version del POS y foto/captura del error.',
+            'Hola, si el equipo no responde correctamente, primero reinicia la terminal y verifica que la impresora o scanner este emparejado/conectado. Luego prueba una venta pequena o reimpresion. Si el error continua, indicanos si afecta ventas, cocina, factura fiscal o solo impresion de recibos, para escalarlo con el modulo correcto.',
+        ];
+    }
+
+    if (params.category === 'Pagos' || /pago|tarjeta|cobro|credito|crédito|transferencia/.test(text)) {
+        return [
+            'Hola, validemos el pago en Clic-POS. Confirma metodo usado, monto, caja, usuario y si la venta quedo completada o pendiente. Revisa tambien si el pago aparece duplicado, rechazado o sin recibo. Si no cuadra, envianos folio de venta, hora, metodo de pago y captura para comparar POS, cierre de caja y ERP.',
+            'Hola, para pagos es importante no repetir la venta hasta confirmar el estado. Verifica el historial de ventas y el cuadre de caja; si el cobro fue con tarjeta, confirma si el voucher o autorizacion existe. Con folio, monto, hora y terminal podemos identificar si es error de registro, sincronizacion o conciliacion.',
+        ];
+    }
+
+    if (params.category === 'Inventario' || /inventario|producto|stock|catalogo|catálogo|precio/.test(text)) {
+        return [
+            'Hola, revisemos inventario/catalogo. Confirma si el producto existe en Clic-ERP, si esta activo para la sucursal y si el precio/impuesto estan configurados. Luego sincroniza catalogo en el POS y prueba buscarlo por nombre o codigo. Si sigue sin aparecer, envianos codigo del producto, sucursal, terminal y captura de la busqueda.',
+            'Hola, si el stock o producto no coincide, valida primero el movimiento en ERP y despues sincroniza el POS. Indicanos producto, almacen/sucursal, cantidad esperada, cantidad mostrada y hora del ultimo ajuste o venta. Con eso podemos revisar si es configuracion, inventario pendiente o sincronizacion.',
+        ];
+    }
+
+    return [
+        `Hola, para ayudarte con Clic-ERP/Clic-POS necesito ubicar el punto exacto del fallo. Por favor confirma modulo afectado, usuario, sucursal/caja, terminal, version de la app, hora aproximada y captura del mensaje. Mientras tanto, valida conectividad, fecha/hora del equipo y si el caso ocurre en una sola terminal o en todas.`,
+        `Hola, vamos a tratar este caso como ${params.priority === 'Critica' ? 'prioridad critica' : 'soporte operativo'} en ${moduleLabel}. Para avanzar sin suposiciones, envianos los pasos exactos que hiciste, resultado esperado, resultado obtenido, folio/NCF si aplica y captura del error. Con esos datos revisamos si corresponde a configuracion, sincronizacion o comportamiento del modulo.`,
+    ];
+}
+
+function isGenericSuggestedReply(reply: string) {
+    const normalized = reply.toLowerCase();
+    const genericSignals = [
+        'recibimos tu solicitud',
+        'estamos revisando',
+        'vamos a validar',
+        'te confirmamos los próximos pasos',
+        'te confirmamos los proximos pasos',
+        'a la brevedad',
+        'origen del problema',
+    ];
+
+    return reply.length < 120 || genericSignals.some((signal) => normalized.includes(signal));
+}
+
+function ensureExpertSuggestedReplies(
+    replies: string[] | null | undefined,
+    context: {
+        category: TicketCategory;
+        priority: TicketPriority;
+        subject: string;
+        body: string;
+        affectedModule?: string | null;
+    },
+) {
+    const expertReplies = buildExpertSuggestedReplies(context);
+    const preciseReplies = (replies ?? [])
+        .map((reply) => reply.trim())
+        .filter((reply) => reply && !isGenericSuggestedReply(reply));
+
+    return Array.from(new Set([...preciseReplies, ...expertReplies])).slice(0, 3);
+}
+
 function heuristicTriage(subject: string, body: string): TriageResult {
     const text = `${subject} ${body}`.toLowerCase();
     const category = text.includes('impres') || text.includes('fiscal') || text.includes('comprobante')
@@ -454,10 +567,7 @@ function heuristicTriage(subject: string, body: string): TriageResult {
         sentiment,
         sentiment_score: sentiment === 'frustrated' ? -0.7 : 0,
         summary: subject || 'Solicitud recibida por email',
-        suggested_replies: [
-            'Hola, recibimos tu solicitud y ya estamos revisando el caso con nuestro equipo técnico.',
-            'Gracias por escribirnos. Vamos a validar el origen del problema y te confirmamos los próximos pasos.',
-        ],
+        suggested_replies: buildExpertSuggestedReplies({ category, priority, subject, body, affectedModule }),
         tenant_identifier: null,
         tenant_match_confidence: 0,
         next_best_action: priority === 'Critica'
@@ -520,7 +630,7 @@ async function runAiTriage(params: {
                 input: [
                     {
                         role: 'system',
-                        content: 'Eres un motor de triage para soporte B2B de puntos de venta. Devuelve solo JSON estructurado y no inventes datos.',
+                        content: clicProductExpertPrompt,
                     },
                     {
                         role: 'user',
@@ -614,6 +724,13 @@ async function runAiTriage(params: {
             ...parsed,
             category,
             affected_module: affectedModule,
+            suggested_replies: ensureExpertSuggestedReplies(parsed.suggested_replies, {
+                category,
+                priority: parsed.priority,
+                subject: params.subject,
+                body: params.body,
+                affectedModule,
+            }),
             incident_fingerprint: parsed.incident_fingerprint || buildIncidentFingerprint(category, affectedModule),
             detected_identifiers: parsed.detected_identifiers || [],
             ai_tags: parsed.ai_tags || [],

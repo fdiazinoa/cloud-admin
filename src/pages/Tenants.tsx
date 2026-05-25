@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff } from 'lucide-react';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Activity, Server, Check, AlertCircle } from 'lucide-react';
 import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
@@ -36,6 +36,80 @@ export const Tenants: React.FC = () => {
         email: string;
         tempPassword: string;
     } | null>(null);
+
+    const [isAddApkModalOpen, setIsAddApkModalOpen] = useState(false);
+    const [isAddApkSubmitting, setIsAddApkSubmitting] = useState(false);
+    const [addApkFormData, setAddApkFormData] = useState({
+        deviceId: '',
+        terminalId: '',
+        terminalName: '',
+        hostname: '',
+        protocol: 'http',
+        port: 3001,
+        localIp: '',
+        isPrimary: true,
+        appVersion: '1.0.0',
+        appVersionCode: 1,
+    });
+
+    const handleAddApk = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedTenantForTerminals) return;
+        if (!addApkFormData.deviceId.trim()) {
+            alert('El ID de dispositivo es requerido.');
+            return;
+        }
+        if (!addApkFormData.terminalId.trim()) {
+            alert('El ID de terminal es requerido o puedes seleccionar uno.');
+            return;
+        }
+        if (!addApkFormData.localIp.trim()) {
+            alert('La IP local es requerida.');
+            return;
+        }
+
+        setIsAddApkSubmitting(true);
+        try {
+            const payload = {
+                tenantId: selectedTenantForTerminals.id,
+                deviceId: addApkFormData.deviceId.trim(),
+                terminalId: addApkFormData.terminalId.trim(),
+                terminalName: addApkFormData.terminalName.trim() || undefined,
+                hostname: addApkFormData.hostname.trim() || undefined,
+                protocol: addApkFormData.protocol,
+                port: Number(addApkFormData.port),
+                localIp: addApkFormData.localIp.trim(),
+                isPrimary: addApkFormData.isPrimary,
+                appVersion: addApkFormData.appVersion.trim() || undefined,
+                appVersionCode: Number(addApkFormData.appVersionCode) || undefined,
+            };
+
+            await tenantService.registerTenantServerEndpoint(payload);
+            
+            setAddApkFormData({
+                deviceId: '',
+                terminalId: '',
+                terminalName: '',
+                hostname: '',
+                protocol: 'http',
+                port: 3001,
+                localIp: '',
+                isPrimary: true,
+                appVersion: '1.0.0',
+                appVersionCode: 1,
+            });
+            setIsAddApkModalOpen(false);
+            
+            setIsTerminalModalLoading(true);
+            const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+            setTenantTerminals(data);
+        } catch (err: unknown) {
+            console.error('Error registering APK:', err);
+            alert('Error al registrar la APK POS: ' + getErrorMessage(err));
+        } finally {
+            setIsAddApkSubmitting(false);
+        }
+    };
 
     const [formData, setFormData] = useState({
         name: '',
@@ -805,78 +879,147 @@ export const Tenants: React.FC = () => {
             {isTerminalModalOpen && selectedTenantForTerminals && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
-                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                             <div>
-                                <h3 className="font-black text-lg text-slate-800">Terminales Activas del Tenant</h3>
-                                <p className="text-sm text-slate-500 mt-1">
+                                <h3 className="font-black text-xl text-slate-800 flex items-center gap-2">
+                                    <Monitor className="text-violet-600" size={24} />
+                                    Terminales Activas & APK POS
+                                </h3>
+                                <p className="text-sm text-slate-500 mt-0.5">
                                     {selectedTenantForTerminals.name} · {selectedTenantForTerminals.email}
                                 </p>
-                                <p className="text-xs text-slate-400 font-mono mt-1">{selectedTenantForTerminals.id}</p>
+                                <p className="text-[11px] text-slate-400 font-mono mt-0.5">{selectedTenantForTerminals.id}</p>
                             </div>
-                            <button type="button" onClick={closeTerminalModal} className="text-slate-400 hover:text-slate-700 transition-colors">
-                                <X size={20} />
-                            </button>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsAddApkModalOpen(true)}
+                                    className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-colors shadow-sm focus:ring-4 focus:ring-violet-100 animate-in fade-in"
+                                >
+                                    <Plus size={16} />
+                                    Nuevo
+                                </button>
+                                <button 
+                                    type="button" 
+                                    onClick={closeTerminalModal} 
+                                    className="text-slate-400 hover:text-slate-700 p-1.5 hover:bg-slate-200 rounded-lg transition-colors"
+                                >
+                                    <X size={20} />
+                                </button>
+                            </div>
                         </div>
 
                         <div className="p-6 overflow-y-auto space-y-6">
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                <div className={`rounded-2xl border px-4 py-4 ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
-                                    <p className={`text-xs font-bold uppercase tracking-wider ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'text-red-700' : 'text-slate-500'}`}>Terminales listadas</p>
-                                    <p className={`mt-2 text-3xl font-black ${tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) ? 'text-red-700' : 'text-slate-800'}`}>
-                                        {tenantTerminals.length}
+                            {/* Unified Metric Cards Dashboard */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                {/* CARD 1: Catálogo y Licencias */}
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4 shadow-sm flex flex-col justify-between">
+                                    <div className="flex justify-between items-start">
+                                        <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Licencias POS</p>
+                                        <Monitor size={16} className="text-slate-400" />
+                                    </div>
+                                    <div className="mt-2 flex items-baseline gap-2">
+                                        <span className="text-2xl font-black text-slate-800">{tenantTerminals.length}</span>
                                         {typeof selectedTenantForTerminals.max_pos_terminals === 'number' && (
-                                            <span className={`text-sm font-bold ml-2 ${tenantTerminals.length > selectedTenantForTerminals.max_pos_terminals ? 'text-red-500' : 'text-slate-400'}`}>
+                                            <span className="text-xs font-semibold text-slate-400 font-sans">
                                                 / {selectedTenantForTerminals.max_pos_terminals} permitidas
                                             </span>
                                         )}
+                                    </div>
+                                    <div className="mt-2 w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                                        <div 
+                                            className={`h-full rounded-full transition-all ${
+                                                tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) 
+                                                    ? 'bg-red-500' 
+                                                    : tenantTerminals.length === selectedTenantForTerminals.max_pos_terminals 
+                                                        ? 'bg-amber-500' 
+                                                        : 'bg-violet-500'
+                                            }`}
+                                            style={{ 
+                                                width: `${Math.min(100, (tenantTerminals.length / (selectedTenantForTerminals.max_pos_terminals || 1)) * 100)}%` 
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* CARD 2: Endpoints Publicados / Conectados */}
+                                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/30 p-4 shadow-sm flex flex-col justify-between">
+                                    <div className="flex justify-between items-start">
+                                        <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">Endpoints Online</p>
+                                        <Wifi size={16} className="text-emerald-500" />
+                                    </div>
+                                    <div className="mt-2 flex items-baseline gap-2">
+                                        <span className="text-2xl font-black text-emerald-800">{onlineTerminalCount}</span>
+                                        <span className="text-xs text-slate-400 font-semibold">
+                                            de {publishedEndpointCount} registrados
+                                        </span>
+                                    </div>
+                                    <p className="text-[11px] text-emerald-600 mt-2 font-medium">
+                                        {publishedEndpointCount - onlineTerminalCount} offline o sin reporte
                                     </p>
                                 </div>
-                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Endpoints Online</p>
-                                    <p className="mt-2 text-3xl font-black text-emerald-700">{onlineTerminalCount}</p>
+
+                                {/* CARD 3: Servidores Master */}
+                                <div className="rounded-2xl border border-violet-100 bg-violet-50/30 p-4 shadow-sm flex flex-col justify-between">
+                                    <div className="flex justify-between items-start">
+                                        <p className="text-xs font-bold uppercase tracking-wider text-violet-600">Servidores Master</p>
+                                        <Boxes size={16} className="text-violet-500" />
+                                    </div>
+                                    <div className="mt-2 flex items-baseline gap-2">
+                                        <span className="text-2xl font-black text-violet-800">{masterTerminalCount}</span>
+                                        <span className="text-xs text-slate-400 font-semibold">
+                                            en red local
+                                        </span>
+                                    </div>
+                                    <p className="text-[11px] text-violet-600 mt-2 font-medium">
+                                        Coordinan sincronización local
+                                    </p>
                                 </div>
-                                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Fuera de versión</p>
-                                    <p className="mt-2 text-3xl font-black text-amber-700">{outOfVersionCount}</p>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Clientes / cajas</p>
-                                    <p className="mt-2 text-3xl font-black text-slate-800">{clientTerminalCount}</p>
+
+                                {/* CARD 4: Control de Versión APK */}
+                                <div className={`rounded-2xl border p-4 shadow-sm flex flex-col justify-between ${
+                                    outOfVersionCount > 0 
+                                        ? 'border-amber-100 bg-amber-50/30' 
+                                        : 'border-slate-100 bg-slate-50/50'
+                                }`}>
+                                    <div className="flex justify-between items-start">
+                                        <p className={`text-xs font-bold uppercase tracking-wider ${outOfVersionCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                            Control de Versión
+                                        </p>
+                                        <Activity size={16} className={outOfVersionCount > 0 ? 'text-amber-500' : 'text-slate-400'} />
+                                    </div>
+                                    <div className="mt-2">
+                                        {outOfVersionCount > 0 ? (
+                                            <div className="flex items-baseline gap-2">
+                                                <span className="text-2xl font-black text-amber-700">{outOfVersionCount}</span>
+                                                <span className="text-xs text-amber-600 font-bold">Desfasados</span>
+                                            </div>
+                                        ) : (
+                                            <span className="text-lg font-black text-slate-700">Actualizados</span>
+                                        )}
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 mt-2 font-medium truncate">
+                                        {referenceVersionCandidate ? `Ref: v${referenceVersionCandidate.label.replace('APK v', '')}` : 'Sin versión reportada'}
+                                    </p>
                                 </div>
                             </div>
 
-                            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                                <p>
-                                    Esta vista combina el catálogo de terminales del tenant con el registry de endpoints publicados en cloud. La máscara de red aún no se persiste, por eso se muestra como <span className="font-bold">N/D</span>.
-                                </p>
-                                <p className="mt-2">
-                                    Use <span className="font-bold">IP LAN recomendada</span> o <span className="font-bold">Endpoint publicado</span> para conectar nuevas cajas. Las IPs virtuales o de emulador se separan como descartadas.
-                                </p>
-                                <p className="mt-2">
-                                    {referenceVersionCandidate
-                                        ? <>Versión de referencia: <span className="font-bold">{referenceVersionCandidate.label}</span> reportada por <span className="font-bold">{referenceVersionCandidate.source}</span>.</>
-                                        : <>Aún no hay versión de APK reportada por las terminales de este tenant.</>}
-                                    {missingVersionCount > 0 ? <> <span className="font-bold">{missingVersionCount}</span> terminal(es) todavía no reportan versión.</> : null}
-                                </p>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-violet-700">Server master</p>
-                                    <p className="mt-2 text-3xl font-black text-violet-700">{masterTerminalCount}</p>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Con endpoint cloud</p>
-                                    <p className="mt-2 text-3xl font-black text-slate-800">{publishedEndpointCount}</p>
-                                </div>
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Offline / sin reporte</p>
-                                    <p className="mt-2 text-3xl font-black text-slate-800">{Math.max(tenantTerminals.length - onlineTerminalCount, offlineTerminalCount)}</p>
+                            {/* TIP / Info Box */}
+                            <div className="rounded-2xl border border-blue-100 bg-blue-50/40 px-4 py-3 text-xs text-blue-800 leading-relaxed flex items-start gap-2.5">
+                                <span className="bg-blue-100 text-blue-800 rounded-lg p-1 px-2 font-bold shrink-0 mt-0.5">INFO</span>
+                                <div>
+                                    <p className="font-semibold text-blue-900">
+                                        Esta vista asocia el catálogo de terminales autorizadas del tenant con los endpoints publicados por las APKs en sitio.
+                                    </p>
+                                    <p className="mt-1">
+                                        Las terminales que operan como <span className="font-bold">Server Master</span> permiten enlazar otras cajas cliente localmente.
+                                        Usa la <span className="font-bold">IP LAN recomendada</span> o el <span className="font-bold">Endpoint publicado</span> para configurar las cajas clientes de este establecimiento.
+                                    </p>
                                 </div>
                             </div>
 
                             {isTerminalModalLoading ? (
-                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500 flex items-center justify-center gap-3">
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50/50 px-6 py-12 text-center text-slate-500 flex items-center justify-center gap-3">
                                     <Loader2 className="animate-spin text-violet-500" size={20} />
                                     Cargando terminales...
                                 </div>
@@ -891,24 +1034,31 @@ export const Tenants: React.FC = () => {
                                         const isOnline = statusLabel === 'ONLINE';
                                         
                                         return (
-                                            <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
-                                                <div className="bg-slate-50 border-b border-slate-100 p-5 flex items-center justify-between">
+                                            <div key={`${terminal.id}`} className="rounded-3xl border border-slate-150 bg-white shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow duration-200">
+                                                <div className="bg-slate-50/40 border-b border-slate-100 p-5 flex items-center justify-between">
                                                     <div className="flex items-center gap-4">
-                                                        <div className={`rounded-2xl p-3 ${isOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
+                                                        <div className={`rounded-2xl p-3 shrink-0 ${isOnline ? 'bg-emerald-100 text-emerald-700 animate-pulse-slow' : 'bg-slate-100 text-slate-500'}`}>
                                                             {isOnline ? <Wifi size={20} /> : <WifiOff size={20} />}
                                                         </div>
                                                         <div>
-                                                            <div className="flex items-center gap-3">
-                                                                <h4 className="font-black text-slate-800 text-lg">{terminal.name}</h4>
+                                                            <div className="flex items-center gap-3 flex-wrap">
+                                                                <h4 className="font-black text-slate-800 text-lg leading-snug">{terminal.name}</h4>
                                                                 <span className={`font-bold text-xs px-2.5 py-1 rounded-lg ${
                                                                     (terminal.registries || []).length > 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                                                                 }`}>
                                                                     {terminal.registries?.length || 0} Registro(s)
                                                                 </span>
                                                             </div>
-                                                            <p className="text-xs text-slate-500 font-mono mt-0.5">
-                                                                Terminal ID: {terminal.terminal_id || 'N/D'}
-                                                            </p>
+                                                            <div className="flex items-center gap-2 mt-1">
+                                                                <span className="text-xs text-slate-400 font-mono">
+                                                                    ID: {terminal.terminal_id || terminal.id || 'N/D'}
+                                                                </span>
+                                                                {terminal.device_token && (
+                                                                    <span className="text-xs text-slate-400 font-mono border-l pl-2 border-slate-200">
+                                                                        Token: {terminal.device_token}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                     <div>
@@ -922,59 +1072,93 @@ export const Tenants: React.FC = () => {
                                                     </div>
                                                 </div>
 
-                                                <div className="p-5 bg-slate-100/30">
-                                                    <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-4">Dispositivos y Activaciones Registrados</h5>
-                                                    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                                                        <table className="w-full text-left text-sm whitespace-nowrap">
-                                                            <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
-                                                                <tr>
-                                                                    <th className="px-4 py-3 font-bold">Estado</th>
-                                                                    <th className="px-4 py-3 font-bold">Device / Modelo</th>
-                                                                    <th className="px-4 py-3 font-bold">Red / Endpoint</th>
-                                                                    <th className="px-4 py-3 font-bold">Versión APK</th>
-                                                                    <th className="px-4 py-3 font-bold text-right">Último Tick</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody className="divide-y divide-slate-50">
-                                                                {(terminal.registries || []).map((reg, idx) => {
-                                                                    const mockTerminal = { ...terminal, registry: reg };
-                                                                    const rStatusLabel = getRegistryStatusLabel(mockTerminal);
-                                                                    const rIsOnline = rStatusLabel === 'ONLINE';
-                                                                    const rVersionKey = getApkVersionKey(mockTerminal);
-                                                                    const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
-                                                                    const prefLanIp = getPreferredLanIp(mockTerminal);
-                                                                    
-                                                                    return (
-                                                                        <tr key={reg.id || idx} className={`hover:bg-slate-50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/20' : ''}`}>
-                                                                            <td className="px-4 py-3 align-top">
-                                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center w-min ${rIsOnline ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                                                                    {rStatusLabel}
-                                                                                </span>
-                                                                            </td>
-                                                                            <td className="px-4 py-3 align-top">
-                                                                                <p className="font-mono font-bold text-slate-700 text-[11px] mb-0.5">{reg.device_id || terminal.device_token || 'N/D'}</p>
-                                                                                <p className="text-[10px] text-slate-500">{reg.hostname || 'N/D'}</p>
-                                                                            </td>
-                                                                            <td className="px-4 py-3 align-top">
-                                                                                <p className="font-mono text-emerald-700 font-bold text-[11px] mb-0.5">{prefLanIp}</p>
-                                                                                {reg.endpoint_url && <p className="text-[10px] text-slate-400 font-mono" title="Endpoint">{reg.endpoint_url}</p>}
-                                                                            </td>
-                                                                            <td className="px-4 py-3 align-top">
-                                                                                <div className="flex flex-col items-start gap-0.5">
-                                                                                    <span className="font-mono text-slate-700 text-[11px]">v {formatApkVersion(mockTerminal)}</span>
-                                                                                    {rIsOutOfVersion && <span className="text-[10px] text-amber-600 font-bold">Desfasado</span>}
-                                                                                </div>
-                                                                            </td>
-                                                                            <td className="px-4 py-3 align-top text-right">
-                                                                                <p className="text-[10px] text-slate-500 mb-0.5">{formatDateTime(reg.last_seen_at)}</p>
-                                                                                <p className="font-bold text-violet-600 text-[10px]">{getRoleLabel(mockTerminal)}</p>
-                                                                            </td>
-                                                                        </tr>
-                                                                    );
-                                                                })}
-                                                            </tbody>
-                                                        </table>
-                                                    </div>
+                                                <div className="p-5 bg-slate-50/20">
+                                                    <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Dispositivos y Activaciones Registrados</h5>
+                                                    
+                                                    {(!terminal.registries || terminal.registries.length === 0) ? (
+                                                        <div className="text-center py-6 px-4 bg-slate-50/30 border border-slate-100 border-dashed rounded-xl text-slate-400 text-xs">
+                                                            Aún no hay reportes de activaciones para este dispositivo. Se registrarán automáticamente cuando el APK POS se inicie y se conecte a la nube.
+                                                        </div>
+                                                    ) : (
+                                                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                                                            <table className="w-full text-left text-sm whitespace-nowrap">
+                                                                <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
+                                                                    <tr>
+                                                                        <th className="px-4 py-3 font-bold">Estado</th>
+                                                                        <th className="px-4 py-3 font-bold">Dispositivo / Modelo</th>
+                                                                        <th className="px-4 py-3 font-bold">Red / Endpoint</th>
+                                                                        <th className="px-4 py-3 font-bold">Versión APK</th>
+                                                                        <th className="px-4 py-3 font-bold text-right">Último Reporte</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-slate-100">
+                                                                    {terminal.registries.map((reg, idx) => {
+                                                                        const mockTerminal = { ...terminal, registry: reg };
+                                                                        const rStatusLabel = getRegistryStatusLabel(mockTerminal);
+                                                                        const rIsOnline = rStatusLabel === 'ONLINE';
+                                                                        const rVersionKey = getApkVersionKey(mockTerminal);
+                                                                        const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
+                                                                        const prefLanIp = getPreferredLanIp(mockTerminal);
+                                                                        
+                                                                        return (
+                                                                            <tr key={reg.id || idx} className={`hover:bg-slate-50/50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/10' : ''}`}>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase flex items-center gap-1.5 w-min ${
+                                                                                        rIsOnline 
+                                                                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                                                                                            : 'bg-slate-50 text-slate-500 border border-slate-200'
+                                                                                    }`}>
+                                                                                        <span className={`h-1.5 w-1.5 rounded-full ${rIsOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
+                                                                                        {rStatusLabel}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    <div className="flex flex-col">
+                                                                                        <span className="font-mono font-bold text-slate-700 text-[11px] mb-0.5">{reg.device_id || terminal.device_token || 'N/D'}</span>
+                                                                                        <span className="text-[10px] text-slate-500 font-medium">{reg.hostname || 'N/D'}</span>
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    <div className="flex flex-col">
+                                                                                        <span className="font-mono text-emerald-700 font-bold text-[11px] mb-0.5">{prefLanIp}</span>
+                                                                                        {reg.endpoint_url && (
+                                                                                            <span className="text-[10px] text-slate-400 font-mono" title="Endpoint">
+                                                                                                {reg.endpoint_url}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    <div className="flex flex-col items-start gap-1">
+                                                                                        <span className="font-mono text-slate-700 text-[11px] font-semibold bg-slate-100 px-1.5 py-0.5 rounded">
+                                                                                            {formatApkVersion(mockTerminal).replace('APK ', '')}
+                                                                                        </span>
+                                                                                        {rIsOutOfVersion && (
+                                                                                            <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded font-black uppercase tracking-wide">
+                                                                                                Desfasado
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top text-right">
+                                                                                    <div className="flex flex-col items-end">
+                                                                                        <span className="text-[10px] text-slate-500 font-medium mb-0.5">{formatDateTime(reg.last_seen_at)}</span>
+                                                                                        <span className={`font-bold text-[10px] px-2.5 py-0.5 rounded-full ${
+                                                                                            reg.is_primary 
+                                                                                                ? 'bg-violet-100 text-violet-700 border border-violet-200' 
+                                                                                                : 'bg-slate-100 text-slate-600 border border-slate-200'
+                                                                                        }`}>
+                                                                                            {getRoleLabel(mockTerminal)}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    })}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         );
@@ -982,6 +1166,194 @@ export const Tenants: React.FC = () => {
                                 </div>
                             )}
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {isAddApkModalOpen && selectedTenantForTerminals && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                            <h3 className="font-black text-lg text-slate-800 flex items-center gap-2">
+                                <Server className="text-violet-600" size={20} />
+                                Registrar APK POS
+                            </h3>
+                            <button 
+                                type="button" 
+                                onClick={() => setIsAddApkModalOpen(false)} 
+                                className="text-slate-400 hover:text-slate-700 transition-colors p-1.5 hover:bg-slate-100 rounded-lg"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <form onSubmit={handleAddApk} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Terminal de Catálogo <span className="text-red-500">*</span></label>
+                                <div className="flex gap-2">
+                                    {addApkFormData.terminalId === '_NEW_' ? (
+                                        <div className="relative w-full">
+                                            <input
+                                                required
+                                                type="text"
+                                                placeholder="Ingresa ID de terminal (ej. TERM-001)"
+                                                onChange={e => setAddApkFormData({ ...addApkFormData, terminalId: e.target.value })}
+                                                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
+                                            />
+                                        </div>
+                                    ) : (
+                                        <select
+                                            required
+                                            value={addApkFormData.terminalId}
+                                            onChange={e => {
+                                                if (e.target.value === '_NEW_') {
+                                                    setAddApkFormData({ ...addApkFormData, terminalId: '_NEW_' });
+                                                } else {
+                                                    const term = tenantTerminals.find(t => t.id === e.target.value);
+                                                    setAddApkFormData({ 
+                                                        ...addApkFormData, 
+                                                        terminalId: e.target.value,
+                                                        terminalName: term ? term.name : ''
+                                                    });
+                                                }
+                                            }}
+                                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800 font-medium"
+                                        >
+                                            <option value="">-- Selecciona del catálogo --</option>
+                                            {tenantTerminals.map(t => (
+                                                <option key={t.id} value={t.id}>
+                                                    {t.name} ({t.id.slice(0, 8)})
+                                                </option>
+                                            ))}
+                                            <option value="_NEW_">+ Crear Nueva Terminal Personalizada</option>
+                                        </select>
+                                    )}
+                                    {addApkFormData.terminalId === '_NEW_' && (
+                                        <button 
+                                            type="button"
+                                            onClick={() => setAddApkFormData({ ...addApkFormData, terminalId: '' })}
+                                            className="px-3 border border-slate-200 hover:bg-slate-50 text-slate-500 rounded-xl transition-colors text-xs font-semibold shrink-0"
+                                        >
+                                            Volver
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">ID de Dispositivo (Device ID) <span className="text-red-500">*</span></label>
+                                <input
+                                    required
+                                    type="text"
+                                    placeholder="Ej. android-uuid-device-01"
+                                    value={addApkFormData.deviceId}
+                                    onChange={e => setAddApkFormData({ ...addApkFormData, deviceId: e.target.value })}
+                                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nombre Terminal</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej. Caja Principal"
+                                        value={addApkFormData.terminalName}
+                                        onChange={e => setAddApkFormData({ ...addApkFormData, terminalName: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Hostname</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej. sunmi-v2-pro"
+                                        value={addApkFormData.hostname}
+                                        onChange={e => setAddApkFormData({ ...addApkFormData, hostname: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2">
+                                <div className="col-span-2">
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">IP Local (LAN IP) <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        type="text"
+                                        placeholder="Ej. 192.168.1.100"
+                                        value={addApkFormData.localIp}
+                                        onChange={e => setAddApkFormData({ ...addApkFormData, localIp: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800 font-mono"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Puerto</label>
+                                    <input
+                                        type="number"
+                                        placeholder="3001"
+                                        value={addApkFormData.port}
+                                        onChange={e => setAddApkFormData({ ...addApkFormData, port: Number(e.target.value) })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Versión APK</label>
+                                    <input
+                                        type="text"
+                                        placeholder="1.0.0"
+                                        value={addApkFormData.appVersion}
+                                        onChange={e => setAddApkFormData({ ...addApkFormData, appVersion: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Código Versión</label>
+                                    <input
+                                        type="number"
+                                        placeholder="1"
+                                        value={addApkFormData.appVersionCode}
+                                        onChange={e => setAddApkFormData({ ...addApkFormData, appVersionCode: Number(e.target.value) })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 flex items-center justify-between">
+                                <div>
+                                    <p className="text-xs font-bold text-slate-700">Servidor Master (Primary)</p>
+                                    <p className="text-[10px] text-slate-400 mt-0.5">Define este dispositivo como central local</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setAddApkFormData({ ...addApkFormData, isPrimary: !addApkFormData.isPrimary })}
+                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 ${addApkFormData.isPrimary ? 'bg-violet-600' : 'bg-slate-300'}`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${addApkFormData.isPrimary ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
+
+                            <div className="pt-2 flex justify-end gap-2.5">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsAddApkModalOpen(false)}
+                                    className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500 text-sm font-bold transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isAddApkSubmitting}
+                                    className="bg-violet-600 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors disabled:bg-violet-400 disabled:cursor-not-allowed"
+                                >
+                                    {isAddApkSubmitting ? (
+                                        <><Loader2 size={16} className="animate-spin" /> Guardando...</>
+                                    ) : 'Registrar'}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

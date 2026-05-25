@@ -81,7 +81,7 @@ function describeError(error: unknown) {
 
         try {
             return JSON.stringify(record);
-        } catch (_) {
+        } catch {
             return String(error);
         }
     }
@@ -127,7 +127,7 @@ function buildThreadSubject(ticket: SupportTicket) {
         .replace(ticketToken, '')
         .trim() || 'Solicitud técnica';
 
-    return `Re: ${ticketToken} ${cleanSubject}`;
+    return `${ticketToken} Re: ${cleanSubject}`;
 }
 
 function buildThreadHeaders(ticket: SupportTicket) {
@@ -270,6 +270,7 @@ Deno.serve(async (request) => {
             : getEnv('HELPDESK_FROM_EMAIL');
         const replyToAddress = settingsRow.resend_inbound_email ?? getEnv('HELPDESK_INBOUND_EMAIL');
 
+        const emailSubject = buildThreadSubject(supportTicket);
         const resendResponse = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
@@ -279,7 +280,7 @@ Deno.serve(async (request) => {
             body: JSON.stringify({
                 from: fromAddress,
                 to: [recipientEmail],
-                subject: buildThreadSubject(supportTicket),
+                subject: emailSubject,
                 text: messageText,
                 reply_to: [replyToAddress],
                 headers: buildThreadHeaders(supportTicket),
@@ -301,6 +302,7 @@ Deno.serve(async (request) => {
                     sender_type: 'Admin',
                     attachments: {
                         channel: 'email',
+                        subject: emailSubject,
                         resend_email_id: resendPayload.id,
                         to: recipientEmail,
                     },
@@ -316,6 +318,7 @@ Deno.serve(async (request) => {
                 .update({
                     attachments: {
                         channel: 'email',
+                        subject: emailSubject,
                         resend_email_id: resendPayload.id,
                         to: recipientEmail,
                         sent_retroactively: true,

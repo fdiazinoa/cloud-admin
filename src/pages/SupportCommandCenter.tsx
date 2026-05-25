@@ -202,6 +202,64 @@ function formatFileSize(value?: number) {
     return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function isGenericDraft(reply: string) {
+    const normalized = reply.toLowerCase();
+    const genericSignals = [
+        'recibimos tu solicitud',
+        'estamos revisando',
+        'vamos a validar',
+        'te confirmamos los próximos pasos',
+        'te confirmamos los proximos pasos',
+        'a la brevedad',
+        'origen del problema',
+    ];
+
+    return reply.trim().length < 120 || genericSignals.some((signal) => normalized.includes(signal));
+}
+
+function latestClientMessage(messages: Message[]) {
+    return [...messages].reverse().find((message) => message.sender_type === 'Client')?.message ?? '';
+}
+
+function buildExpertDraft(ticket: Ticket, messages: Message[]) {
+    const owner = getTicketOwner(ticket);
+    const greeting = `Hola ${owner},`;
+    const text = `${ticket.subject} ${ticket.category} ${ticket.insight?.affected_module ?? ''} ${latestClientMessage(messages)}`.toLowerCase();
+    const lastError = ticket.technical_context?.last_5_errors?.[0];
+    const version = ticket.technical_context?.app_version;
+    const terminalContext = [
+        version ? `version ${version}` : null,
+        ticket.technical_context?.network_type ? `red ${ticket.technical_context.network_type}` : null,
+        ticket.technical_context?.battery_level ? `bateria ${ticket.technical_context.battery_level}` : null,
+    ].filter(Boolean).join(', ');
+
+    if (/e-cf|ecf|ncf|dgii|digifact|fiscal|comprobante|factura/.test(text)) {
+        return `${greeting} revisemos el flujo fiscal en Clic-${ticket.source === 'ERP' ? 'ERP' : 'POS'}. Valida primero que el tipo de comprobante, RNC/consumidor final y secuencia NCF/e-CF esten correctos. Luego intenta reenviar el comprobante desde el historial, sin recrear la venta. Si vuelve a fallar, envianos folio, NCF/e-CF, hora exacta y captura del error${lastError ? `; en los logs vemos "${lastError}".` : '.'}`;
+    }
+
+    if (/sync|sincron|internet|red|wifi|cloud|nube|enviar|subir|cierre|z\b/.test(text)) {
+        return `${greeting} esto parece sincronizacion entre Clic-POS y Cloud/ERP. Confirma que las ventas esten visibles localmente, que la terminal tenga internet estable y fecha/hora correcta, y luego fuerza la sincronizacion desde el POS. No borres datos ni reinstales antes de confirmar respaldo. Si no viaja, envianos terminal, usuario, hora del cierre/caja, cantidad de transacciones pendientes${terminalContext ? ` (${terminalContext})` : ''}${lastError ? ` y el ultimo error "${lastError}".` : '.'}`;
+    }
+
+    if (/impres|printer|terminal|tablet|scanner|bateria|batería|hardware/.test(text)) {
+        return `${greeting} vamos a validar el hardware del POS. Confirma si ocurre en una sola terminal o en todas, revisa conexion/emparejamiento de impresora o scanner, y prueba una reimpresion o recibo de prueba. Si falla, envianos modelo del equipo, terminal afectada, version del POS y foto/captura del error${lastError ? `; tambien vemos "${lastError}" en contexto tecnico.` : '.'}`;
+    }
+
+    if (/pago|tarjeta|cobro|credito|crédito|transferencia/.test(text)) {
+        return `${greeting} validemos el pago en Clic-POS. Revisa si la venta quedo completada, pendiente o duplicada en el historial y comparala contra el cuadre de caja. Si fue tarjeta, confirma si existe voucher/autorizacion. Envianos folio, monto, metodo de pago, hora, caja y terminal para identificar si es registro, sincronizacion o conciliacion.`;
+    }
+
+    if (/inventario|producto|stock|catalogo|catálogo|precio/.test(text)) {
+        return `${greeting} revisemos inventario/catalogo. Confirma que el producto exista y este activo en Clic-ERP para la sucursal, valida precio/impuesto y luego sincroniza catalogo en el POS. Si sigue sin aparecer o el stock no coincide, envianos codigo del producto, sucursal, terminal, cantidad esperada y captura de la busqueda.`;
+    }
+
+    if (/necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta/.test(text)) {
+        return `${greeting} lo que solicitas parece una mejora funcional para Clic-ERP/Clic-POS. La registraremos para evaluacion de producto con el caso de uso e impacto operativo. Para documentarla bien, confirmanos modulo, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.`;
+    }
+
+    return `${greeting} necesito ubicar el punto exacto del caso en Clic-ERP/Clic-POS. Confirma modulo afectado, usuario, sucursal/caja, terminal, version, hora aproximada y captura del mensaje. Mientras tanto valida conectividad, fecha/hora del equipo y si ocurre en una sola terminal o en todas${lastError ? `; el ultimo error registrado es "${lastError}".` : '.'}`;
+}
+
 async function hydrateMessageAttachments(messages: Message[]) {
     return Promise.all(messages.map(async (message) => {
         const attachments = normalizeAttachments(message.attachments);
@@ -530,18 +588,12 @@ const SupportCommandCenter: React.FC = () => {
         if (!selectedTicket) return;
 
         const suggestedReply = selectedTicket.insight?.suggested_replies?.[0];
-        if (suggestedReply) {
+        if (suggestedReply && !isGenericDraft(suggestedReply)) {
             setReplyText(suggestedReply);
             return;
         }
 
-        const lastError = selectedTicket.technical_context?.last_5_errors?.[0];
-        const greeting = `Hola ${getTicketOwner(selectedTicket)},`;
-        const diagnostic = lastError
-            ? `notamos en los logs el evento "${lastError}".`
-            : `estamos revisando el caso "${selectedTicket.subject}".`;
-
-        setReplyText(`${greeting} ${diagnostic} Vamos a validar el estado del servicio y te confirmamos los próximos pasos en breve.`);
+        setReplyText(buildExpertDraft(selectedTicket, messages));
     };
 
     return (
