@@ -4,6 +4,7 @@ import {
     BatteryLow,
     Clock3,
     ExternalLink,
+    Filter,
     Image as ImageIcon,
     Link2,
     Lightbulb,
@@ -132,6 +133,12 @@ interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight'> 
     ai_ticket_insights?: AiTicketInsight | AiTicketInsight[] | null;
 }
 
+interface TicketMessagePreview {
+    message: string;
+    sender_type: Message['sender_type'];
+    created_at: string;
+}
+
 const statusFilters = ['Todos', 'Abierto', 'En_Proceso', 'Resuelto', 'Cerrado'];
 const sourceFilters = ['Todos', 'POS', 'ERP', 'Email', 'Preventivo'];
 
@@ -202,6 +209,39 @@ function formatTime(value: string) {
         hour: '2-digit',
         minute: '2-digit',
     }).format(date);
+}
+
+function formatStatusLabel(status: string) {
+    return status.replace(/_/g, ' ');
+}
+
+function truncatePreview(value: string, maxLength = 110) {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (!normalized) return '';
+    return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized;
+}
+
+function getSenderPreviewLabel(senderType: Message['sender_type']) {
+    if (senderType === 'Admin') return 'Soporte';
+    if (senderType === 'System') return 'Sistema';
+    return 'Cliente';
+}
+
+function buildLatestMessagePreviewMap(rows: Array<{ ticket_id?: string | null; message?: string | null; sender_type?: string | null; created_at?: string | null }>) {
+    const previewMap: Record<string, TicketMessagePreview> = {};
+
+    for (const row of rows) {
+        const ticketId = String(row.ticket_id || '').trim();
+        if (!ticketId || previewMap[ticketId]) continue;
+
+        previewMap[ticketId] = {
+            message: String(row.message || '').trim(),
+            sender_type: (row.sender_type === 'Admin' || row.sender_type === 'System' ? row.sender_type : 'Client') as Message['sender_type'],
+            created_at: String(row.created_at || ''),
+        };
+    }
+
+    return previewMap;
 }
 
 function getContactLabel(ticket: Ticket) {
@@ -419,6 +459,7 @@ const SupportCommandCenter: React.FC = () => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [filterStatus, setFilterStatus] = useState('Todos');
     const [filterSource, setFilterSource] = useState('Todos');
+    const [quickFilter, setQuickFilter] = useState<'none' | 'critical' | 'unassigned'>('none');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
     const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -430,6 +471,7 @@ const SupportCommandCenter: React.FC = () => {
     const [improvementDraft, setImprovementDraft] = useState<ImprovementDraft>(initialImprovementDraft);
     const [improvementError, setImprovementError] = useState<string | null>(null);
     const [improvementNotice, setImprovementNotice] = useState<string | null>(null);
+    const [lastMessageByTicketId, setLastMessageByTicketId] = useState<Record<string, TicketMessagePreview>>({});
     const messagesPaneRef = useRef<HTMLDivElement>(null);
     const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -517,6 +559,23 @@ const SupportCommandCenter: React.FC = () => {
                 if (!current) return current;
                 return mappedTickets.find((ticket) => ticket.id === current.id) ?? current;
             });
+
+            const ticketIds = mappedTickets.map((ticket) => ticket.id);
+            if (ticketIds.length > 0) {
+                const { data: messageRows, error: previewError } = await supabaseAdmin
+                    .from('ticket_messages')
+                    .select('ticket_id, message, sender_type, created_at')
+                    .in('ticket_id', ticketIds)
+                    .order('created_at', { ascending: false });
+
+                if (previewError) {
+                    console.error('Admin: error fetching ticket previews', previewError);
+                } else if (mounted) {
+                    setLastMessageByTicketId(buildLatestMessagePreviewMap(messageRows ?? []));
+                }
+            } else if (mounted) {
+                setLastMessageByTicketId({});
+            }
         };
 
         fetchTickets();
@@ -591,6 +650,14 @@ const SupportCommandCenter: React.FC = () => {
                         return;
                     }
                     setMessages((previous) => [...previous, nextMessage]);
+                    setLastMessageByTicketId((current) => ({
+                        ...current,
+                        [selectedTicketId]: {
+                            message: nextMessage.message,
+                            sender_type: nextMessage.sender_type,
+                            created_at: nextMessage.created_at,
+                        },
+                    }));
                 }
             })
             .subscribe();
@@ -614,9 +681,11 @@ const SupportCommandCenter: React.FC = () => {
         return tickets.filter((ticket) => {
             const statusMatches = filterStatus === 'Todos' || ticket.status === filterStatus;
             const sourceMatches = filterSource === 'Todos' || ticket.source === filterSource;
-            return statusMatches && sourceMatches;
+            const criticalMatches = quickFilter !== 'critical' || ticket.priority === 'Critica';
+            const unassignedMatches = quickFilter !== 'unassigned' || ticket.assignment_status === 'needs_assignment';
+            return statusMatches && sourceMatches && criticalMatches && unassignedMatches;
         });
-    }, [filterSource, filterStatus, tickets]);
+    }, [filterSource, filterStatus, quickFilter, tickets]);
 
     const handleSendReply = async () => {
         if (!replyText.trim() || !selectedTicket || isSendingReply) return;
@@ -989,72 +1058,152 @@ const SupportCommandCenter: React.FC = () => {
     };
 
     return (
-        <div className="flex h-full min-h-[calc(100vh-8rem)] overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-            <aside className="flex w-[360px] shrink-0 flex-col border-r border-slate-200 bg-white">
+        <div className="flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
+            <aside className="flex min-h-0 w-[380px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm">
                 <div className="shrink-0 border-b border-slate-100 p-4">
                     <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
                             <h1 className="text-xl font-bold text-slate-900">Command Center</h1>
                             <p className="text-sm text-slate-500">Soporte POS, ERP y email externo</p>
                         </div>
-                        <div className="rounded-lg border border-violet-200 bg-violet-50 p-2 text-violet-700">
+                        <div className="rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-violet-700">
                             <Sparkles size={18} />
                         </div>
                     </div>
 
                     <div className="mb-4 grid grid-cols-4 gap-2">
-                        <div className="rounded-lg border border-red-100 bg-red-50 p-2 text-center">
-                            <span className="block text-lg font-bold text-red-600">{ticketStats.critical}</span>
-                            <span className="text-[10px] font-bold uppercase text-red-400">Críticos</span>
-                        </div>
-                        <div className="rounded-lg border border-orange-100 bg-orange-50 p-2 text-center">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setQuickFilter('none');
+                                setFilterStatus('Abierto');
+                            }}
+                            className={`rounded-lg border p-2 text-center transition-colors ${filterStatus === 'Abierto' && quickFilter === 'none' ? 'border-orange-300 bg-orange-100 ring-1 ring-orange-300' : 'border-orange-100 bg-orange-50 hover:border-orange-200'}`}
+                        >
                             <span className="block text-lg font-bold text-orange-600">{ticketStats.open}</span>
                             <span className="text-[10px] font-bold uppercase text-orange-400">Abiertos</span>
-                        </div>
-                        <div className="rounded-lg border border-violet-100 bg-violet-50 p-2 text-center">
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setFilterStatus('Todos');
+                                setFilterSource('Todos');
+                                setQuickFilter('critical');
+                            }}
+                            className={`rounded-lg border p-2 text-center transition-colors ${quickFilter === 'critical' ? 'border-red-300 bg-red-100 ring-1 ring-red-300' : 'border-red-100 bg-red-50 hover:border-red-200'}`}
+                        >
+                            <span className="block text-lg font-bold text-red-600">{ticketStats.critical}</span>
+                            <span className="text-[10px] font-bold uppercase text-red-400">Críticos</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setQuickFilter('none');
+                                setFilterStatus('Todos');
+                                setFilterSource('Email');
+                            }}
+                            className={`rounded-lg border p-2 text-center transition-colors ${filterSource === 'Email' && quickFilter === 'none' ? 'border-violet-300 bg-violet-100 ring-1 ring-violet-300' : 'border-violet-100 bg-violet-50 hover:border-violet-200'}`}
+                        >
                             <span className="block text-lg font-bold text-violet-600">{ticketStats.email}</span>
                             <span className="text-[10px] font-bold uppercase text-violet-400">Email</span>
-                        </div>
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center">
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setFilterStatus('Todos');
+                                setFilterSource('Todos');
+                                setQuickFilter('unassigned');
+                            }}
+                            className={`rounded-lg border p-2 text-center transition-colors ${quickFilter === 'unassigned' ? 'border-slate-400 bg-slate-200 ring-1 ring-slate-400' : 'border-slate-200 bg-slate-50 hover:border-slate-300'}`}
+                        >
                             <span className="block text-lg font-bold text-slate-700">{ticketStats.unassigned}</span>
                             <span className="text-[10px] font-bold uppercase text-slate-400">Asignar</span>
+                        </button>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/90 p-3">
+                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                            <Filter size={12} />
+                            Filtros
                         </div>
-                    </div>
 
-                    <div className="mb-2 flex rounded-lg bg-slate-100 p-1">
-                        {statusFilters.map((status) => (
-                            <button
-                                key={status}
-                                onClick={() => setFilterStatus(status)}
-                                className={`flex-1 rounded-md py-1.5 text-xs font-medium transition-colors ${filterStatus === status ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                            >
-                                {status.replace('_', ' ')}
-                            </button>
-                        ))}
-                    </div>
+                        <div>
+                            <p className="mb-1.5 text-[11px] font-semibold text-slate-600">Estado del ticket</p>
+                            <div className="flex flex-wrap gap-1.5">
+                                {statusFilters.map((status) => (
+                                    <button
+                                        key={status}
+                                        type="button"
+                                        onClick={() => {
+                                            setQuickFilter('none');
+                                            setFilterStatus(status);
+                                        }}
+                                        className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${
+                                            filterStatus === status
+                                                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                                                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        {formatStatusLabel(status)}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
 
-                    <div className="flex gap-1 overflow-x-auto pb-1">
-                        {sourceFilters.map((source) => (
-                            <button
-                                key={source}
-                                onClick={() => setFilterSource(source)}
-                                className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${filterSource === source ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}
-                            >
-                                {source}
-                            </button>
-                        ))}
+                        <div className="border-t border-slate-200 pt-3">
+                            <p className="mb-1.5 text-[11px] font-semibold text-slate-600">Canal de origen</p>
+                            <div className="flex flex-wrap gap-1.5">
+                                {sourceFilters.map((source) => (
+                                    <button
+                                        key={source}
+                                        type="button"
+                                        onClick={() => {
+                                            setQuickFilter('none');
+                                            setFilterSource(source);
+                                        }}
+                                        className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors ${
+                                            filterSource === source
+                                                ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                                                : 'border-slate-200 bg-white text-slate-600 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700'
+                                        }`}
+                                    >
+                                        {source === 'Email' ? <Mail size={11} /> : source === 'Todos' ? null : <MonitorSmartphone size={11} />}
+                                        {source}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <p className="border-t border-slate-200 pt-2 text-[11px] font-medium text-slate-500">
+                            Mostrando <span className="font-bold text-slate-800">{filteredTickets.length}</span> de{' '}
+                            <span className="font-bold text-slate-800">{tickets.length}</span> tickets
+                        </p>
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-2">
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                    {filteredTickets.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                            No hay tickets con los filtros seleccionados.
+                        </div>
+                    ) : null}
                     {filteredTickets.map((ticket) => {
                         const sentiment = ticket.insight?.sentiment ?? 'neutral';
+                        const preview = lastMessageByTicketId[ticket.id];
+                        const previewText = preview?.message
+                            ? truncatePreview(preview.message)
+                            : truncatePreview(ticket.insight?.summary || ticket.subject);
 
                         return (
                             <button
                                 key={ticket.id}
+                                type="button"
                                 onClick={() => setSelectedTicket(ticket)}
-                                className={`mb-2 w-full rounded-lg border p-3 text-left transition-colors ${selectedTicket?.id === ticket.id ? 'border-blue-300 bg-blue-50 ring-1 ring-blue-500' : 'border-slate-100 bg-white hover:border-slate-300 hover:bg-slate-50'}`}
+                                className={`mb-2 w-full rounded-xl border p-3 text-left transition-all ${
+                                    selectedTicket?.id === ticket.id
+                                        ? 'border-blue-400 bg-blue-50 shadow-sm ring-2 ring-blue-500/30'
+                                        : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
+                                }`}
                             >
                                 <div className="mb-2 flex items-center justify-between gap-2">
                                     <div className="flex min-w-0 items-center gap-2">
@@ -1075,7 +1224,17 @@ const SupportCommandCenter: React.FC = () => {
                                 </div>
 
                                 <h3 className="truncate text-sm font-bold text-slate-900">{getTicketOwner(ticket)}</h3>
-                                <p className="mt-1 line-clamp-2 text-xs text-slate-500">{ticket.subject}</p>
+                                <p className="mt-1 line-clamp-1 text-xs font-medium text-slate-700">{ticket.subject}</p>
+                                <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500">
+                                    {preview ? (
+                                        <>
+                                            <span className="font-semibold text-slate-600">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}
+                                            {previewText}
+                                        </>
+                                    ) : (
+                                        previewText
+                                    )}
+                                </p>
 
                                 <div className="mt-3 flex items-center justify-between gap-2 text-[11px]">
                                     <span className={`rounded-full border px-2 py-0.5 font-medium ${sentimentStyles[sentiment]}`}>
@@ -1083,7 +1242,7 @@ const SupportCommandCenter: React.FC = () => {
                                     </span>
                                     <span className="flex items-center gap-1 text-slate-400">
                                         <Clock3 size={11} />
-                                        {formatTime(ticket.created_at)}
+                                        {formatTime(preview?.created_at || ticket.created_at)}
                                     </span>
                                 </div>
                             </button>
@@ -1092,10 +1251,10 @@ const SupportCommandCenter: React.FC = () => {
                 </div>
             </aside>
 
-            <main className="flex min-w-0 flex-1 flex-col bg-white">
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
                 {selectedTicket ? (
                     <>
-                        <div className="shrink-0 border-b border-slate-100 bg-slate-50 p-4">
+                        <div className="shrink-0 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white p-4">
                             <div className="flex items-start justify-between gap-4">
                                 <div className="min-w-0">
                                     <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1104,7 +1263,7 @@ const SupportCommandCenter: React.FC = () => {
                                             {selectedTicket.source}
                                         </span>
                                         <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                                            {selectedTicket.status.replace('_', ' ')}
+                                            {formatStatusLabel(selectedTicket.status)}
                                         </span>
                                         <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
                                             {selectedTicket.category}
@@ -1162,7 +1321,13 @@ const SupportCommandCenter: React.FC = () => {
                             )}
                         </div>
 
-                        <div ref={messagesPaneRef} className="flex-1 space-y-4 overflow-y-auto p-6">
+                        <div ref={messagesPaneRef} className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_120px)] px-4 py-4">
+                            {messages.length === 0 ? (
+                                <div className="flex h-full min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500">
+                                    Aún no hay mensajes en este ticket.
+                                </div>
+                            ) : null}
+                            <div className="mx-auto flex max-w-3xl flex-col gap-3">
                             {messages.map((message) => {
                                 const attachments = normalizeMessageAttachments(message.attachments);
                                 const isAdminMessage = message.sender_type === 'Admin';
@@ -1170,11 +1335,12 @@ const SupportCommandCenter: React.FC = () => {
 
                                 return (
                                     <div key={message.id} className={`flex ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}>
-                                        <div className={`max-w-[72%] rounded-2xl px-4 py-3 text-sm shadow-sm ${isAdminMessage ? 'rounded-tr-sm bg-blue-600 text-white' : isSystemMessage ? 'border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-tl-sm border border-slate-200 bg-white text-slate-700'}`}>
-                                            <div className="mb-1 text-[10px] font-bold uppercase opacity-70">
-                                                {isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}
+                                        <div className={`max-w-[min(72%,640px)] rounded-2xl px-4 py-3 text-sm shadow-sm ${isAdminMessage ? 'rounded-br-md bg-blue-600 text-white' : isSystemMessage ? 'max-w-xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
+                                            <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide opacity-75">
+                                                <span>{isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}</span>
+                                                <span className="font-medium normal-case tracking-normal">{formatTime(message.created_at)}</span>
                                             </div>
-                                            <p className="whitespace-pre-wrap break-words">{message.message}</p>
+                                            <p className="whitespace-pre-wrap break-words leading-relaxed">{message.message}</p>
 
                                             {attachments.length ? (
                                                 <div className="mt-3 grid gap-2">
@@ -1239,14 +1405,19 @@ const SupportCommandCenter: React.FC = () => {
                                     </div>
                                 );
                             })}
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2 shadow-sm">
+                            </div>
+                        </div>
+
+                        <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-4">
+                            <div className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                                 {selectedTicket.insight?.suggested_replies?.length ? (
-                                    <div className="mb-3 flex gap-2 overflow-x-auto">
+                                    <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
                                         {selectedTicket.insight.suggested_replies.slice(0, 3).map((reply) => (
                                             <button
                                                 key={reply}
+                                                type="button"
                                                 onClick={() => setReplyText(reply)}
-                                                className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50"
+                                                className="shrink-0 rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-left text-xs font-medium text-violet-700 hover:bg-violet-100"
                                             >
                                                 {reply.slice(0, 92)}
                                             </button>
@@ -1254,17 +1425,18 @@ const SupportCommandCenter: React.FC = () => {
                                     </div>
                                 ) : null}
 
-                                <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500">
+                                <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
                                     <textarea
                                         ref={replyTextareaRef}
                                         rows={1}
                                         value={replyText}
                                         onChange={(event) => setReplyText(event.target.value)}
-                                        placeholder="Escribe tu respuesta..."
-                                        className="max-h-[240px] min-h-[40px] w-full resize-none overflow-hidden border-0 p-2 text-sm leading-5 outline-none focus:ring-0"
+                                        placeholder="Escribe tu respuesta…"
+                                        className="max-h-[240px] min-h-[44px] w-full resize-none overflow-hidden border-0 px-3 py-2.5 text-sm leading-5 outline-none focus:ring-0"
                                     />
-                                    <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-2 py-1.5">
+                                    <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-2 py-2">
                                         <button
+                                            type="button"
                                             onClick={generateDraft}
                                             disabled={isGeneratingDraft}
                                             className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1273,9 +1445,10 @@ const SupportCommandCenter: React.FC = () => {
                                             {isGeneratingDraft ? 'Generando...' : 'Borrador IA'}
                                         </button>
                                         <button
+                                            type="button"
                                             onClick={handleSendReply}
                                             disabled={isSendingReply}
-                                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                                         >
                                             {isSendingReply ? 'Enviando...' : getTicketRecipientEmail(selectedTicket) ? 'Enviar y notificar' : 'Enviar'}
                                             <Send size={14} />
@@ -1286,7 +1459,7 @@ const SupportCommandCenter: React.FC = () => {
                         </div>
                     </>
                 ) : (
-                    <div className="flex flex-1 flex-col items-center justify-center bg-slate-50 text-slate-400">
+                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center bg-slate-50 text-slate-400">
                         <MessageSquare className="mb-4 text-slate-300" size={56} />
                         <p className="font-medium text-slate-600">Selecciona un ticket para comenzar</p>
                     </div>
@@ -1294,13 +1467,13 @@ const SupportCommandCenter: React.FC = () => {
             </main>
 
             {selectedTicket && (
-                <aside className="flex w-[320px] shrink-0 flex-col overflow-y-auto border-l border-slate-200 bg-white">
-                    <div className="border-b border-slate-100 p-4">
+                <aside className="flex min-h-0 w-[320px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+                    <div className="shrink-0 border-b border-slate-100 p-4">
                         <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800">Contexto</h3>
                         <p className="mt-1 text-xs text-slate-500">Tenant, contacto y señales técnicas</p>
                     </div>
 
-                    <div className="space-y-5 p-4">
+                    <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
                         {selectedTicket.insight && (
                             <section>
                                 <h4 className="mb-2 text-xs font-semibold text-slate-500">IA operativa</h4>
