@@ -277,13 +277,15 @@ Deno.serve(async (request) => {
                 .select('id,tenant_id,device_id,terminal_id,terminal_name')
                 .eq('tenant_id', tenantId)
                 .eq('terminal_id', requestedTerminalId)
+                .order('last_seen_at', { ascending: false })
+                .limit(1)
                 .maybeSingle();
             if (error) throw error;
             registry = (data as RegistryRecord | null) || null;
         }
 
         const terminalId = requestedTerminalId || registry?.terminal_id || '';
-        const { data: publicTerminalData, error: terminalError } = terminalId
+        const { data: publicTerminalData, error: terminalError } = !registry && terminalId
             ? await supabase
                 .schema('public')
                 .from('terminals')
