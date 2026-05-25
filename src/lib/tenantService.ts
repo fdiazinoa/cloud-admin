@@ -2,11 +2,18 @@ import { supabase, supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } f
 import type {
     Distributor,
     Tenant,
+    CloudChannel,
+    ContractedProduct,
+    DataMaster,
+    PosRuntime,
+    TenantLifecycleStatus,
+    TenantProvisioningStatus,
     TenantTerminalRegistryEntry,
     TenantTerminalSnapshot,
     TenantType,
     Terminal,
 } from "../types";
+import { deriveTenantSemanticsFromTenant, type TenantSemanticConfig } from "./tenantProducts";
 
 export interface DashboardStats {
     totalTenants: number;
@@ -70,6 +77,17 @@ interface CreateTenantInput {
     plan?: string;
     type?: TenantType;
     cloudSync?: boolean;
+    contractedProduct?: ContractedProduct;
+    posRuntime?: PosRuntime;
+    cloudChannel?: CloudChannel;
+    dataMaster?: DataMaster;
+    cloudSyncEnabled?: boolean;
+    erpCoreEnabled?: boolean;
+    erpUiEnabled?: boolean;
+    customerErpAccess?: boolean;
+    backupEnabled?: boolean;
+    lifecycleStatus?: TenantLifecycleStatus;
+    provisioningStatus?: TenantProvisioningStatus;
 }
 
 export interface RequestTerminalTakeoverInput {
@@ -143,6 +161,53 @@ function generateTempPassword(): string {
     return pwd;
 }
 
+function normalizeTenantSemantics(input: CreateTenantInput): TenantSemanticConfig {
+    const inferred = deriveTenantSemanticsFromTenant(input.type, input.cloudSync);
+    const semantics: TenantSemanticConfig = {
+        ...inferred,
+        contractedProduct: input.contractedProduct || inferred.contractedProduct,
+        posRuntime: input.posRuntime || inferred.posRuntime,
+        cloudChannel: input.cloudChannel || inferred.cloudChannel,
+        dataMaster: input.dataMaster || inferred.dataMaster,
+        cloudSyncEnabled: input.cloudSyncEnabled ?? inferred.cloudSyncEnabled,
+        erpCoreEnabled: input.erpCoreEnabled ?? inferred.erpCoreEnabled,
+        erpUiEnabled: input.erpUiEnabled ?? inferred.erpUiEnabled,
+        customerErpAccess: input.customerErpAccess ?? inferred.customerErpAccess,
+        backupEnabled: input.backupEnabled ?? inferred.backupEnabled,
+        lifecycleStatus: input.lifecycleStatus || inferred.lifecycleStatus,
+        provisioningStatus: input.provisioningStatus || inferred.provisioningStatus,
+    };
+
+    if (semantics.contractedProduct === "POS_ONLY") {
+        if (semantics.customerErpAccess) {
+            throw new Error("POS_ONLY no puede tener acceso ERP visible para el cliente.");
+        }
+        if (semantics.erpUiEnabled) {
+            throw new Error("POS_ONLY no puede tener ERP UI habilitado.");
+        }
+    }
+
+    if (semantics.contractedProduct === "POS_ERP") {
+        if (!semantics.customerErpAccess) {
+            throw new Error("POS_ERP requiere acceso ERP para el cliente.");
+        }
+        if (semantics.cloudChannel !== "ERP_ACTIVE") {
+            throw new Error("POS_ERP debe usar cloud_channel ERP_ACTIVE.");
+        }
+    }
+
+    if (semantics.posRuntime === "SLAVE") {
+        if (semantics.cloudChannel !== "POS_MASTER" || semantics.dataMaster !== "POS_MASTER") {
+            throw new Error("POS_SLAVE debe depender de POS_MASTER y no de ERP directo.");
+        }
+        if (semantics.erpUiEnabled) {
+            throw new Error("Una terminal esclava no puede tener ERP UI directo.");
+        }
+    }
+
+    return semantics;
+}
+
 export async function createTenant({
     name,
     slug,
@@ -155,10 +220,45 @@ export async function createTenant({
     plan = "TRIAL",
     type = "full",
     cloudSync = true,
+    contractedProduct,
+    posRuntime,
+    cloudChannel,
+    dataMaster,
+    cloudSyncEnabled,
+    erpCoreEnabled,
+    erpUiEnabled,
+    customerErpAccess,
+    backupEnabled,
+    lifecycleStatus,
+    provisioningStatus,
 }: CreateTenantInput): Promise<{ tenantId: string; tempPassword: string }> {
     const accessEmail = email.trim().toLowerCase();
     const contactMail = contactEmail.trim().toLowerCase();
     const tempPassword = generateTempPassword();
+    const semantics = normalizeTenantSemantics({
+        name,
+        slug,
+        email,
+        contactName,
+        contactEmail,
+        city,
+        capturedByDistributorId,
+        servicedByDistributorId,
+        plan,
+        type,
+        cloudSync,
+        contractedProduct,
+        posRuntime,
+        cloudChannel,
+        dataMaster,
+        cloudSyncEnabled,
+        erpCoreEnabled,
+        erpUiEnabled,
+        customerErpAccess,
+        backupEnabled,
+        lifecycleStatus,
+        provisioningStatus,
+    });
 
     const { error: authError, data: authUser } = await supabaseAdmin.auth.admin.createUser({
         email: accessEmail,
@@ -170,6 +270,17 @@ export async function createTenant({
             slug,
             type,
             cloudSync,
+            contracted_product: semantics.contractedProduct,
+            pos_runtime: semantics.posRuntime,
+            cloud_channel: semantics.cloudChannel,
+            data_master: semantics.dataMaster,
+            cloud_sync_enabled: semantics.cloudSyncEnabled,
+            erp_core_enabled: semantics.erpCoreEnabled,
+            erp_ui_enabled: semantics.erpUiEnabled,
+            customer_erp_access: semantics.customerErpAccess,
+            backup_enabled: semantics.backupEnabled,
+            lifecycle_status: semantics.lifecycleStatus,
+            provisioning_status: semantics.provisioningStatus,
             contact_name: contactName.trim(),
             contact_email: contactMail,
             city: city.trim(),
@@ -195,6 +306,17 @@ export async function createTenant({
         p_email: accessEmail,
         p_type: type,
         p_cloud_sync: cloudSync,
+        p_contracted_product: semantics.contractedProduct,
+        p_pos_runtime: semantics.posRuntime,
+        p_cloud_channel: semantics.cloudChannel,
+        p_data_master: semantics.dataMaster,
+        p_cloud_sync_enabled: semantics.cloudSyncEnabled,
+        p_erp_core_enabled: semantics.erpCoreEnabled,
+        p_erp_ui_enabled: semantics.erpUiEnabled,
+        p_customer_erp_access: semantics.customerErpAccess,
+        p_backup_enabled: semantics.backupEnabled,
+        p_lifecycle_status: semantics.lifecycleStatus,
+        p_provisioning_status: semantics.provisioningStatus,
         p_contact_name: contactName.trim(),
         p_contact_email: contactMail,
         p_city: city.trim(),
@@ -217,6 +339,17 @@ export async function createTenant({
             slug,
             type,
             cloudSync,
+            contracted_product: semantics.contractedProduct,
+            pos_runtime: semantics.posRuntime,
+            cloud_channel: semantics.cloudChannel,
+            data_master: semantics.dataMaster,
+            cloud_sync_enabled: semantics.cloudSyncEnabled,
+            erp_core_enabled: semantics.erpCoreEnabled,
+            erp_ui_enabled: semantics.erpUiEnabled,
+            customer_erp_access: semantics.customerErpAccess,
+            backup_enabled: semantics.backupEnabled,
+            lifecycle_status: semantics.lifecycleStatus,
+            provisioning_status: semantics.provisioningStatus,
             contact_name: contactName.trim(),
             contact_email: contactMail,
             city: city.trim(),
@@ -292,6 +425,17 @@ export async function updateTenant(
         phone: string | null;
         type: TenantType;
         cloud_sync: boolean;
+        contracted_product?: ContractedProduct;
+        pos_runtime?: PosRuntime;
+        cloud_channel?: CloudChannel;
+        data_master?: DataMaster;
+        cloud_sync_enabled?: boolean;
+        erp_core_enabled?: boolean;
+        erp_ui_enabled?: boolean;
+        customer_erp_access?: boolean;
+        backup_enabled?: boolean;
+        lifecycle_status?: TenantLifecycleStatus;
+        provisioning_status?: TenantProvisioningStatus;
     },
 ): Promise<void> {
     const { error } = await supabaseAdmin
