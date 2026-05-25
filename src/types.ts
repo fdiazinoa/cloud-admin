@@ -78,11 +78,39 @@ export interface TenantTerminalRegistryEntry {
     revocation_reason?: string | null;
     requires_pos_reauth?: boolean | null;
     requires_full_bootstrap?: boolean | null;
+    erp_readiness?: TenantTerminalErpReadiness | null;
+    last_erp_readiness_at?: string | null;
     is_primary?: boolean | null;
     status?: string | null;
     last_seen_at?: string | null;
     created_at?: string | null;
     updated_at?: string | null;
+}
+
+export interface TenantTerminalErpReadiness {
+    status?: string | null;
+    erpTenantId?: string | null;
+    erp_tenant_id?: string | null;
+    companyId?: string | null;
+    company_id?: string | null;
+    storeId?: string | null;
+    store_id?: string | null;
+    terminalId?: string | null;
+    terminal_id?: string | null;
+    profileStatus?: string | null;
+    profile_status?: string | null;
+    checks?: Record<string, unknown> | null;
+    lastSyncEventAt?: string | null;
+    last_sync_event_at?: string | null;
+    lastSyncEventType?: string | null;
+    last_sync_event_type?: string | null;
+    lastSyncStatus?: string | null;
+    last_sync_status?: string | null;
+    checked_at?: string | null;
+    http_status?: number | null;
+    error_code?: string | null;
+    message?: string | null;
+    [key: string]: unknown;
 }
 
 export interface TenantTerminalSnapshot {
