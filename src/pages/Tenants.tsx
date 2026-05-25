@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Activity, Server, Check, AlertCircle } from 'lucide-react';
-import type { Distributor, Tenant, TenantTerminalSnapshot } from '../types';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, CheckCircle2, RefreshCcw } from 'lucide-react';
+import type { Distributor, Tenant, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
+import { getPosApkReleases, type PosApkRelease } from '../lib/posApkReleases';
 import {
     deriveProductsFromTenant,
     deriveTenantConfigFromProducts,
@@ -30,86 +31,22 @@ export const Tenants: React.FC = () => {
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
+    const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkRelease | null>(null);
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
+    const [takeoverTerminal, setTakeoverTerminal] = useState<TenantTerminalSnapshot | null>(null);
+    const [isTakeoverModalOpen, setIsTakeoverModalOpen] = useState(false);
+    const [isTakeoverSubmitting, setIsTakeoverSubmitting] = useState(false);
+    const [rebuildTerminal, setRebuildTerminal] = useState<TenantTerminalSnapshot | null>(null);
+    const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
+    const [isRebuildSubmitting, setIsRebuildSubmitting] = useState(false);
+    const [erpReadinessSubmittingKey, setErpReadinessSubmittingKey] = useState<string | null>(null);
+    const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
+    const [updatingStatusTenantId, setUpdatingStatusTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
         tempPassword: string;
     } | null>(null);
-
-    const [isAddApkModalOpen, setIsAddApkModalOpen] = useState(false);
-    const [isAddApkSubmitting, setIsAddApkSubmitting] = useState(false);
-    const [addApkFormData, setAddApkFormData] = useState({
-        deviceId: '',
-        terminalId: '',
-        terminalName: '',
-        hostname: '',
-        protocol: 'http',
-        port: 3001,
-        localIp: '',
-        isPrimary: true,
-        appVersion: '1.0.0',
-        appVersionCode: 1,
-    });
-
-    const handleAddApk = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!selectedTenantForTerminals) return;
-        if (!addApkFormData.deviceId.trim()) {
-            alert('El ID de dispositivo es requerido.');
-            return;
-        }
-        if (!addApkFormData.terminalId.trim()) {
-            alert('El ID de terminal es requerido o puedes seleccionar uno.');
-            return;
-        }
-        if (!addApkFormData.localIp.trim()) {
-            alert('La IP local es requerida.');
-            return;
-        }
-
-        setIsAddApkSubmitting(true);
-        try {
-            const payload = {
-                tenantId: selectedTenantForTerminals.id,
-                deviceId: addApkFormData.deviceId.trim(),
-                terminalId: addApkFormData.terminalId.trim(),
-                terminalName: addApkFormData.terminalName.trim() || undefined,
-                hostname: addApkFormData.hostname.trim() || undefined,
-                protocol: addApkFormData.protocol,
-                port: Number(addApkFormData.port),
-                localIp: addApkFormData.localIp.trim(),
-                isPrimary: addApkFormData.isPrimary,
-                appVersion: addApkFormData.appVersion.trim() || undefined,
-                appVersionCode: Number(addApkFormData.appVersionCode) || undefined,
-            };
-
-            await tenantService.registerTenantServerEndpoint(payload);
-            
-            setAddApkFormData({
-                deviceId: '',
-                terminalId: '',
-                terminalName: '',
-                hostname: '',
-                protocol: 'http',
-                port: 3001,
-                localIp: '',
-                isPrimary: true,
-                appVersion: '1.0.0',
-                appVersionCode: 1,
-            });
-            setIsAddApkModalOpen(false);
-            
-            setIsTerminalModalLoading(true);
-            const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
-            setTenantTerminals(data);
-        } catch (err: unknown) {
-            console.error('Error registering APK:', err);
-            alert('Error al registrar la APK POS: ' + getErrorMessage(err));
-        } finally {
-            setIsAddApkSubmitting(false);
-        }
-    };
 
     const [formData, setFormData] = useState({
         name: '',
@@ -130,6 +67,18 @@ export const Tenants: React.FC = () => {
         email: '',
         password: '',
         products: getDefaultTenantProducts() as TenantProductSelection,
+    });
+    const [takeoverFormData, setTakeoverFormData] = useState({
+        terminalId: '',
+        registryId: '',
+        newDeviceId: '',
+        deviceName: '',
+        reason: '',
+        confirmTakeover: false,
+    });
+    const [rebuildFormData, setRebuildFormData] = useState({
+        reason: '',
+        confirmRebuild: false,
     });
 
     const getErrorMessage = (error: unknown) => {
@@ -202,12 +151,28 @@ export const Tenants: React.FC = () => {
             || (tenant.city && tenant.city.toLowerCase().includes(normalizedSearch));
     });
 
+    const activateTrialTenant = async (tenant: Tenant) => {
+        if (!confirm(`¿Deseas activar la empresa "${tenant.name}"?`)) return;
+
+        setUpdatingStatusTenantId(tenant.id);
+        try {
+            await tenantService.reactivateTenant(tenant.id);
+            await fetchTenants();
+        } catch (err) {
+            console.error('Error activating tenant:', err);
+            alert('Hubo un error al activar la empresa');
+        } finally {
+            setUpdatingStatusTenantId(null);
+        }
+    };
+
     const toggleTenantStatus = async (tenant: Tenant) => {
-        const isCurrentlyActive = tenant.status === 'ACTIVE' || tenant.status === 'TRIAL';
+        const isCurrentlyActive = tenant.status === 'ACTIVE';
         const newStatusLabel = isCurrentlyActive ? 'SUSPENDER' : 'REACTIVAR';
 
         if (!confirm(`¿Estás seguro que deseas ${newStatusLabel} esta empresa?`)) return;
 
+        setUpdatingStatusTenantId(tenant.id);
         try {
             if (isCurrentlyActive) {
                 await tenantService.suspendTenant(tenant.id);
@@ -218,6 +183,34 @@ export const Tenants: React.FC = () => {
         } catch (err) {
             console.error('Error toggling status:', err);
             alert('Hubo un error al actualizar el estatus');
+        } finally {
+            setUpdatingStatusTenantId(null);
+        }
+    };
+
+    const handleDeleteTenant = async (tenant: Tenant) => {
+        const confirmed = confirm(
+            `Vas a eliminar definitivamente el tenant "${tenant.name}". Esta accion borra su registro, suscripcion, esquema de base de datos y usuario de acceso si existe. ¿Deseas continuar?`,
+        );
+        if (!confirmed) return;
+
+        const typedName = prompt(`Para confirmar, escribe exactamente el nombre del tenant: ${tenant.name}`);
+        if (typedName !== tenant.name) {
+            alert('El nombre no coincide. No se elimino el tenant.');
+            return;
+        }
+
+        setDeletingTenantId(tenant.id);
+        try {
+            await tenantService.deleteTenant(tenant);
+            await fetchTenants();
+            alert(`Tenant "${tenant.name}" eliminado correctamente.`);
+        } catch (err: unknown) {
+            console.error('Error deleting tenant:', err);
+            await fetchTenants();
+            alert('Error al eliminar el Tenant: ' + getErrorMessage(err));
+        } finally {
+            setDeletingTenantId(null);
         }
     };
 
@@ -319,8 +312,12 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalLoading(true);
 
         try {
-            const data = await tenantService.getTenantTerminalOverview(tenant.id);
+            const [data, releases] = await Promise.all([
+                tenantService.getTenantTerminalOverview(tenant.id),
+                getPosApkReleases(),
+            ]);
             setTenantTerminals(data);
+            setLatestPosApkRelease(releases.find((release) => release.is_latest) || releases[0] || null);
         } catch (err) {
             console.error('Error fetching tenant terminals:', err);
             alert('No se pudieron cargar las terminales de este tenant.');
@@ -333,6 +330,9 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalOpen(false);
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
+        setLatestPosApkRelease(null);
+        closeTakeoverModal();
+        closeRebuildModal();
     };
 
     const handleToggleTerminalStatus = async (terminalId: string, currentStatus: boolean) => {
@@ -355,6 +355,335 @@ export const Tenants: React.FC = () => {
             alert(`Error al cambiar el estado de la terminal: ${errorMessage}`);
         }
     };
+
+    const isLocalPosTenant = (tenant?: Tenant | null) => tenant?.type === 'pos_only' && tenant.cloud_sync === false;
+
+    const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => terminal.terminal_id || terminal.id;
+
+    const getTakeoverSelectionKey = (terminalId: string, registryId?: string | null) => (
+        registryId ? `registry:${registryId}` : `terminal:${terminalId}`
+    );
+
+    const getTakeoverOptions = () => tenantTerminals.flatMap((terminal) => {
+        const registries = terminal.registries?.length
+            ? terminal.registries
+            : terminal.registry
+                ? [terminal.registry]
+                : [];
+
+        if (registries.length === 0) {
+            const terminalId = getTerminalTakeoverId(terminal);
+            return [{
+                key: getTakeoverSelectionKey(terminalId),
+                terminal,
+                terminalId,
+                registryId: '',
+                label: `${terminal.name} · ${terminalId || 'Sin ID'} · ${terminal.device_token || 'N/D'}`,
+            }];
+        }
+
+        return registries.map((registry) => {
+            const terminalId = registry.terminal_id || getTerminalTakeoverId(terminal);
+            const deviceId = registry.current_device_id || registry.device_id || terminal.device_token || 'N/D';
+            return {
+                key: getTakeoverSelectionKey(terminalId, registry.id),
+                terminal: { ...terminal, registry },
+                terminalId,
+                registryId: registry.id || '',
+                label: `${terminal.name} · Terminal ${terminalId || 'Sin ID'} · ${deviceId}`,
+            };
+        });
+    });
+
+    const getTerminalCurrentDeviceId = (terminal: TenantTerminalSnapshot) => (
+        terminal.registry?.current_device_id
+        || terminal.registry?.device_id
+        || terminal.device_token
+        || ''
+    );
+
+    const getTerminalKey = (terminal: TenantTerminalSnapshot) => `${terminal.id}-${terminal.registry?.id || 'catalog'}`;
+
+    const getReadinessValue = (readiness: TenantTerminalErpReadiness | null | undefined, keys: string[]) => {
+        if (!readiness) return null;
+        for (const key of keys) {
+            const value = readiness[key];
+            if (typeof value === 'string' && value.trim()) return value.trim();
+            if (typeof value === 'number') return String(value);
+        }
+        return null;
+    };
+
+    const getReadinessCheckValue = (readiness: TenantTerminalErpReadiness | null | undefined, keys: string[]) => {
+        const checks = readiness?.checks;
+        if (!checks || typeof checks !== 'object') return null;
+
+        for (const key of keys) {
+            const value = checks[key];
+            if (typeof value === 'boolean') return value;
+            if (typeof value === 'number') return value > 0;
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                if (['true', 'ready', 'active', 'available', 'ok', 'yes'].includes(normalized)) return true;
+                if (['false', 'missing', 'draft', 'empty', 'no'].includes(normalized)) return false;
+            }
+            if (value && typeof value === 'object') {
+                const record = value as Record<string, unknown>;
+                const ready = record.ready ?? record.exists ?? record.available ?? record.enabled;
+                if (typeof ready === 'boolean') return ready;
+                const count = record.count ?? record.total;
+                if (typeof count === 'number') return count > 0;
+            }
+        }
+
+        return null;
+    };
+
+    const getErpReadinessStatus = (terminal: TenantTerminalSnapshot) => (
+        terminal.registry?.erp_readiness?.status?.toString().toLowerCase() || 'missing'
+    );
+
+    const getReadinessBadgeClasses = (status: string) => {
+        if (status === 'ready') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        if (status === 'pending') return 'border-blue-200 bg-blue-50 text-blue-700';
+        if (status === 'missing_catalog') return 'border-amber-200 bg-amber-50 text-amber-700';
+        if (status === 'error') return 'border-red-200 bg-red-50 text-red-700';
+        return 'border-slate-200 bg-slate-50 text-slate-600';
+    };
+
+    const getReadinessLabel = (status: string) => {
+        if (status === 'ready') return 'ERP listo';
+        if (status === 'pending') return 'ERP pendiente';
+        if (status === 'missing_catalog') return 'Catalogo faltante';
+        if (status === 'error') return 'ERP con error';
+        return 'ERP sin validar';
+    };
+
+    const getCheckLabel = (value: boolean | null, readyLabel: string, missingLabel: string) => {
+        if (value === true) return readyLabel;
+        if (value === false) return missingLabel;
+        return 'N/D';
+    };
+
+    const openTakeoverModal = (terminal: TenantTerminalSnapshot) => {
+        setTakeoverTerminal(terminal);
+        setTakeoverFormData({
+            terminalId: getTerminalTakeoverId(terminal),
+            registryId: terminal.registry?.id || '',
+            newDeviceId: '',
+            deviceName: terminal.name || '',
+            reason: '',
+            confirmTakeover: false,
+        });
+        setIsTakeoverModalOpen(true);
+    };
+
+    const closeTakeoverModal = () => {
+        setIsTakeoverModalOpen(false);
+        setTakeoverTerminal(null);
+        setTakeoverFormData({
+            terminalId: '',
+            registryId: '',
+            newDeviceId: '',
+            deviceName: '',
+            reason: '',
+            confirmTakeover: false,
+        });
+    };
+
+    const openRebuildModal = (terminal: TenantTerminalSnapshot) => {
+        setRebuildTerminal(terminal);
+        setRebuildFormData({
+            reason: '',
+            confirmRebuild: false,
+        });
+        setIsRebuildModalOpen(true);
+    };
+
+    const closeRebuildModal = () => {
+        setIsRebuildModalOpen(false);
+        setRebuildTerminal(null);
+        setRebuildFormData({
+            reason: '',
+            confirmRebuild: false,
+        });
+    };
+
+    const requestErpReadinessForTerminal = async (
+        terminal: TenantTerminalSnapshot,
+        options?: { deviceId?: string; terminalName?: string; silent?: boolean },
+    ) => {
+        if (!selectedTenantForTerminals) return null;
+
+        const terminalId = getTerminalTakeoverId(terminal);
+        const deviceId = options?.deviceId || getTerminalCurrentDeviceId(terminal);
+
+        if (!terminalId || !deviceId) {
+            if (!options?.silent) {
+                alert('Esta terminal necesita terminal_id y device_id antes de preparar el contexto ERP.');
+            }
+            return null;
+        }
+
+        const result = await tenantService.requestTerminalErpReadiness({
+            tenantId: selectedTenantForTerminals.id,
+            terminalId,
+            registryId: terminal.registry?.id || null,
+            deviceId,
+            terminalName: options?.terminalName || terminal.name,
+        });
+
+        const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+        setTenantTerminals(data);
+        return result;
+    };
+
+    const handleRetryErpReadiness = async (terminal: TenantTerminalSnapshot) => {
+        const key = getTerminalKey(terminal);
+        setErpReadinessSubmittingKey(key);
+
+        try {
+            const result = await requestErpReadinessForTerminal(terminal);
+            alert(result?.message || (result?.status === 'ready'
+                ? 'Contexto ERP listo para operar.'
+                : 'POS vinculado, pero el contexto ERP aun no esta listo.'));
+        } catch (err: unknown) {
+            console.error('Error requesting POS ERP readiness:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setErpReadinessSubmittingKey(null);
+        }
+    };
+
+    const handleTakeoverTerminalChange = (selectionKey: string) => {
+        const selectedOption = getTakeoverOptions().find((option) => option.key === selectionKey) || null;
+        setTakeoverTerminal(selectedOption?.terminal || null);
+        setTakeoverFormData((current) => ({
+            ...current,
+            terminalId: selectedOption?.terminalId || '',
+            registryId: selectedOption?.registryId || '',
+            deviceName: selectedOption?.terminal.name || current.deviceName,
+        }));
+    };
+
+    const handleTerminalTakeover = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedTenantForTerminals || !takeoverTerminal) return;
+
+        if (!isLocalPosTenant(selectedTenantForTerminals)) {
+            alert('La recuperacion de terminal solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.');
+            return;
+        }
+
+        const newDeviceId = takeoverFormData.newDeviceId.trim();
+        const reason = takeoverFormData.reason.trim();
+
+        if (!takeoverFormData.terminalId || !newDeviceId || !reason) {
+            alert('Selecciona terminal, indica el nuevo device_id y registra el motivo del cambio.');
+            return;
+        }
+
+        if (!takeoverFormData.confirmTakeover) {
+            alert('Confirma que la tablet anterior quedara revocada antes de ejecutar la recuperacion.');
+            return;
+        }
+
+        setIsTakeoverSubmitting(true);
+        try {
+            const result = await tenantService.requestTerminalTakeover({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId: takeoverFormData.terminalId,
+                registryId: takeoverFormData.registryId || takeoverTerminal.registry?.id || null,
+                newDeviceId,
+                deviceName: takeoverFormData.deviceName.trim() || undefined,
+                reason,
+                confirmTakeover: takeoverFormData.confirmTakeover,
+            });
+            let readinessMessage = '';
+            try {
+                const readiness = await requestErpReadinessForTerminal(takeoverTerminal, {
+                    deviceId: newDeviceId,
+                    terminalName: takeoverFormData.deviceName.trim() || takeoverTerminal.name,
+                    silent: true,
+                });
+                readinessMessage = readiness?.status === 'ready'
+                    ? '\n\nContexto ERP listo para operar.'
+                    : '\n\nPOS vinculado, pero el contexto ERP aun no esta listo.';
+            } catch (readinessError) {
+                console.warn('Terminal takeover completed but ERP readiness failed:', readinessError);
+                readinessMessage = '\n\nLa terminal fue reasignada, pero no se pudo validar el contexto ERP.';
+            }
+            alert(`${result.message || 'Terminal reasignada correctamente. La tablet anterior fue revocada. Inicia sesion/autentica la nueva tablet para continuar.'}${readinessMessage}`);
+            closeTakeoverModal();
+            const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+            setTenantTerminals(data);
+        } catch (err: unknown) {
+            console.error('Error requesting terminal takeover:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setIsTakeoverSubmitting(false);
+        }
+    };
+
+    const handleTerminalLocalRebuild = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedTenantForTerminals || !rebuildTerminal) return;
+
+        if (!isLocalPosTenant(selectedTenantForTerminals)) {
+            alert('La reconstruccion local solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.');
+            return;
+        }
+
+        const terminalId = getTerminalTakeoverId(rebuildTerminal);
+        const reason = rebuildFormData.reason.trim();
+        const currentDeviceId = getTerminalCurrentDeviceId(rebuildTerminal);
+
+        if (!terminalId || !reason) {
+            alert('Selecciona una terminal y registra el motivo de la reconstruccion.');
+            return;
+        }
+
+        if (!currentDeviceId) {
+            alert('Esta terminal no tiene device_id autorizado para reconstruir la base local.');
+            return;
+        }
+
+        if (!rebuildFormData.confirmRebuild) {
+            alert('Confirma que se forzara un bootstrap completo sin revocar el dispositivo actual.');
+            return;
+        }
+
+        setIsRebuildSubmitting(true);
+        try {
+            const result = await tenantService.requestTerminalLocalRebuild({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: rebuildTerminal.registry?.id || null,
+                reason,
+                confirmRebuild: rebuildFormData.confirmRebuild,
+            });
+            let readinessMessage = '';
+            try {
+                const readiness = await requestErpReadinessForTerminal(rebuildTerminal, { silent: true });
+                readinessMessage = readiness?.status === 'ready'
+                    ? '\n\nContexto ERP listo para operar.'
+                    : '\n\nPOS vinculado, pero el contexto ERP aun no esta listo.';
+            } catch (readinessError) {
+                console.warn('Local rebuild completed but ERP readiness failed:', readinessError);
+                readinessMessage = '\n\nLa reconstruccion fue preparada, pero no se pudo validar el contexto ERP.';
+            }
+            alert(`${result.message || 'Reconstruccion local preparada. El POS debera descargar nuevamente su estado desde el ERP sin cambiar de dispositivo.'}${readinessMessage}`);
+            closeRebuildModal();
+            const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+            setTenantTerminals(data);
+        } catch (err: unknown) {
+            console.error('Error requesting terminal local rebuild:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setIsRebuildSubmitting(false);
+        }
+    };
+
     const handleUpdateTenant = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!editingTenant) return;
@@ -433,10 +762,17 @@ export const Tenants: React.FC = () => {
     };
 
     const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
+        if (terminal.registry?.is_revoked) return 'REVOCADA';
         const registryStatus = (terminal.registry?.status || '').toUpperCase();
         if (registryStatus === 'ONLINE') return 'ONLINE';
         if (registryStatus === 'OFFLINE') return 'OFFLINE';
         return terminal.is_active ? 'ACTIVA' : 'INACTIVA';
+    };
+
+    const getRegistryStatusClassName = (statusLabel: string) => {
+        if (statusLabel === 'ONLINE') return 'bg-emerald-100 text-emerald-700';
+        if (statusLabel === 'REVOCADA') return 'bg-rose-100 text-rose-700';
+        return 'bg-slate-100 text-slate-500';
     };
 
     const getApkVersionKey = (terminal: TenantTerminalSnapshot) => {
@@ -456,6 +792,14 @@ export const Tenants: React.FC = () => {
     };
 
     const referenceVersionCandidate = (() => {
+        if (latestPosApkRelease) {
+            return {
+                key: `${latestPosApkRelease.version_name}::${latestPosApkRelease.version_code}`,
+                label: `APK v${latestPosApkRelease.version_name} (${latestPosApkRelease.version_code})`,
+                source: 'APK POS',
+            };
+        }
+
         const primary = tenantTerminals.find((terminal) => terminal.registry?.is_primary && getApkVersionKey(terminal));
         if (primary) {
             return {
@@ -489,11 +833,16 @@ export const Tenants: React.FC = () => {
     })();
 
     const referenceVersionKey = referenceVersionCandidate?.key || '';
-    const outOfVersionCount = tenantTerminals.filter((terminal) => {
+    const registryTerminals = tenantTerminals.flatMap((terminal) => (
+        terminal.registries?.length
+            ? terminal.registries.map((registry) => ({ ...terminal, registry }))
+            : [terminal]
+    ));
+    const outOfVersionCount = registryTerminals.filter((terminal) => {
         const terminalVersionKey = getApkVersionKey(terminal);
         return Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
     }).length;
-    const missingVersionCount = tenantTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
+    const missingVersionCount = registryTerminals.filter((terminal) => !getApkVersionKey(terminal)).length;
 
     const normalizeIp = (value?: string | null) => (value || '').trim();
 
@@ -573,11 +922,16 @@ export const Tenants: React.FC = () => {
         if (terminal.registry) return 'Cliente con endpoint';
         return 'Cliente / catálogo';
     };
-    const onlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
-    const offlineTerminalCount = tenantTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
-    const masterTerminalCount = tenantTerminals.filter((terminal) => terminal.registry?.is_primary).length;
-    const clientTerminalCount = tenantTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
-    const publishedEndpointCount = tenantTerminals.filter((terminal) => Boolean(terminal.registry)).length;
+    const onlineTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
+    const offlineTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
+    const revokedTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'REVOCADA').length;
+    const masterTerminalCount = registryTerminals.filter((terminal) => terminal.registry?.is_primary && getRegistryStatusLabel(terminal) === 'ONLINE').length;
+    const clientTerminalCount = registryTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
+    const publishedEndpointCount = registryTerminals.filter((terminal) => Boolean(terminal.registry)).length;
+    const terminalLicenseLimit = selectedTenantForTerminals?.max_pos_terminals;
+    const activeLicensedTerminalCount = masterTerminalCount > 0 ? masterTerminalCount : onlineTerminalCount;
+    const isTerminalLicenseOverLimit = typeof terminalLicenseLimit === 'number' && activeLicensedTerminalCount > terminalLicenseLimit;
+    const erpReadyTerminalCount = registryTerminals.filter((terminal) => getErpReadinessStatus(terminal) === 'ready').length;
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -692,12 +1046,35 @@ export const Tenants: React.FC = () => {
                                         >
                                             <Edit3 size={18} />
                                         </button>
+                                        {tenant.status === 'TRIAL' ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => void activateTrialTenant(tenant)}
+                                                disabled={updatingStatusTenantId === tenant.id}
+                                                className="p-2 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                                title="Activar empresa"
+                                            >
+                                                {updatingStatusTenantId === tenant.id ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => toggleTenantStatus(tenant)}
+                                                disabled={updatingStatusTenantId === tenant.id}
+                                                className={`p-2 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${tenant.status === 'ACTIVE' ? 'text-slate-400 hover:text-red-600 hover:bg-red-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                                                title={tenant.status === 'ACTIVE' ? 'Forzar Suspensión' : 'Reactivar'}
+                                            >
+                                                {updatingStatusTenantId === tenant.id ? <Loader2 size={18} className="animate-spin" /> : <Power size={18} />}
+                                            </button>
+                                        )}
                                         <button
-                                            onClick={() => toggleTenantStatus(tenant)}
-                                            className={`p-2 rounded-lg transition-colors ${tenant.status === 'ACTIVE' ? 'text-slate-400 hover:text-red-600 hover:bg-red-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
-                                            title={tenant.status === 'ACTIVE' ? 'Forzar Suspensión' : 'Reactivar'}
+                                            type="button"
+                                            onClick={() => void handleDeleteTenant(tenant)}
+                                            disabled={deletingTenantId === tenant.id}
+                                            className="p-2 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                            title="Eliminar tenant"
                                         >
-                                            <Power size={18} />
+                                            {deletingTenantId === tenant.id ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
                                         </button>
                                     </div>
                                 </td>
@@ -879,147 +1256,85 @@ export const Tenants: React.FC = () => {
             {isTerminalModalOpen && selectedTenantForTerminals && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
                     <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
-                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
                             <div>
-                                <h3 className="font-black text-xl text-slate-800 flex items-center gap-2">
-                                    <Monitor className="text-violet-600" size={24} />
-                                    Terminales Activas & APK POS
-                                </h3>
-                                <p className="text-sm text-slate-500 mt-0.5">
+                                <h3 className="font-black text-lg text-slate-800">Terminales Activas del Tenant</h3>
+                                <p className="text-sm text-slate-500 mt-1">
                                     {selectedTenantForTerminals.name} · {selectedTenantForTerminals.email}
                                 </p>
-                                <p className="text-[11px] text-slate-400 font-mono mt-0.5">{selectedTenantForTerminals.id}</p>
+                                <p className="text-xs text-slate-400 font-mono mt-1">{selectedTenantForTerminals.id}</p>
                             </div>
-                            <div className="flex items-center gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => setIsAddApkModalOpen(true)}
-                                    className="bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-colors shadow-sm focus:ring-4 focus:ring-violet-100 animate-in fade-in"
-                                >
-                                    <Plus size={16} />
-                                    Nuevo
-                                </button>
-                                <button 
-                                    type="button" 
-                                    onClick={closeTerminalModal} 
-                                    className="text-slate-400 hover:text-slate-700 p-1.5 hover:bg-slate-200 rounded-lg transition-colors"
-                                >
-                                    <X size={20} />
-                                </button>
-                            </div>
+                            <button type="button" onClick={closeTerminalModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
                         </div>
 
                         <div className="p-6 overflow-y-auto space-y-6">
-                            {/* Unified Metric Cards Dashboard */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                                {/* CARD 1: Catálogo y Licencias */}
-                                <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4 shadow-sm flex flex-col justify-between">
-                                    <div className="flex justify-between items-start">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Licencias POS</p>
-                                        <Monitor size={16} className="text-slate-400" />
-                                    </div>
-                                    <div className="mt-2 flex items-baseline gap-2">
-                                        <span className="text-2xl font-black text-slate-800">{tenantTerminals.length}</span>
-                                        {typeof selectedTenantForTerminals.max_pos_terminals === 'number' && (
-                                            <span className="text-xs font-semibold text-slate-400 font-sans">
-                                                / {selectedTenantForTerminals.max_pos_terminals} permitidas
+                            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                                <div className={`rounded-2xl border px-4 py-4 ${isTerminalLicenseOverLimit ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
+                                    <p className={`text-xs font-bold uppercase tracking-wider ${isTerminalLicenseOverLimit ? 'text-red-700' : 'text-slate-500'}`}>Licencia POS</p>
+                                    <p className={`mt-2 text-3xl font-black ${isTerminalLicenseOverLimit ? 'text-red-700' : 'text-slate-800'}`}>
+                                        {activeLicensedTerminalCount}
+                                        {typeof terminalLicenseLimit === 'number' && (
+                                            <span className={`text-sm font-bold ml-2 ${isTerminalLicenseOverLimit ? 'text-red-500' : 'text-slate-400'}`}>
+                                                / {terminalLicenseLimit} permitida{terminalLicenseLimit === 1 ? '' : 's'}
                                             </span>
                                         )}
-                                    </div>
-                                    <div className="mt-2 w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                                        <div 
-                                            className={`h-full rounded-full transition-all ${
-                                                tenantTerminals.length > (selectedTenantForTerminals.max_pos_terminals ?? 9999) 
-                                                    ? 'bg-red-500' 
-                                                    : tenantTerminals.length === selectedTenantForTerminals.max_pos_terminals 
-                                                        ? 'bg-amber-500' 
-                                                        : 'bg-violet-500'
-                                            }`}
-                                            style={{ 
-                                                width: `${Math.min(100, (tenantTerminals.length / (selectedTenantForTerminals.max_pos_terminals || 1)) * 100)}%` 
-                                            }}
-                                        />
-                                    </div>
-                                </div>
-
-                                {/* CARD 2: Endpoints Publicados / Conectados */}
-                                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/30 p-4 shadow-sm flex flex-col justify-between">
-                                    <div className="flex justify-between items-start">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">Endpoints Online</p>
-                                        <Wifi size={16} className="text-emerald-500" />
-                                    </div>
-                                    <div className="mt-2 flex items-baseline gap-2">
-                                        <span className="text-2xl font-black text-emerald-800">{onlineTerminalCount}</span>
-                                        <span className="text-xs text-slate-400 font-semibold">
-                                            de {publishedEndpointCount} registrados
-                                        </span>
-                                    </div>
-                                    <p className="text-[11px] text-emerald-600 mt-2 font-medium">
-                                        {publishedEndpointCount - onlineTerminalCount} offline o sin reporte
+                                    </p>
+                                    <p className="mt-2 text-[11px] font-semibold text-slate-500">
+                                        {tenantTerminals.length} grupo(s) listados · {publishedEndpointCount} registro(s)
                                     </p>
                                 </div>
-
-                                {/* CARD 3: Servidores Master */}
-                                <div className="rounded-2xl border border-violet-100 bg-violet-50/30 p-4 shadow-sm flex flex-col justify-between">
-                                    <div className="flex justify-between items-start">
-                                        <p className="text-xs font-bold uppercase tracking-wider text-violet-600">Servidores Master</p>
-                                        <Boxes size={16} className="text-violet-500" />
-                                    </div>
-                                    <div className="mt-2 flex items-baseline gap-2">
-                                        <span className="text-2xl font-black text-violet-800">{masterTerminalCount}</span>
-                                        <span className="text-xs text-slate-400 font-semibold">
-                                            en red local
-                                        </span>
-                                    </div>
-                                    <p className="text-[11px] text-violet-600 mt-2 font-medium">
-                                        Coordinan sincronización local
-                                    </p>
+                                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Endpoints Online</p>
+                                    <p className="mt-2 text-3xl font-black text-emerald-700">{onlineTerminalCount}</p>
                                 </div>
-
-                                {/* CARD 4: Control de Versión APK */}
-                                <div className={`rounded-2xl border p-4 shadow-sm flex flex-col justify-between ${
-                                    outOfVersionCount > 0 
-                                        ? 'border-amber-100 bg-amber-50/30' 
-                                        : 'border-slate-100 bg-slate-50/50'
-                                }`}>
-                                    <div className="flex justify-between items-start">
-                                        <p className={`text-xs font-bold uppercase tracking-wider ${outOfVersionCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                                            Control de Versión
-                                        </p>
-                                        <Activity size={16} className={outOfVersionCount > 0 ? 'text-amber-500' : 'text-slate-400'} />
-                                    </div>
-                                    <div className="mt-2">
-                                        {outOfVersionCount > 0 ? (
-                                            <div className="flex items-baseline gap-2">
-                                                <span className="text-2xl font-black text-amber-700">{outOfVersionCount}</span>
-                                                <span className="text-xs text-amber-600 font-bold">Desfasados</span>
-                                            </div>
-                                        ) : (
-                                            <span className="text-lg font-black text-slate-700">Actualizados</span>
-                                        )}
-                                    </div>
-                                    <p className="text-[11px] text-slate-500 mt-2 font-medium truncate">
-                                        {referenceVersionCandidate ? `Ref: v${referenceVersionCandidate.label.replace('APK v', '')}` : 'Sin versión reportada'}
-                                    </p>
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Fuera de versión</p>
+                                    <p className="mt-2 text-3xl font-black text-amber-700">{outOfVersionCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Clientes / cajas</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{clientTerminalCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-blue-700">ERP listo</p>
+                                    <p className="mt-2 text-3xl font-black text-blue-700">{erpReadyTerminalCount}</p>
                                 </div>
                             </div>
 
-                            {/* TIP / Info Box */}
-                            <div className="rounded-2xl border border-blue-100 bg-blue-50/40 px-4 py-3 text-xs text-blue-800 leading-relaxed flex items-start gap-2.5">
-                                <span className="bg-blue-100 text-blue-800 rounded-lg p-1 px-2 font-bold shrink-0 mt-0.5">INFO</span>
-                                <div>
-                                    <p className="font-semibold text-blue-900">
-                                        Esta vista asocia el catálogo de terminales autorizadas del tenant con los endpoints publicados por las APKs en sitio.
-                                    </p>
-                                    <p className="mt-1">
-                                        Las terminales que operan como <span className="font-bold">Server Master</span> permiten enlazar otras cajas cliente localmente.
-                                        Usa la <span className="font-bold">IP LAN recomendada</span> o el <span className="font-bold">Endpoint publicado</span> para configurar las cajas clientes de este establecimiento.
-                                    </p>
+                            <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                <p>
+                                    Esta vista combina el catálogo de terminales del tenant con el registry de endpoints publicados en cloud. La máscara de red aún no se persiste, por eso se muestra como <span className="font-bold">N/D</span>.
+                                </p>
+                                <p className="mt-2">
+                                    Use <span className="font-bold">IP LAN recomendada</span> o <span className="font-bold">Endpoint publicado</span> para conectar nuevas cajas. Las IPs virtuales o de emulador se separan como descartadas.
+                                </p>
+                                <p className="mt-2">
+                                    {referenceVersionCandidate
+                                        ? <>Versión de referencia: <span className="font-bold">v {referenceVersionCandidate.label}</span> desde <span className="font-bold">{referenceVersionCandidate.source}</span>.</>
+                                        : <>Aún no hay versión de APK reportada por las terminales de este tenant.</>}
+                                    {missingVersionCount > 0 ? <> <span className="font-bold">{missingVersionCount}</span> terminal(es) todavía no reportan versión.</> : null}
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-violet-700">Server master</p>
+                                    <p className="mt-2 text-3xl font-black text-violet-700">{masterTerminalCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Con endpoint cloud</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{publishedEndpointCount}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Revocadas / offline</p>
+                                    <p className="mt-2 text-3xl font-black text-slate-800">{revokedTerminalCount + offlineTerminalCount}</p>
                                 </div>
                             </div>
 
                             {isTerminalModalLoading ? (
-                                <div className="rounded-2xl border border-slate-100 bg-slate-50/50 px-6 py-12 text-center text-slate-500 flex items-center justify-center gap-3">
+                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500 flex items-center justify-center gap-3">
                                     <Loader2 className="animate-spin text-violet-500" size={20} />
                                     Cargando terminales...
                                 </div>
@@ -1030,38 +1345,44 @@ export const Tenants: React.FC = () => {
                             ) : (
                                 <div className="grid grid-cols-1 gap-6">
                                     {tenantTerminals.map((terminal) => {
-                                        const statusLabel = getRegistryStatusLabel(terminal);
-                                        const isOnline = statusLabel === 'ONLINE';
-                                        
+                                        const hasOnlineRegistry = (terminal.registries || []).some((reg) => (
+                                            getRegistryStatusLabel({ ...terminal, registry: reg }) === 'ONLINE'
+                                        ));
+                                        const erpReadiness = terminal.registry?.erp_readiness || null;
+                                        const erpReadinessStatus = getErpReadinessStatus(terminal);
+                                        const erpTenantId = getReadinessValue(erpReadiness, ['erpTenantId', 'erp_tenant_id']);
+                                        const profileStatus = getReadinessValue(erpReadiness, ['profileStatus', 'profile_status']) || (erpReadinessStatus === 'ready' ? 'READY' : 'MISSING');
+                                        const catalogReady = getReadinessCheckValue(erpReadiness, ['catalog', 'catalogReady', 'catalog_ready', 'items', 'itemsReady', 'items_ready']);
+                                        const seriesReady = getReadinessCheckValue(erpReadiness, ['documentSeries', 'document_series', 'series', 'sequences', 'sequencesReady', 'sequences_ready']);
+                                        const lastSyncAt = getReadinessValue(erpReadiness, ['lastSyncEventAt', 'last_sync_event_at', 'lastSyncAt', 'last_sync_at']);
+                                        const lastSyncType = getReadinessValue(erpReadiness, ['lastSyncEventType', 'last_sync_event_type', 'lastSyncStatus', 'last_sync_status']);
+                                        const isReadinessSubmitting = erpReadinessSubmittingKey === getTerminalKey(terminal);
+
                                         return (
-                                            <div key={`${terminal.id}`} className="rounded-3xl border border-slate-150 bg-white shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow duration-200">
-                                                <div className="bg-slate-50/40 border-b border-slate-100 p-5 flex items-center justify-between">
+                                            <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
+                                                <div className="bg-slate-50 border-b border-slate-100 p-5 flex items-center justify-between">
                                                     <div className="flex items-center gap-4">
-                                                        <div className={`rounded-2xl p-3 shrink-0 ${isOnline ? 'bg-emerald-100 text-emerald-700 animate-pulse-slow' : 'bg-slate-100 text-slate-500'}`}>
-                                                            {isOnline ? <Wifi size={20} /> : <WifiOff size={20} />}
+                                                        <div className={`rounded-2xl p-3 ${hasOnlineRegistry ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
+                                                            {hasOnlineRegistry ? <Wifi size={20} /> : <WifiOff size={20} />}
                                                         </div>
                                                         <div>
-                                                            <div className="flex items-center gap-3 flex-wrap">
-                                                                <h4 className="font-black text-slate-800 text-lg leading-snug">{terminal.name}</h4>
+                                                            <div className="flex items-center gap-3">
+                                                                <h4 className="font-black text-slate-800 text-lg">{terminal.name}</h4>
                                                                 <span className={`font-bold text-xs px-2.5 py-1 rounded-lg ${
                                                                     (terminal.registries || []).length > 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                                                                 }`}>
                                                                     {terminal.registries?.length || 0} Registro(s)
                                                                 </span>
                                                             </div>
-                                                            <div className="flex items-center gap-2 mt-1">
-                                                                <span className="text-xs text-slate-400 font-mono">
-                                                                    ID: {terminal.terminal_id || terminal.id || 'N/D'}
-                                                                </span>
-                                                                {terminal.device_token && (
-                                                                    <span className="text-xs text-slate-400 font-mono border-l pl-2 border-slate-200">
-                                                                        Token: {terminal.device_token}
-                                                                    </span>
-                                                                )}
-                                                            </div>
+                                                            <p className="text-xs text-slate-500 font-mono mt-0.5">
+                                                                Terminal ID: {terminal.terminal_id || 'N/D'}
+                                                            </p>
                                                         </div>
                                                     </div>
-                                                    <div>
+                                                    <div className="flex flex-col items-end gap-2">
+                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
+                                                            {getReadinessLabel(erpReadinessStatus)}
+                                                        </span>
                                                         <button 
                                                             onClick={() => handleToggleTerminalStatus(terminal.id!, terminal.is_active !== false)}
                                                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 ${terminal.is_active !== false ? 'bg-emerald-500' : 'bg-slate-300'}`}
@@ -1072,94 +1393,149 @@ export const Tenants: React.FC = () => {
                                                     </div>
                                                 </div>
 
-                                                <div className="p-5 bg-slate-50/20">
-                                                    <h5 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Dispositivos y Activaciones Registrados</h5>
-                                                    
-                                                    {(!terminal.registries || terminal.registries.length === 0) ? (
-                                                        <div className="text-center py-6 px-4 bg-slate-50/30 border border-slate-100 border-dashed rounded-xl text-slate-400 text-xs">
-                                                            Aún no hay reportes de activaciones para este dispositivo. Se registrarán automáticamente cuando el APK POS se inicie y se conecte a la nube.
-                                                        </div>
-                                                    ) : (
-                                                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                                                            <table className="w-full text-left text-sm whitespace-nowrap">
-                                                                <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
-                                                                    <tr>
-                                                                        <th className="px-4 py-3 font-bold">Estado</th>
-                                                                        <th className="px-4 py-3 font-bold">Dispositivo / Modelo</th>
-                                                                        <th className="px-4 py-3 font-bold">Red / Endpoint</th>
-                                                                        <th className="px-4 py-3 font-bold">Versión APK</th>
-                                                                        <th className="px-4 py-3 font-bold text-right">Último Reporte</th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody className="divide-y divide-slate-100">
-                                                                    {terminal.registries.map((reg, idx) => {
-                                                                        const mockTerminal = { ...terminal, registry: reg };
-                                                                        const rStatusLabel = getRegistryStatusLabel(mockTerminal);
-                                                                        const rIsOnline = rStatusLabel === 'ONLINE';
-                                                                        const rVersionKey = getApkVersionKey(mockTerminal);
-                                                                        const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
-                                                                        const prefLanIp = getPreferredLanIp(mockTerminal);
-                                                                        
-                                                                        return (
-                                                                            <tr key={reg.id || idx} className={`hover:bg-slate-50/50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/10' : ''}`}>
-                                                                                <td className="px-4 py-3 align-top">
-                                                                                    <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase flex items-center gap-1.5 w-min ${
-                                                                                        rIsOnline 
-                                                                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
-                                                                                            : 'bg-slate-50 text-slate-500 border border-slate-200'
-                                                                                    }`}>
-                                                                                        <span className={`h-1.5 w-1.5 rounded-full ${rIsOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
-                                                                                        {rStatusLabel}
-                                                                                    </span>
-                                                                                </td>
-                                                                                <td className="px-4 py-3 align-top">
-                                                                                    <div className="flex flex-col">
-                                                                                        <span className="font-mono font-bold text-slate-700 text-[11px] mb-0.5">{reg.device_id || terminal.device_token || 'N/D'}</span>
-                                                                                        <span className="text-[10px] text-slate-500 font-medium">{reg.hostname || 'N/D'}</span>
-                                                                                    </div>
-                                                                                </td>
-                                                                                <td className="px-4 py-3 align-top">
-                                                                                    <div className="flex flex-col">
-                                                                                        <span className="font-mono text-emerald-700 font-bold text-[11px] mb-0.5">{prefLanIp}</span>
-                                                                                        {reg.endpoint_url && (
-                                                                                            <span className="text-[10px] text-slate-400 font-mono" title="Endpoint">
-                                                                                                {reg.endpoint_url}
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                </td>
-                                                                                <td className="px-4 py-3 align-top">
-                                                                                    <div className="flex flex-col items-start gap-1">
-                                                                                        <span className="font-mono text-slate-700 text-[11px] font-semibold bg-slate-100 px-1.5 py-0.5 rounded">
-                                                                                            {formatApkVersion(mockTerminal).replace('APK ', '')}
-                                                                                        </span>
-                                                                                        {rIsOutOfVersion && (
-                                                                                            <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded font-black uppercase tracking-wide">
-                                                                                                Desfasado
-                                                                                            </span>
-                                                                                        )}
-                                                                                    </div>
-                                                                                </td>
-                                                                                <td className="px-4 py-3 align-top text-right">
-                                                                                    <div className="flex flex-col items-end">
-                                                                                        <span className="text-[10px] text-slate-500 font-medium mb-0.5">{formatDateTime(reg.last_seen_at)}</span>
-                                                                                        <span className={`font-bold text-[10px] px-2.5 py-0.5 rounded-full ${
-                                                                                            reg.is_primary 
-                                                                                                ? 'bg-violet-100 text-violet-700 border border-violet-200' 
-                                                                                                : 'bg-slate-100 text-slate-600 border border-slate-200'
-                                                                                        }`}>
-                                                                                            {getRoleLabel(mockTerminal)}
-                                                                                        </span>
-                                                                                    </div>
-                                                                                </td>
-                                                                            </tr>
-                                                                        );
-                                                                    })}
-                                                                </tbody>
-                                                            </table>
-                                                        </div>
-                                                    )}
+                                                <div className="p-5 bg-slate-100/30">
+                                                    <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-4">Dispositivos y Activaciones Registrados</h5>
+                                                    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                                                        <table className="w-full text-left text-sm whitespace-nowrap">
+                                                            <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
+                                                                <tr>
+                                                                    <th className="px-4 py-3 font-bold">Estado</th>
+                                                                    <th className="px-4 py-3 font-bold">Device / Modelo</th>
+                                                                    <th className="px-4 py-3 font-bold">Red / Endpoint</th>
+                                                                    <th className="px-4 py-3 font-bold">Versión APK</th>
+                                                                    <th className="px-4 py-3 font-bold text-right">Último Tick</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-slate-50">
+                                                                {(terminal.registries || []).map((reg, idx) => {
+                                                                    const mockTerminal = { ...terminal, registry: reg };
+                                                                    const rStatusLabel = getRegistryStatusLabel(mockTerminal);
+                                                                    const rVersionKey = getApkVersionKey(mockTerminal);
+                                                                    const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
+                                                                    const prefLanIp = getPreferredLanIp(mockTerminal);
+                                                                    
+                                                                    return (
+                                                                        <tr key={reg.id || idx} className={`hover:bg-slate-50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/20' : ''}`}>
+                                                                            <td className="px-4 py-3 align-top">
+                                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center w-min ${getRegistryStatusClassName(rStatusLabel)}`}>
+                                                                                    {rStatusLabel}
+                                                                                </span>
+                                                                            </td>
+                                                                            <td className="px-4 py-3 align-top">
+                                                                                <p className="font-mono font-bold text-slate-700 text-[11px] mb-0.5">{reg.device_id || terminal.device_token || 'N/D'}</p>
+                                                                                <p className="text-[10px] text-slate-500">{reg.hostname || 'N/D'} · T {reg.terminal_id || terminal.terminal_id || 'N/D'}</p>
+                                                                                {reg.is_revoked && reg.authorized_device_id ? (
+                                                                                    <p className="text-[10px] font-bold text-rose-600">Autorizado: {reg.authorized_device_id}</p>
+                                                                                ) : null}
+                                                                            </td>
+                                                                            <td className="px-4 py-3 align-top">
+                                                                                <p className="font-mono text-emerald-700 font-bold text-[11px] mb-0.5">{prefLanIp}</p>
+                                                                                {reg.endpoint_url && <p className="text-[10px] text-slate-400 font-mono" title="Endpoint">{reg.endpoint_url}</p>}
+                                                                            </td>
+                                                                            <td className="px-4 py-3 align-top">
+                                                                                <div className="flex flex-col items-start gap-0.5">
+                                                                                    <span className="font-mono text-slate-700 text-[11px]">v {formatApkVersion(mockTerminal)}</span>
+                                                                                    {rIsOutOfVersion && <span className="text-[10px] text-amber-600 font-bold">Desfasado</span>}
+                                                                                    {rIsOutOfVersion && referenceVersionCandidate ? (
+                                                                                        <span className="text-[10px] font-bold text-slate-500">Última: v {referenceVersionCandidate.label}</span>
+                                                                                    ) : null}
+                                                                                </div>
+                                                                            </td>
+                                                                            <td className="px-4 py-3 align-top text-right">
+                                                                                <p className="text-[10px] text-slate-500 mb-0.5">{formatDateTime(reg.last_seen_at)}</p>
+                                                                                <p className="font-bold text-violet-600 text-[10px]">{getRoleLabel(mockTerminal)}</p>
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
                                                 </div>
+
+                                                <div className={`mt-5 rounded-2xl border px-4 py-4 ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
+                                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                                        <div>
+                                                            <p className="text-xs font-bold uppercase tracking-wider">Preparacion ERP</p>
+                                                            <p className="mt-1 text-sm font-bold">{getReadinessLabel(erpReadinessStatus)}</p>
+                                                            {erpReadinessStatus !== 'ready' ? (
+                                                                <p className="mt-1 text-sm">
+                                                                    POS vinculado, pero el contexto ERP aun no esta listo.
+                                                                </p>
+                                                            ) : null}
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void handleRetryErpReadiness(terminal)}
+                                                            disabled={isReadinessSubmitting}
+                                                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                        >
+                                                            {isReadinessSubmitting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                            Reintentar preparacion ERP
+                                                        </button>
+                                                    </div>
+
+                                                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">ERP tenant</p>
+                                                            <p className="mt-1 font-mono break-all">{erpTenantId || 'No vinculado'}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal profile</p>
+                                                            <p className="mt-1 font-bold uppercase">{profileStatus}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Catalogo</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(catalogReady, 'Disponible', 'Vacio / faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Secuencias</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(seriesReady, 'Disponibles', 'Faltantes')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo evento sync</p>
+                                                            <p className="mt-1">
+                                                                {lastSyncAt ? formatDateTime(lastSyncAt) : 'N/D'}
+                                                                {lastSyncType ? <span className="font-mono"> · {lastSyncType}</span> : null}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+
+                                                    {erpReadiness?.checked_at ? (
+                                                        <p className="mt-3 text-xs opacity-75">
+                                                            Ultima validacion ERP: {formatDateTime(erpReadiness.checked_at)}
+                                                        </p>
+                                                    ) : null}
+                                                </div>
+
+                                                {isLocalPosTenant(selectedTenantForTerminals) ? (
+                                                    <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                                        <div>
+                                                            <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Recuperacion POS local</p>
+                                                            <p className="mt-1 text-sm text-amber-800">
+                                                                Elige reemplazo de hardware o reconstruccion de BD local sin cambiar el dispositivo.
+                                                            </p>
+                                                        </div>
+                                                        <div className="flex flex-col gap-2 sm:flex-row">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openRebuildModal(terminal)}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-700 shadow-sm hover:bg-amber-100 transition-colors"
+                                                            >
+                                                                <RefreshCcw size={16} />
+                                                                Reconstruir base local
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openTakeoverModal(terminal)}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors"
+                                                            >
+                                                                <RefreshCcw size={16} />
+                                                                Reemplazar tablet
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ) : null}
                                             </div>
                                         );
                                     })}
@@ -1170,187 +1546,204 @@ export const Tenants: React.FC = () => {
                 </div>
             )}
 
-            {isAddApkModalOpen && selectedTenantForTerminals && (
-                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                            <h3 className="font-black text-lg text-slate-800 flex items-center gap-2">
-                                <Server className="text-violet-600" size={20} />
-                                Registrar APK POS
-                            </h3>
-                            <button 
-                                type="button" 
-                                onClick={() => setIsAddApkModalOpen(false)} 
-                                className="text-slate-400 hover:text-slate-700 transition-colors p-1.5 hover:bg-slate-100 rounded-lg"
-                            >
-                                <X size={18} />
+            {isRebuildModalOpen && selectedTenantForTerminals && rebuildTerminal && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div>
+                                <div className="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-700">
+                                    <RefreshCcw size={14} />
+                                    Rebuild local
+                                </div>
+                                <h3 className="mt-3 font-black text-lg text-slate-800">Reconstruir base local del POS</h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    Para la misma tablet cuando se corrompe la BD local. No cambia el device_id.
+                                </p>
+                            </div>
+                            <button type="button" onClick={closeRebuildModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
                             </button>
                         </div>
-                        <form onSubmit={handleAddApk} className="p-6 space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Terminal de Catálogo <span className="text-red-500">*</span></label>
-                                <div className="flex gap-2">
-                                    {addApkFormData.terminalId === '_NEW_' ? (
-                                        <div className="relative w-full">
-                                            <input
-                                                required
-                                                type="text"
-                                                placeholder="Ingresa ID de terminal (ej. TERM-001)"
-                                                onChange={e => setAddApkFormData({ ...addApkFormData, terminalId: e.target.value })}
-                                                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
-                                            />
-                                        </div>
-                                    ) : (
-                                        <select
-                                            required
-                                            value={addApkFormData.terminalId}
-                                            onChange={e => {
-                                                if (e.target.value === '_NEW_') {
-                                                    setAddApkFormData({ ...addApkFormData, terminalId: '_NEW_' });
-                                                } else {
-                                                    const term = tenantTerminals.find(t => t.id === e.target.value);
-                                                    setAddApkFormData({ 
-                                                        ...addApkFormData, 
-                                                        terminalId: e.target.value,
-                                                        terminalName: term ? term.name : ''
-                                                    });
-                                                }
-                                            }}
-                                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800 font-medium"
-                                        >
-                                            <option value="">-- Selecciona del catálogo --</option>
-                                            {tenantTerminals.map(t => (
-                                                <option key={t.id} value={t.id}>
-                                                    {t.name} ({t.id.slice(0, 8)})
-                                                </option>
-                                            ))}
-                                            <option value="_NEW_">+ Crear Nueva Terminal Personalizada</option>
-                                        </select>
-                                    )}
-                                    {addApkFormData.terminalId === '_NEW_' && (
-                                        <button 
-                                            type="button"
-                                            onClick={() => setAddApkFormData({ ...addApkFormData, terminalId: '' })}
-                                            className="px-3 border border-slate-200 hover:bg-slate-50 text-slate-500 rounded-xl transition-colors text-xs font-semibold shrink-0"
-                                        >
-                                            Volver
-                                        </button>
-                                    )}
+
+                        <form onSubmit={handleTerminalLocalRebuild} className="p-6 space-y-5">
+                            <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                <p className="font-bold">Antes de continuar:</p>
+                                <ul className="mt-2 list-disc space-y-1 pl-5">
+                                    <li>Se mantiene el mismo device_id autorizado.</li>
+                                    <li>No se revoca la tablet actual.</li>
+                                    <li>El POS debera descargar un bootstrap completo desde el ERP.</li>
+                                    <li>Si habia ventas locales no sincronizadas, deben auditarse antes de reconstruir.</li>
+                                </ul>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Terminal</p>
+                                    <p className="mt-1 font-bold text-slate-800">{rebuildTerminal.name}</p>
+                                    <p className="mt-1 text-xs font-mono text-slate-500">{getTerminalTakeoverId(rebuildTerminal) || 'N/D'}</p>
+                                </div>
+                                <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Device actual</p>
+                                    <p className="mt-1 font-mono text-slate-700 break-all">{getTerminalCurrentDeviceId(rebuildTerminal) || 'N/D'}</p>
                                 </div>
                             </div>
 
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">ID de Dispositivo (Device ID) <span className="text-red-500">*</span></label>
-                                <input
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Motivo de la reconstruccion <span className="text-red-500">*</span></label>
+                                <textarea
                                     required
-                                    type="text"
-                                    placeholder="Ej. android-uuid-device-01"
-                                    value={addApkFormData.deviceId}
-                                    onChange={e => setAddApkFormData({ ...addApkFormData, deviceId: e.target.value })}
-                                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
+                                    value={rebuildFormData.reason}
+                                    onChange={e => setRebuildFormData({ ...rebuildFormData, reason: e.target.value })}
+                                    className="w-full min-h-[96px] px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800 resize-y"
+                                    placeholder="Ej. BD local corrupta, reinstalacion del POS en la misma tablet o reparacion de datos locales."
                                 />
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Nombre Terminal</label>
-                                    <input
-                                        type="text"
-                                        placeholder="Ej. Caja Principal"
-                                        value={addApkFormData.terminalName}
-                                        onChange={e => setAddApkFormData({ ...addApkFormData, terminalName: e.target.value })}
-                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Hostname</label>
-                                    <input
-                                        type="text"
-                                        placeholder="Ej. sunmi-v2-pro"
-                                        value={addApkFormData.hostname}
-                                        onChange={e => setAddApkFormData({ ...addApkFormData, hostname: e.target.value })}
-                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
-                                    />
-                                </div>
-                            </div>
+                            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    checked={rebuildFormData.confirmRebuild}
+                                    onChange={e => setRebuildFormData({ ...rebuildFormData, confirmRebuild: e.target.checked })}
+                                    className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span>
+                                    Confirmo que es la misma tablet y deseo forzar un bootstrap completo sin revocar el dispositivo actual.
+                                </span>
+                            </label>
 
-                            <div className="grid grid-cols-3 gap-2">
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">IP Local (LAN IP) <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        type="text"
-                                        placeholder="Ej. 192.168.1.100"
-                                        value={addApkFormData.localIp}
-                                        onChange={e => setAddApkFormData({ ...addApkFormData, localIp: e.target.value })}
-                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800 font-mono"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Puerto</label>
-                                    <input
-                                        type="number"
-                                        placeholder="3001"
-                                        value={addApkFormData.port}
-                                        onChange={e => setAddApkFormData({ ...addApkFormData, port: Number(e.target.value) })}
-                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Versión APK</label>
-                                    <input
-                                        type="text"
-                                        placeholder="1.0.0"
-                                        value={addApkFormData.appVersion}
-                                        onChange={e => setAddApkFormData({ ...addApkFormData, appVersion: e.target.value })}
-                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Código Versión</label>
-                                    <input
-                                        type="number"
-                                        placeholder="1"
-                                        value={addApkFormData.appVersionCode}
-                                        onChange={e => setAddApkFormData({ ...addApkFormData, appVersionCode: Number(e.target.value) })}
-                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-violet-500 focus:bg-white transition-all text-sm text-slate-800"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 flex items-center justify-between">
-                                <div>
-                                    <p className="text-xs font-bold text-slate-700">Servidor Master (Primary)</p>
-                                    <p className="text-[10px] text-slate-400 mt-0.5">Define este dispositivo como central local</p>
-                                </div>
+                            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 border-t border-slate-100 pt-5">
                                 <button
                                     type="button"
-                                    onClick={() => setAddApkFormData({ ...addApkFormData, isPrimary: !addApkFormData.isPrimary })}
-                                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500 ${addApkFormData.isPrimary ? 'bg-violet-600' : 'bg-slate-300'}`}
-                                >
-                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${addApkFormData.isPrimary ? 'translate-x-6' : 'translate-x-1'}`} />
-                                </button>
-                            </div>
-
-                            <div className="pt-2 flex justify-end gap-2.5">
-                                <button
-                                    type="button"
-                                    onClick={() => setIsAddApkModalOpen(false)}
-                                    className="px-4 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500 text-sm font-bold transition-colors"
+                                    onClick={closeRebuildModal}
+                                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={isAddApkSubmitting}
-                                    className="bg-violet-600 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-colors disabled:bg-violet-400 disabled:cursor-not-allowed"
+                                    disabled={isRebuildSubmitting}
+                                    className="px-5 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
                                 >
-                                    {isAddApkSubmitting ? (
-                                        <><Loader2 size={16} className="animate-spin" /> Guardando...</>
-                                    ) : 'Registrar'}
+                                    {isRebuildSubmitting ? <Loader2 className="animate-spin" size={18} /> : <RefreshCcw size={18} />}
+                                    Preparar reconstruccion
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {isTakeoverModalOpen && selectedTenantForTerminals && takeoverTerminal && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div>
+                                <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-700">
+                                    <RefreshCcw size={14} />
+                                    Disaster Recovery
+                                </div>
+                                <h3 className="mt-3 font-black text-lg text-slate-800">Tomar control de terminal</h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    Solo disponible para POS local. POS + ERP mantiene su flujo actual.
+                                </p>
+                            </div>
+                            <button type="button" onClick={closeTakeoverModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleTerminalTakeover} className="p-6 space-y-5">
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                <p className="font-bold">Antes de continuar:</p>
+                                <ul className="mt-2 list-disc space-y-1 pl-5">
+                                    <li>La tablet anterior quedara revocada.</li>
+                                    <li>La nueva tablet debera autenticarse de nuevo contra el ERP.</li>
+                                    <li>No se borran ventas historicas.</li>
+                                    <li>El POS anterior ya no podra sincronizar.</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Terminal a recuperar <span className="text-red-500">*</span></label>
+                                <select
+                                    required
+                                    value={getTakeoverSelectionKey(takeoverFormData.terminalId, takeoverFormData.registryId)}
+                                    onChange={e => handleTakeoverTerminalChange(e.target.value)}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                >
+                                    {getTakeoverOptions().map((option) => (
+                                        <option key={option.key} value={option.key}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="mt-2 text-xs text-slate-500">
+                                    Dispositivo actual: <span className="font-mono">{getTerminalCurrentDeviceId(takeoverTerminal) || 'N/D'}</span>
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Nuevo device_id <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        type="text"
+                                        value={takeoverFormData.newDeviceId}
+                                        onChange={e => setTakeoverFormData({ ...takeoverFormData, newDeviceId: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 font-mono"
+                                        placeholder="nuevo-device-id"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Nombre de dispositivo</label>
+                                    <input
+                                        type="text"
+                                        value={takeoverFormData.deviceName}
+                                        onChange={e => setTakeoverFormData({ ...takeoverFormData, deviceName: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Tablet Caja 1"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Motivo del cambio <span className="text-red-500">*</span></label>
+                                <textarea
+                                    required
+                                    value={takeoverFormData.reason}
+                                    onChange={e => setTakeoverFormData({ ...takeoverFormData, reason: e.target.value })}
+                                    className="w-full min-h-[96px] px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 resize-y"
+                                    placeholder="Ej. Tablet danada, perdida o reemplazo por garantia."
+                                />
+                            </div>
+
+                            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    checked={takeoverFormData.confirmTakeover}
+                                    onChange={e => setTakeoverFormData({ ...takeoverFormData, confirmTakeover: e.target.checked })}
+                                    className="mt-1 h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                                />
+                                <span>
+                                    Confirmo que deseo revocar la tablet anterior y que la nueva tablet debera iniciar sesion/autenticarse de nuevo.
+                                </span>
+                            </label>
+
+                            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 border-t border-slate-100 pt-5">
+                                <button
+                                    type="button"
+                                    onClick={closeTakeoverModal}
+                                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isTakeoverSubmitting}
+                                    className="px-5 py-3 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    {isTakeoverSubmitting ? <Loader2 className="animate-spin" size={18} /> : <RefreshCcw size={18} />}
+                                    Ejecutar recuperacion
                                 </button>
                             </div>
                         </form>

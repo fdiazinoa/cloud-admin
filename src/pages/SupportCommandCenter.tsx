@@ -3,10 +3,15 @@ import {
     AlertTriangle,
     BatteryLow,
     Clock3,
+    ExternalLink,
+    Image as ImageIcon,
     Link2,
+    Lightbulb,
+    Loader2,
     Mail,
     MessageSquare,
     MonitorSmartphone,
+    Paperclip,
     Send,
     Sparkles,
     UserPlus,
@@ -16,7 +21,10 @@ import {
 } from 'lucide-react';
 import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
 
+const REPLY_TEXTAREA_MAX_HEIGHT = 240;
+
 type Sentiment = 'frustrated' | 'neutral' | 'positive';
+type ImprovementPriority = 'Baja' | 'Media' | 'Alta' | 'Critica';
 
 interface TechnicalContext {
     app_version?: string;
@@ -66,6 +74,8 @@ interface Ticket {
     category: string;
     priority: string;
     status: string;
+    resolution_status?: 'open' | 'pending_customer_confirmation' | 'closed' | 'reopened' | null;
+    customer_rating?: number | null;
     subject: string;
     source: string;
     assignment_status?: string | null;
@@ -79,23 +89,19 @@ interface Message {
     id: string;
     sender_type: 'Admin' | 'Client' | 'System';
     message: string;
-    attachments?: MessageAttachment[] | MessageAttachment | null;
+    attachments?: unknown;
     created_at: string;
 }
 
 interface MessageAttachment {
     id?: string;
-    filename?: string;
-    content_type?: string;
-    size?: number;
-    storage_bucket?: string | null;
-    storage_path?: string | null;
-    resend_download_url?: string | null;
-    download_url?: string | null;
+    name?: string;
+    mime_type?: string;
+    size_bytes?: number;
+    bucket?: string;
+    path?: string;
+    uploaded_at?: string;
     signed_url?: string | null;
-    to?: string;
-    channel?: string;
-    resend_email_id?: string;
 }
 
 interface ContactFormState {
@@ -106,13 +112,27 @@ interface ContactFormState {
     sla: string;
 }
 
+interface ImprovementDraft {
+    title: string;
+    requestedCapability: string;
+    affectedModule: string;
+    customerImpact: string;
+    priority: ImprovementPriority;
+}
+
+interface DraftResponse {
+    draft?: string;
+    error?: string;
+    detail?: string;
+}
+
 interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight'> {
     tenants?: { name?: string | null } | { name?: string | null }[] | null;
     support_contacts?: SupportContact | SupportContact[] | null;
     ai_ticket_insights?: AiTicketInsight | AiTicketInsight[] | null;
 }
 
-const statusFilters = ['Todos', 'Abierto', 'En_Proceso', 'Resuelto'];
+const statusFilters = ['Todos', 'Abierto', 'En_Proceso', 'Resuelto', 'Cerrado'];
 const sourceFilters = ['Todos', 'POS', 'ERP', 'Email', 'Preventivo'];
 
 const sourceStyles: Record<string, string> = {
@@ -142,10 +162,30 @@ const emptyContactForm: ContactFormState = {
     sla: 'standard',
 };
 
+const initialImprovementDraft: ImprovementDraft = {
+    title: '',
+    requestedCapability: '',
+    affectedModule: '',
+    customerImpact: '',
+    priority: 'Media',
+};
+
 const slaLabels: Record<string, string> = {
     standard: 'Estándar',
     priority: 'Prioritario',
     critical: 'Crítico',
+};
+
+const resolutionStatusLabels: Record<string, string> = {
+    pending_customer_confirmation: 'Esperando confirmacion',
+    closed: 'Cerrado por cliente',
+    reopened: 'Reabierto por cliente',
+};
+
+const resolutionStatusStyles: Record<string, string> = {
+    pending_customer_confirmation: 'border-amber-200 bg-amber-50 text-amber-700',
+    closed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    reopened: 'border-red-200 bg-red-50 text-red-700',
 };
 
 function normalizeRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -180,109 +220,196 @@ function getTicketNumberLabel(ticket: Ticket) {
     return `#${ticket.ticket_number ?? ticket.id.slice(0, 8)}`;
 }
 
-function normalizeAttachments(value: Message['attachments']): MessageAttachment[] {
-    if (!value) return [];
-    return Array.isArray(value) ? value : [value];
+function getTicketRecipientEmail(ticket: Ticket) {
+    return ticket.contact?.email || ticket.external_sender_email || '';
 }
 
-function getDisplayAttachments(value: Message['attachments']) {
-    return normalizeAttachments(value).filter((attachment) => (
-        Boolean(attachment.filename || attachment.storage_path || attachment.signed_url || attachment.download_url || attachment.resend_download_url)
-    ));
+function normalizeDuplicateKey(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80) || 'mejora-manual';
+}
+
+function normalizeForAnalysis(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+}
+
+function getPrimaryClientMessage(messages: Message[]) {
+    return messages.find((message) => message.sender_type === 'Client')?.message.trim() ?? '';
+}
+
+function inferImprovementModule(ticket: Ticket, requestText: string) {
+    const text = normalizeForAnalysis([
+        ticket.subject,
+        ticket.category,
+        requestText,
+    ].join(' '));
+
+    if (/(api|integracion|webhook|agente|configurable|parametrizacion|configuracion|endpoint)/.test(text)) return 'Integraciones / API ERP';
+    if (/(digifact|facturacion electronica|e-?cf|ecf|ncf|dgii|fiscal|comprobante)/.test(text)) return 'Facturacion electronica / Fiscal';
+    if (/(promocion|descuento|oferta|forma de pago|metodo de pago|tipo de cliente|lista de precio)/.test(text)) return 'Promociones';
+    if (/(activo fijo|activos fijos|depreciacion|depreciar|asiento|entrada de diario|referencia de asiento)/.test(text)) return 'Activos fijos / Contabilidad';
+    if (/(inventario|stock|producto|catalogo|categoria|almacen|sucursal)/.test(text)) return 'Inventario / Catalogo';
+    if (/(venta|factura|cotizacion|pedido|cliente|cobro)/.test(text)) return 'Ventas / Facturacion';
+    if (/(caja|cierre|cuadre|turno|pago|z\b|pos)/.test(text)) return 'Caja / POS';
+    if (/(sync|sincron|cloud|viajar|enviar|offline|internet|conexion|red)/.test(text)) return 'Sincronizacion Cloud';
+    if (/(impresora|impresion|comanda|ticket|scanner|lector|hardware|terminal)/.test(text)) return 'Hardware POS';
+
+    const insightModule = ticket.insight?.affected_module?.trim();
+    if (insightModule && !/no detectado|pendiente/i.test(insightModule)) return insightModule;
+
+    if (ticket.category && ticket.category !== 'Otros') return ticket.category;
+
+    return 'Pendiente de clasificar';
+}
+
+function recommendImprovementImpact(ticket: Ticket, requestText: string, module: string) {
+    const text = normalizeForAnalysis(`${ticket.subject} ${module} ${requestText}`);
+
+    if (/(duplic|repet|mas de una vez|m[aá]s de una vez)/.test(text)) {
+        return 'Evita registros duplicados y reduce retrabajo operativo, conciliaciones manuales y riesgo de errores contables.';
+    }
+
+    if (/(bloquea|no permite|no puedo|error|falla|cierre|caja|venta|factura|facturacion)/.test(text)) {
+        return 'Reduce friccion en operaciones criticas y ayuda a evitar interrupciones en ventas, facturacion o cierre de caja.';
+    }
+
+    if (/(api|integracion|webhook|agente|configurable|endpoint)/.test(text)) {
+        return 'Facilita parametrizaciones e integraciones sin intervencion tecnica recurrente, acelerando implementaciones y soporte.';
+    }
+
+    if (/(promocion|descuento|forma de pago|tipo de cliente|lista de precio)/.test(text)) {
+        return 'Permite configurar reglas comerciales con mayor precision, reduciendo ajustes manuales y diferencias al facturar.';
+    }
+
+    if (/(depreci|activo fijo|asiento|contabilidad)/.test(text)) {
+        return 'Mejora el control contable y reduce errores de procesamiento mensual, especialmente en cierres y auditorias.';
+    }
+
+    if (/(sync|sincron|cloud|offline|red|internet|viajar)/.test(text)) {
+        return 'Aumenta la confiabilidad del flujo Cloud/POS/ERP y reduce revisiones manuales por datos pendientes de sincronizar.';
+    }
+
+    return 'Ayuda a documentar una necesidad funcional del cliente para evaluar prioridad, alcance e impacto antes de planificar desarrollo.';
+}
+
+function normalizeMessageAttachments(value: unknown): MessageAttachment[] {
+    if (!Array.isArray(value)) return [];
+
+    return value
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+        .map((item) => ({
+            id: typeof item.id === 'string' ? item.id : undefined,
+            name: typeof item.name === 'string' ? item.name : undefined,
+            mime_type: typeof item.mime_type === 'string' ? item.mime_type : undefined,
+            size_bytes: typeof item.size_bytes === 'number' ? item.size_bytes : undefined,
+            bucket: typeof item.bucket === 'string' ? item.bucket : undefined,
+            path: typeof item.path === 'string' ? item.path : undefined,
+            uploaded_at: typeof item.uploaded_at === 'string' ? item.uploaded_at : undefined,
+            signed_url: typeof item.signed_url === 'string' ? item.signed_url : null,
+        }))
+        .filter((attachment) => Boolean(attachment.name || attachment.path || attachment.signed_url));
+}
+
+function formatAttachmentSize(sizeBytes?: number) {
+    if (!sizeBytes || sizeBytes <= 0) return 'Tamano no disponible';
+    if (sizeBytes < 1024) return `${sizeBytes} B`;
+    if (sizeBytes < 1024 * 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`;
+    return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getAttachmentName(attachment: MessageAttachment) {
+    if (attachment.name) return attachment.name;
+    if (attachment.path) return attachment.path.split('/').filter(Boolean).at(-1) ?? 'Adjunto';
+    return 'Adjunto';
 }
 
 function isImageAttachment(attachment: MessageAttachment) {
-    return attachment.content_type?.toLowerCase().startsWith('image/');
+    return attachment.mime_type?.startsWith('image/') ?? false;
 }
 
-function formatFileSize(value?: number) {
-    if (!value) return '';
-    if (value < 1024) return `${value} B`;
-    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+function truncateDraftContext(value: string, maxLength = 180) {
+    return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
-function isGenericDraft(reply: string) {
-    const normalized = reply.toLowerCase();
-    const genericSignals = [
-        'recibimos tu solicitud',
-        'estamos revisando',
-        'vamos a validar',
-        'te confirmamos los próximos pasos',
-        'te confirmamos los proximos pasos',
-        'a la brevedad',
-        'origen del problema',
-    ];
+function isElectronicInvoiceConfigurationQuestion(text: string) {
+    const asksConfiguration = /(configur|activar|habilitar|parametr|integrar|conectar|instalar|setup|credencial)/i.test(text);
+    const isElectronicInvoice = /(digifact|facturaci[oó]n electronica|facturaci[oó]n electr[oó]nica|e-?cf|ecf|dgii)/i.test(text);
 
-    return reply.trim().length < 120 || genericSignals.some((signal) => normalized.includes(signal));
+    return asksConfiguration && isElectronicInvoice;
 }
 
-function latestClientMessage(messages: Message[]) {
-    return [...messages].reverse().find((message) => message.sender_type === 'Client')?.message ?? '';
+function hasAlreadyAskedConfigurationPrereqs(messages: Message[]) {
+    return messages.some((message) => (
+        message.sender_type === 'Admin'
+        && /no tengo cargada aqui una guia confirmada de configuracion inicial de digifact/i.test(message.message)
+        && /credenciales\/ambiente digifact/i.test(message.message)
+    ));
 }
 
-function buildExpertDraft(ticket: Ticket, messages: Message[]) {
+function clientConfirmedConfigurationPrereqs(messages: Message[]) {
+    const text = [...messages].reverse().find((message) => message.sender_type === 'Client')?.message.toLowerCase() ?? '';
+    const confirms = /(ya tenemos|tenemos todo|todo lo indicado|si tenemos|sí tenemos|confirmo|contamos con|ya esta|ya está)/i.test(text);
+    const asksNextStep = /(configur|llegar|ruta|paso|pasos|que debo|qué debo|como sigo|cómo sigo|que sigue|qué sigue|tener en cuenta)/i.test(text);
+
+    return confirms && asksNextStep;
+}
+
+function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
+    const subject = `${ticket.subject} ${ticket.category} ${ticket.insight?.affected_module ?? ''}`.toLowerCase();
     const owner = getTicketOwner(ticket);
-    const greeting = `Hola ${owner},`;
-    const text = `${ticket.subject} ${ticket.category} ${ticket.insight?.affected_module ?? ''} ${latestClientMessage(messages)}`.toLowerCase();
+    const lastClientMessage = [...messages].reverse().find((message) => message.sender_type === 'Client')?.message;
+    const opening = `Hola ${owner},`;
+    const evidence = lastClientMessage ? ` Tomamos como referencia: "${truncateDraftContext(lastClientMessage)}".` : '';
     const lastError = ticket.technical_context?.last_5_errors?.[0];
-    const version = ticket.technical_context?.app_version;
     const terminalContext = [
-        version ? `version ${version}` : null,
+        ticket.technical_context?.app_version ? `version ${ticket.technical_context.app_version}` : null,
         ticket.technical_context?.network_type ? `red ${ticket.technical_context.network_type}` : null,
         ticket.technical_context?.battery_level ? `bateria ${ticket.technical_context.battery_level}` : null,
     ].filter(Boolean).join(', ');
 
-    if (/e-cf|ecf|ncf|dgii|digifact|fiscal|comprobante|factura/.test(text)) {
-        return `${greeting} revisemos el flujo fiscal en Clic-${ticket.source === 'ERP' ? 'ERP' : 'POS'}. Valida primero que el tipo de comprobante, RNC/consumidor final y secuencia NCF/e-CF esten correctos. Luego intenta reenviar el comprobante desde el historial, sin recrear la venta. Si vuelve a fallar, envianos folio, NCF/e-CF, hora exacta y captura del error${lastError ? `; en los logs vemos "${lastError}".` : '.'}`;
+    if (hasAlreadyAskedConfigurationPrereqs(messages) && clientConfirmedConfigurationPrereqs(messages)) {
+        return `${opening} gracias por confirmarlo. Como ya tienen credenciales/ambiente DigiFact y secuencias e-CF/NCF, el siguiente paso no es volver a pedir prerequisitos: debo validarte la ruta exacta de parametrizacion en Clic-ERP para no indicarte un menu incorrecto.\n\nVoy a confirmar internamente el flujo correcto de configuracion y dejarlo documentado en nuestra base de conocimiento. En la proxima respuesta te compartimos los pasos exactos para activarlo en facturas y que debes revisar antes de emitir.`;
     }
 
-    if (/sync|sincron|internet|red|wifi|cloud|nube|enviar|subir|cierre|z\b/.test(text)) {
-        return `${greeting} esto parece sincronizacion entre Clic-POS y Cloud/ERP. Confirma que las ventas esten visibles localmente, que la terminal tenga internet estable y fecha/hora correcta, y luego fuerza la sincronizacion desde el POS. No borres datos ni reinstales antes de confirmar respaldo. Si no viaja, envianos terminal, usuario, hora del cierre/caja, cantidad de transacciones pendientes${terminalContext ? ` (${terminalContext})` : ''}${lastError ? ` y el ultimo error "${lastError}".` : '.'}`;
+    if (isElectronicInvoiceConfigurationQuestion(`${subject}\n${lastClientMessage ?? ''}`)) {
+        return `${opening} para no darte una ruta incorrecta de Clic-ERP, no tengo cargada aqui una guia confirmada de configuracion inicial de DigiFact/facturacion electronica. Lo correcto es validarlo como parametrizacion fiscal antes de indicar menus o pasos.\n\nPara avanzar, confirmanos dos cosas: si la empresa ya tiene credenciales/ambiente DigiFact activo (prueba o produccion) y si ya tiene asignadas sus secuencias e-CF/NCF/RNC emisor. Con eso te guiamos con el flujo exacto y dejamos documentada la configuracion correcta. Si el caso es un error al emitir, envianos folio, NCF/e-CF y captura del rechazo.`;
     }
 
-    if (/impres|printer|terminal|tablet|scanner|bateria|batería|hardware/.test(text)) {
-        return `${greeting} vamos a validar el hardware del POS. Confirma si ocurre en una sola terminal o en todas, revisa conexion/emparejamiento de impresora o scanner, y prueba una reimpresion o recibo de prueba. Si falla, envianos modelo del equipo, terminal afectada, version del POS y foto/captura del error${lastError ? `; tambien vemos "${lastError}" en contexto tecnico.` : '.'}`;
+    if (/(impres|printer|cocina|comanda|hardware)/i.test(subject)) {
+        return `${opening} vamos a validar el hardware del POS.${evidence} Confirma si ocurre en una sola terminal o en todas, revisa conexion/emparejamiento de impresora o scanner, y prueba una reimpresion o recibo de prueba. Si falla, envianos modelo del equipo, terminal afectada, version del POS y foto/captura del error${lastError ? `; tambien vemos "${lastError}" en contexto tecnico.` : '.'}`;
     }
 
-    if (/pago|tarjeta|cobro|credito|crédito|transferencia/.test(text)) {
-        return `${greeting} validemos el pago en Clic-POS. Revisa si la venta quedo completada, pendiente o duplicada en el historial y comparala contra el cuadre de caja. Si fue tarjeta, confirma si existe voucher/autorizacion. Envianos folio, monto, metodo de pago, hora, caja y terminal para identificar si es registro, sincronizacion o conciliacion.`;
+    if (/(factura|fiscal|ncf|e-?cf|digifact|rnc|comprobante)/i.test(subject)) {
+        return `${opening} revisemos el flujo fiscal en Clic-ERP/Clic-POS.${evidence} Valida primero tipo de comprobante, RNC/consumidor final, secuencia NCF/e-CF disponible e internet estable. Luego intenta reenviar solo ese comprobante desde historial, sin recrear la venta. Si vuelve a fallar, envianos folio, NCF/e-CF, hora exacta y captura del error${lastError ? `; en los logs vemos "${lastError}".` : '.'}`;
     }
 
-    if (/inventario|producto|stock|catalogo|catálogo|precio/.test(text)) {
-        return `${greeting} revisemos inventario/catalogo. Confirma que el producto exista y este activo en Clic-ERP para la sucursal, valida precio/impuesto y luego sincroniza catalogo en el POS. Si sigue sin aparecer o el stock no coincide, envianos codigo del producto, sucursal, terminal, cantidad esperada y captura de la busqueda.`;
+    if (/(sync|sincron|red|internet|conexion|offline|enviar|viajar|cierre|z\b)/i.test(subject)) {
+        return `${opening} esto parece sincronizacion entre Clic-POS y Cloud/ERP.${evidence} Confirma que las ventas esten visibles localmente, que la terminal tenga internet estable y fecha/hora correcta, y luego fuerza la sincronizacion desde el POS. No borres datos ni reinstales antes de confirmar respaldo. Si no viaja, envianos terminal, usuario, hora del cierre/caja y cantidad de transacciones pendientes${terminalContext ? ` (${terminalContext})` : ''}${lastError ? `; ultimo error "${lastError}".` : '.'}`;
     }
 
-    if (/necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta/.test(text)) {
-        return `${greeting} lo que solicitas parece una mejora funcional para Clic-ERP/Clic-POS. La registraremos para evaluacion de producto con el caso de uso e impacto operativo. Para documentarla bien, confirmanos modulo, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.`;
+    if (/(inventario|stock|producto|catalogo)/i.test(subject)) {
+        return `${opening} revisemos inventario/catalogo.${evidence} Confirma que el producto exista y este activo en Clic-ERP para la sucursal, valida precio/impuesto y luego sincroniza catalogo en el POS. Si sigue sin aparecer o el stock no coincide, envianos codigo del producto, sucursal, terminal, cantidad esperada y captura de la busqueda.`;
     }
 
-    return `${greeting} necesito ubicar el punto exacto del caso en Clic-ERP/Clic-POS. Confirma modulo afectado, usuario, sucursal/caja, terminal, version, hora aproximada y captura del mensaje. Mientras tanto valida conectividad, fecha/hora del equipo y si ocurre en una sola terminal o en todas${lastError ? `; el ultimo error registrado es "${lastError}".` : '.'}`;
-}
+    if (/(pago|caja|cierre|z|cuadre|turno)/i.test(subject)) {
+        return `${opening} validemos el pago/cierre en Clic-POS.${evidence} Revisa si la venta quedo completada, pendiente o duplicada en el historial y comparala contra el cuadre de caja. Envianos folio, monto, metodo de pago, hora, caja y terminal para identificar si es registro, sincronizacion o conciliacion.`;
+    }
 
-async function hydrateMessageAttachments(messages: Message[]) {
-    return Promise.all(messages.map(async (message) => {
-        const attachments = normalizeAttachments(message.attachments);
-        if (!attachments.length) return message;
+    const improvementPattern = /(necesito que|queremos que|ser[ií]a bueno|me gustar[ií]a|opci[oó]n para|funci[oó]n para|hace falta|solicitamos (una|un|que|como mejora)|sugeri(mos|ria|r[ií]a|do|da|encia).{0,80}(mejora|cambio|funci[oó]n|m[oó]dulo|modulo|sistema)|(proponemos|recomendamos).{0,80}(mejora|cambio|funci[oó]n|m[oó]dulo|modulo|sistema)|no permita(n)? .{0,100}(duplic|repet|m[aá]s de una vez|mas de una vez|depreci)|evit(a|ar|e).{0,100}(duplic|repet|m[aá]s de una vez|mas de una vez)|poder (aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)|promocion(es)?.{0,100}(forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio))/i;
 
-        const hydratedAttachments = await Promise.all(attachments.map(async (attachment) => {
-            if (!attachment.storage_bucket || !attachment.storage_path) return attachment;
+    if (improvementPattern.test(subject) || (lastClientMessage && improvementPattern.test(lastClientMessage))) {
+        return `${opening} lo que solicitas parece una mejora funcional para Clic-ERP/Clic-POS. La registraremos para evaluacion de producto con el caso de uso e impacto operativo. Para documentarla bien, confirmanos modulo, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.`;
+    }
 
-            const { data } = await supabaseAdmin.storage
-                .from(attachment.storage_bucket)
-                .createSignedUrl(attachment.storage_path, 60 * 60);
-
-            return {
-                ...attachment,
-                signed_url: data?.signedUrl ?? attachment.signed_url,
-            };
-        }));
-
-        return {
-            ...message,
-            attachments: hydratedAttachments,
-        };
-    }));
+    return `${opening} necesito ubicar el punto exacto del caso en Clic-ERP/Clic-POS.${evidence} Confirma modulo afectado, usuario, sucursal/caja, terminal, version, hora aproximada y captura del mensaje. Mientras tanto valida conectividad, fecha/hora del equipo y si ocurre en una sola terminal o en todas${lastError ? `; el ultimo error registrado es "${lastError}".` : '.'}`;
 }
 
 const SupportCommandCenter: React.FC = () => {
@@ -294,15 +421,35 @@ const SupportCommandCenter: React.FC = () => {
     const [filterSource, setFilterSource] = useState('Todos');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
+    const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
+    const [isResolvingTicket, setIsResolvingTicket] = useState(false);
     const [isContactModalOpen, setIsContactModalOpen] = useState(false);
     const [contactForm, setContactForm] = useState<ContactFormState>(emptyContactForm);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+    const [isImprovementModalOpen, setIsImprovementModalOpen] = useState(false);
+    const [isSavingImprovement, setIsSavingImprovement] = useState(false);
+    const [improvementDraft, setImprovementDraft] = useState<ImprovementDraft>(initialImprovementDraft);
+    const [improvementError, setImprovementError] = useState<string | null>(null);
+    const [improvementNotice, setImprovementNotice] = useState<string | null>(null);
+    const messagesPaneRef = useRef<HTMLDivElement>(null);
+    const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
 
     const selectedTicketId = selectedTicket?.id;
 
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        const pane = messagesPaneRef.current;
+        if (!pane) return;
+        pane.scrollTo({ top: pane.scrollHeight, behavior: 'smooth' });
     }, [messages]);
+
+    useEffect(() => {
+        const textarea = replyTextareaRef.current;
+        if (!textarea) return;
+
+        textarea.style.height = 'auto';
+        const nextHeight = Math.min(textarea.scrollHeight, REPLY_TEXTAREA_MAX_HEIGHT);
+        textarea.style.height = `${nextHeight}px`;
+        textarea.style.overflowY = textarea.scrollHeight > REPLY_TEXTAREA_MAX_HEIGHT ? 'auto' : 'hidden';
+    }, [replyText, selectedTicketId]);
 
     useEffect(() => {
         let mounted = true;
@@ -394,6 +541,27 @@ const SupportCommandCenter: React.FC = () => {
         let mounted = true;
 
         const fetchMessages = async () => {
+            try {
+                const response = await fetch(`${supabaseProjectUrl}/functions/v1/get-support-messages`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ticket_id: selectedTicketId }),
+                });
+
+                if (response.ok) {
+                    const payload = await response.json() as { messages?: Message[] };
+                    if (mounted) setMessages(payload.messages ?? []);
+                    return;
+                }
+
+                console.error('Admin: error fetching signed support messages', response.statusText);
+            } catch (error) {
+                console.error('Admin: unexpected error fetching signed support messages', error);
+            }
+
             const { data, error } = await supabaseAdmin.from('ticket_messages')
                 .select('*')
                 .eq('ticket_id', selectedTicketId)
@@ -404,8 +572,7 @@ const SupportCommandCenter: React.FC = () => {
                 return;
             }
 
-            const hydratedMessages = await hydrateMessageAttachments((data ?? []) as Message[]);
-            if (mounted) setMessages(hydratedMessages);
+            if (mounted) setMessages((data ?? []) as Message[]);
         };
 
         fetchMessages();
@@ -416,9 +583,15 @@ const SupportCommandCenter: React.FC = () => {
                 schema: 'landlord',
                 table: 'ticket_messages',
                 filter: `ticket_id=eq.${selectedTicketId}`,
-            }, async (payload) => {
-                const [hydratedMessage] = await hydrateMessageAttachments([payload.new as Message]);
-                if (mounted) setMessages((previous) => [...previous, hydratedMessage]);
+            }, (payload) => {
+                if (mounted) {
+                    const nextMessage = payload.new as Message;
+                    if (normalizeMessageAttachments(nextMessage.attachments).length) {
+                        void fetchMessages();
+                        return;
+                    }
+                    setMessages((previous) => [...previous, nextMessage]);
+                }
             })
             .subscribe();
 
@@ -449,52 +622,103 @@ const SupportCommandCenter: React.FC = () => {
         if (!replyText.trim() || !selectedTicket || isSendingReply) return;
 
         const text = replyText.trim();
+        const recipientEmail = getTicketRecipientEmail(selectedTicket);
+
         setReplyText('');
         setIsSendingReply(true);
 
-        if (selectedTicket.source === 'Email') {
-            const response = await fetch(`${supabaseProjectUrl}/functions/v1/send-support-reply`, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${supabaseServiceRoleKey}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    ticket_id: selectedTicket.id,
-                    message: text,
-                }),
-            });
+        try {
+            if (recipientEmail) {
+                const response = await fetch(`${supabaseProjectUrl}/functions/v1/send-support-reply`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        ticket_id: selectedTicket.id,
+                        message: text,
+                    }),
+                });
 
-            if (!response.ok) {
-                const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
-                console.error('Admin: error sending email support reply', payload ?? response.statusText);
-                setReplyText(text);
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
+                    console.error('Admin: error notifying support reply', payload ?? response.statusText);
+                    setReplyText(text);
+                }
+
+                return;
             }
 
-            setIsSendingReply(false);
-            return;
-        }
+            const { error } = await supabaseAdmin.from('ticket_messages').insert({
+                ticket_id: selectedTicket.id,
+                message: text,
+                sender_type: 'Admin',
+                attachments: {
+                    channel: 'realtime',
+                    notify_client: true,
+                    delivery_status: 'inserted',
+                    notification: {
+                        play_sound: true,
+                        sound: 'support-reply',
+                    },
+                },
+            });
 
-        const { error } = await supabaseAdmin.from('ticket_messages').insert({
-            ticket_id: selectedTicket.id,
-            message: text,
-            sender_type: 'Admin',
-        });
-
-        if (error) {
-            console.error('Admin: error sending support reply', error);
+            if (error) {
+                console.error('Admin: error sending support reply', error);
+                setReplyText(text);
+            }
+        } catch (error) {
+            console.error('Admin: unexpected error sending support reply', error);
             setReplyText(text);
+        } finally {
+            setIsSendingReply(false);
         }
-
-        setIsSendingReply(false);
     };
 
     const updateStatus = async (newStatus: string) => {
         if (!selectedTicket) return;
 
+        if (newStatus === 'Resuelto') {
+            setIsResolvingTicket(true);
+            try {
+                const response = await fetch(`${supabaseProjectUrl}/functions/v1/resolve-support-ticket`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ticket_id: selectedTicket.id }),
+                });
+
+                if (!response.ok) {
+                    const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
+                    console.error('Admin: error resolving support ticket', payload ?? response.statusText);
+                    return;
+                }
+
+                setSelectedTicket({
+                    ...selectedTicket,
+                    status: 'Resuelto',
+                    resolution_status: 'pending_customer_confirmation',
+                    customer_rating: null,
+                });
+            } catch (error) {
+                console.error('Admin: unexpected error resolving support ticket', error);
+            } finally {
+                setIsResolvingTicket(false);
+            }
+            return;
+        }
+
         const { error } = await supabaseAdmin
             .from('support_tickets')
-            .update({ status: newStatus })
+            .update({
+                status: newStatus,
+                resolution_status: newStatus === 'En_Proceso' ? 'reopened' : 'open',
+                resolution_feedback_token_hash: null,
+            })
             .eq('id', selectedTicket.id);
 
         if (error) {
@@ -502,7 +726,11 @@ const SupportCommandCenter: React.FC = () => {
             return;
         }
 
-        setSelectedTicket({ ...selectedTicket, status: newStatus });
+        setSelectedTicket({
+            ...selectedTicket,
+            status: newStatus,
+            resolution_status: newStatus === 'En_Proceso' ? 'reopened' : 'open',
+        });
     };
 
     const openContactModal = () => {
@@ -584,16 +812,180 @@ const SupportCommandCenter: React.FC = () => {
         setIsCreatingContact(false);
     };
 
-    const generateDraft = () => {
+    const generateDraft = async () => {
+        if (!selectedTicket || isGeneratingDraft) return;
+
+        const fallbackDraft = buildContextualFallbackDraft(selectedTicket, messages);
+        setIsGeneratingDraft(true);
+
+        try {
+            const response = await fetch(`${supabaseProjectUrl}/functions/v1/generate-support-draft`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${supabaseServiceRoleKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ ticket_id: selectedTicket.id }),
+            });
+
+            const payload = await response.json().catch(() => null) as DraftResponse | null;
+
+            if (!response.ok || !payload?.draft) {
+                console.error('Admin: error generating support draft', payload ?? response.statusText);
+                setReplyText(fallbackDraft);
+                return;
+            }
+
+            setReplyText(payload.draft);
+        } catch (error) {
+            console.error('Admin: unexpected error generating support draft', error);
+            setReplyText(fallbackDraft);
+        } finally {
+            setIsGeneratingDraft(false);
+        }
+    };
+
+    const openImprovementModal = () => {
         if (!selectedTicket) return;
 
-        const suggestedReply = selectedTicket.insight?.suggested_replies?.[0];
-        if (suggestedReply && !isGenericDraft(suggestedReply)) {
-            setReplyText(suggestedReply);
+        const primaryClientMessage = getPrimaryClientMessage(messages);
+        const requestedCapability = primaryClientMessage || selectedTicket.subject;
+        const affectedModule = inferImprovementModule(selectedTicket, requestedCapability);
+
+        setImprovementDraft({
+            title: selectedTicket.subject,
+            requestedCapability,
+            affectedModule,
+            customerImpact: recommendImprovementImpact(selectedTicket, requestedCapability, affectedModule),
+            priority: selectedTicket.priority === 'Critica' ? 'Alta' : 'Media',
+        });
+        setImprovementError(null);
+        setImprovementNotice(null);
+        setIsImprovementModalOpen(true);
+    };
+
+    const closeImprovementModal = () => {
+        if (isSavingImprovement) return;
+        setIsImprovementModalOpen(false);
+        setImprovementDraft(initialImprovementDraft);
+        setImprovementError(null);
+    };
+
+    const updateImprovementDraft = <K extends keyof ImprovementDraft>(field: K, value: ImprovementDraft[K]) => {
+        setImprovementDraft((current) => ({ ...current, [field]: value }));
+    };
+
+    const handleCreateImprovement = async () => {
+        if (!selectedTicket) return;
+
+        const title = improvementDraft.title.trim();
+        const requestedCapability = improvementDraft.requestedCapability.trim();
+        const affectedModule = improvementDraft.affectedModule.trim();
+        const customerImpact = improvementDraft.customerImpact.trim();
+
+        if (!title || !requestedCapability) {
+            setImprovementError('Completa el titulo y la solicitud antes de registrarla.');
             return;
         }
 
-        setReplyText(buildExpertDraft(selectedTicket, messages));
+        setIsSavingImprovement(true);
+        setImprovementError(null);
+
+        const duplicateGroupKey = normalizeDuplicateKey(`${selectedTicket.id}-${title}`);
+        const payload = {
+            ticket_id: selectedTicket.id,
+            tenant_id: selectedTicket.tenant_id,
+            contact_id: selectedTicket.contact?.id,
+            source: 'HelpDesk manual',
+            status: 'Nueva',
+            priority: improvementDraft.priority,
+            title,
+            request_text: requestedCapability,
+            ai_summary: null,
+            requested_capability: requestedCapability,
+            affected_module: affectedModule || selectedTicket.insight?.affected_module || selectedTicket.category,
+            customer_impact: customerImpact || 'Registrada manualmente desde HelpDesk para evaluacion de producto.',
+            duplicate_group_key: duplicateGroupKey,
+            ai_confidence: null,
+            detected_by_ai: false,
+        };
+
+        let improvementId: string | null = null;
+        let alreadyExisted = false;
+
+        const { data: existing, error: existingError } = await supabaseAdmin
+            .from('customer_improvement_requests')
+            .select('id')
+            .eq('ticket_id', selectedTicket.id)
+            .eq('duplicate_group_key', duplicateGroupKey)
+            .maybeSingle();
+
+        if (existingError) {
+            console.error('Admin: error checking duplicate customer improvement', existingError);
+            setImprovementError('No se pudo validar si la mejora ya existia.');
+            setIsSavingImprovement(false);
+            return;
+        }
+
+        if (existing?.id) {
+            improvementId = existing.id;
+            alreadyExisted = true;
+        } else {
+            const { data: inserted, error: insertError } = await supabaseAdmin
+                .from('customer_improvement_requests')
+                .insert(payload)
+                .select('id')
+                .single();
+
+            if (insertError) {
+                console.error('Admin: error creating customer improvement', insertError);
+                setImprovementError('No se pudo registrar la mejora solicitada.');
+                setIsSavingImprovement(false);
+                return;
+            }
+
+            improvementId = inserted.id;
+        }
+
+        const message = alreadyExisted
+            ? `Confirmamos que tu solicitud "${title}" ya estaba registrada como mejora funcional para evaluacion del equipo de producto. Te avisaremos cuando tengamos una decision o avance.`
+            : `Registramos tu solicitud "${title}" como mejora funcional para evaluacion del equipo de producto. Te avisaremos cuando tengamos una decision o avance.`;
+
+        const { error: messageError } = await supabaseAdmin.from('ticket_messages').insert({
+            ticket_id: selectedTicket.id,
+            message,
+            sender_type: 'Admin',
+            attachments: {
+                channel: 'customer_improvement',
+                event: alreadyExisted ? 'customer_improvement_already_registered' : 'customer_improvement_registered',
+                improvement_request_id: improvementId,
+                manual: true,
+                notify_client: true,
+                notification: {
+                    badge: true,
+                    increment_unread: true,
+                    play_sound: true,
+                    sound: 'support-improvement-registered',
+                    title: 'Solicitud registrada como mejora',
+                    body: message,
+                },
+                client_alert: {
+                    badge: true,
+                    increment_unread: true,
+                },
+            },
+        });
+
+        if (messageError) {
+            console.error('Admin: error notifying customer improvement', messageError);
+            setImprovementNotice('La mejora fue registrada, pero no se pudo insertar la notificacion en el ticket.');
+        } else {
+            setImprovementNotice(alreadyExisted ? 'La mejora ya existia; se notifico al cliente.' : 'Mejora registrada y cliente notificado.');
+            setIsImprovementModalOpen(false);
+            setImprovementDraft(initialImprovementDraft);
+        }
+
+        setIsSavingImprovement(false);
     };
 
     return (
@@ -671,6 +1063,11 @@ const SupportCommandCenter: React.FC = () => {
                                             {ticket.source === 'Email' ? <Mail size={11} /> : <MonitorSmartphone size={11} />}
                                             {ticket.source}
                                         </span>
+                                        {ticket.resolution_status && ticket.resolution_status !== 'open' && (
+                                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${resolutionStatusStyles[ticket.resolution_status] ?? 'border-slate-200 bg-slate-50 text-slate-500'}`}>
+                                                {resolutionStatusLabels[ticket.resolution_status] ?? ticket.resolution_status}
+                                            </span>
+                                        )}
                                     </div>
                                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${ticket.priority === 'Critica' ? 'border-red-200 bg-red-50 text-red-700' : 'border-orange-200 bg-orange-50 text-orange-700'}`}>
                                         {ticket.priority}
@@ -712,6 +1109,16 @@ const SupportCommandCenter: React.FC = () => {
                                         <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
                                             {selectedTicket.category}
                                         </span>
+                                        {selectedTicket.resolution_status && selectedTicket.resolution_status !== 'open' && (
+                                            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${resolutionStatusStyles[selectedTicket.resolution_status] ?? 'border-slate-200 bg-white text-slate-600'}`}>
+                                                {resolutionStatusLabels[selectedTicket.resolution_status] ?? selectedTicket.resolution_status}
+                                            </span>
+                                        )}
+                                        {selectedTicket.customer_rating ? (
+                                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
+                                                {selectedTicket.customer_rating}/5 estrellas
+                                            </span>
+                                        ) : null}
                                     </div>
                                     <div className="flex min-w-0 items-center gap-2">
                                         <span className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-black text-slate-500">
@@ -723,14 +1130,20 @@ const SupportCommandCenter: React.FC = () => {
                                 </div>
 
                                 <div className="flex shrink-0 gap-2">
-                                    <button onClick={() => updateStatus('En_Proceso')} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+                                    <button onClick={() => updateStatus('En_Proceso')} disabled={isResolvingTicket} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
                                         En proceso
                                     </button>
-                                    <button onClick={() => updateStatus('Resuelto')} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700">
-                                        Resolver
+                                    <button onClick={() => updateStatus('Resuelto')} disabled={isResolvingTicket} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
+                                        {isResolvingTicket ? 'Enviando...' : 'Resolver'}
                                     </button>
                                 </div>
                             </div>
+
+                            {selectedTicket.resolution_status === 'pending_customer_confirmation' && (
+                                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                                    Se notifico al cliente para confirmar cierre y valorar la respuesta.
+                                </div>
+                            )}
 
                             {selectedTicket.insight?.summary && (
                                 <div className="mt-4 rounded-lg border border-violet-100 bg-violet-50 p-3">
@@ -749,91 +1162,125 @@ const SupportCommandCenter: React.FC = () => {
                             )}
                         </div>
 
-                        <div className="flex-1 space-y-4 overflow-y-auto p-6">
-                            {messages.map((message) => (
-                                <div key={message.id} className={`flex ${message.sender_type === 'Admin' ? 'justify-end' : message.sender_type === 'System' ? 'justify-center' : 'justify-start'}`}>
-                                    <div className={`max-w-[72%] rounded-2xl px-4 py-3 text-sm shadow-sm ${message.sender_type === 'Admin' ? 'rounded-tr-sm bg-blue-600 text-white' : message.sender_type === 'System' ? 'border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-tl-sm border border-slate-200 bg-white text-slate-700'}`}>
-                                        <div className="mb-1 text-[10px] font-bold uppercase opacity-70">
-                                            {message.sender_type === 'Admin' ? 'Cloud Admin' : message.sender_type === 'System' ? 'Sistema' : getContactLabel(selectedTicket)}
-                                        </div>
-                                        <div className="whitespace-pre-wrap break-words">{message.message}</div>
-                                        {getDisplayAttachments(message.attachments).length > 0 && (
-                                            <div className="mt-3 grid gap-2">
-                                                {getDisplayAttachments(message.attachments).map((attachment, index) => {
-                                                    const url = attachment.signed_url || attachment.download_url || attachment.resend_download_url || '';
-                                                    const label = attachment.filename || `Adjunto ${index + 1}`;
+                        <div ref={messagesPaneRef} className="flex-1 space-y-4 overflow-y-auto p-6">
+                            {messages.map((message) => {
+                                const attachments = normalizeMessageAttachments(message.attachments);
+                                const isAdminMessage = message.sender_type === 'Admin';
+                                const isSystemMessage = message.sender_type === 'System';
 
-                                                    if (!url) {
-                                                        return (
-                                                            <div key={`${label}-${index}`} className={`rounded-lg border px-3 py-2 text-xs ${message.sender_type === 'Admin' ? 'border-blue-300 bg-blue-500/40 text-white' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
-                                                                {label}
+                                return (
+                                    <div key={message.id} className={`flex ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}>
+                                        <div className={`max-w-[72%] rounded-2xl px-4 py-3 text-sm shadow-sm ${isAdminMessage ? 'rounded-tr-sm bg-blue-600 text-white' : isSystemMessage ? 'border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-tl-sm border border-slate-200 bg-white text-slate-700'}`}>
+                                            <div className="mb-1 text-[10px] font-bold uppercase opacity-70">
+                                                {isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}
+                                            </div>
+                                            <p className="whitespace-pre-wrap break-words">{message.message}</p>
+
+                                            {attachments.length ? (
+                                                <div className="mt-3 grid gap-2">
+                                                    {attachments.map((attachment, index) => {
+                                                        const fileName = getAttachmentName(attachment);
+                                                        const canOpen = Boolean(attachment.signed_url);
+                                                        const content = (
+                                                            <>
+                                                                <div className={`h-16 w-20 shrink-0 overflow-hidden rounded-lg border ${isAdminMessage ? 'border-white/20 bg-white/10' : 'border-slate-200 bg-slate-50'}`}>
+                                                                    {canOpen && isImageAttachment(attachment) ? (
+                                                                        <img
+                                                                            src={attachment.signed_url ?? undefined}
+                                                                            alt={fileName}
+                                                                            className="h-full w-full object-cover"
+                                                                            loading="lazy"
+                                                                        />
+                                                                    ) : (
+                                                                        <div className={`flex h-full w-full items-center justify-center ${isAdminMessage ? 'text-white/80' : 'text-slate-400'}`}>
+                                                                            {isImageAttachment(attachment) ? <ImageIcon size={22} /> : <Paperclip size={22} />}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                <div className="min-w-0 flex-1">
+                                                                    <div className="flex min-w-0 items-center gap-1">
+                                                                        <span className="truncate text-xs font-bold">{fileName}</span>
+                                                                        {canOpen && <ExternalLink className="shrink-0 opacity-70" size={12} />}
+                                                                    </div>
+                                                                    <p className={`mt-1 text-[11px] ${isAdminMessage ? 'text-white/75' : 'text-slate-500'}`}>
+                                                                        {formatAttachmentSize(attachment.size_bytes)}
+                                                                    </p>
+                                                                    {!canOpen && (
+                                                                        <p className={`mt-1 text-[11px] font-medium ${isAdminMessage ? 'text-white/70' : 'text-amber-700'}`}>
+                                                                            Archivo no disponible
+                                                                        </p>
+                                                                    )}
+                                                                </div>
+                                                            </>
+                                                        );
+
+                                                        const className = `flex min-w-0 items-center gap-3 rounded-xl border p-2 text-left ${isAdminMessage ? 'border-white/20 bg-white/10 text-white' : 'border-slate-200 bg-slate-50 text-slate-700'}`;
+                                                        const hoverClassName = isAdminMessage ? 'hover:bg-white/15' : 'hover:bg-slate-100';
+
+                                                        return canOpen ? (
+                                                            <a
+                                                                key={attachment.id ?? `${fileName}-${index}`}
+                                                                href={attachment.signed_url ?? undefined}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className={`${className} ${hoverClassName}`}
+                                                            >
+                                                                {content}
+                                                            </a>
+                                                        ) : (
+                                                            <div key={attachment.id ?? `${fileName}-${index}`} className={className}>
+                                                                {content}
                                                             </div>
                                                         );
-                                                    }
-
-                                                    if (isImageAttachment(attachment)) {
-                                                        return (
-                                                            <a key={`${label}-${index}`} href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-slate-200 bg-white">
-                                                                <img src={url} alt={label} className="max-h-72 w-full object-contain" />
-                                                                <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs text-slate-600">
-                                                                    <span className="truncate font-medium">{label}</span>
-                                                                    <span className="shrink-0 text-slate-400">{formatFileSize(attachment.size)}</span>
-                                                                </div>
-                                                            </a>
-                                                        );
-                                                    }
-
-                                                    return (
-                                                        <a key={`${label}-${index}`} href={url} target="_blank" rel="noreferrer" className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs ${message.sender_type === 'Admin' ? 'border-blue-300 bg-blue-500/40 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}>
-                                                            <span className="truncate font-medium">{label}</span>
-                                                            <span className="shrink-0 opacity-70">{formatFileSize(attachment.size)}</span>
-                                                        </a>
-                                                    );
-                                                })}
-                                            </div>
-                                        )}
+                                                    })}
+                                                </div>
+                                            ) : null}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                            <div ref={messagesEndRef} />
-                        </div>
+                                );
+                            })}
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-2 shadow-sm">
+                                {selectedTicket.insight?.suggested_replies?.length ? (
+                                    <div className="mb-3 flex gap-2 overflow-x-auto">
+                                        {selectedTicket.insight.suggested_replies.slice(0, 3).map((reply) => (
+                                            <button
+                                                key={reply}
+                                                onClick={() => setReplyText(reply)}
+                                                className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50"
+                                            >
+                                                {reply.slice(0, 92)}
+                                            </button>
+                                        ))}
+                                    </div>
+                                ) : null}
 
-                        <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-4">
-                            {selectedTicket.insight?.suggested_replies?.length ? (
-                                <div className="mb-3 flex gap-2 overflow-x-auto">
-                                    {selectedTicket.insight.suggested_replies.slice(0, 3).map((reply) => (
+                                <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500">
+                                    <textarea
+                                        ref={replyTextareaRef}
+                                        rows={1}
+                                        value={replyText}
+                                        onChange={(event) => setReplyText(event.target.value)}
+                                        placeholder="Escribe tu respuesta..."
+                                        className="max-h-[240px] min-h-[40px] w-full resize-none overflow-hidden border-0 p-2 text-sm leading-5 outline-none focus:ring-0"
+                                    />
+                                    <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-2 py-1.5">
                                         <button
-                                            key={reply}
-                                            onClick={() => setReplyText(reply)}
-                                            className="shrink-0 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-50"
+                                            onClick={generateDraft}
+                                            disabled={isGeneratingDraft}
+                                            className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
                                         >
-                                            {reply.slice(0, 92)}
+                                            <Wand2 size={14} />
+                                            {isGeneratingDraft ? 'Generando...' : 'Borrador IA'}
                                         </button>
-                                    ))}
-                                </div>
-                            ) : null}
-
-                            <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500">
-                                <textarea
-                                    rows={4}
-                                    value={replyText}
-                                    onChange={(event) => setReplyText(event.target.value)}
-                                    placeholder={`Escribe tu respuesta a ${getTicketOwner(selectedTicket)}...`}
-                                    className="w-full resize-none border-0 p-3 text-sm outline-none focus:ring-0"
-                                />
-                                <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-3 py-2">
-                                    <button onClick={generateDraft} className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-2 text-xs font-bold text-violet-700 hover:bg-violet-50">
-                                        <Wand2 size={14} />
-                                        Borrador IA
-                                    </button>
-                                    <button
-                                        onClick={handleSendReply}
-                                        disabled={isSendingReply}
-                                        className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                        {isSendingReply ? 'Enviando...' : 'Enviar'}
-                                        <Send size={14} />
-                                    </button>
+                                        <button
+                                            onClick={handleSendReply}
+                                            disabled={isSendingReply}
+                                            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                            {isSendingReply ? 'Enviando...' : getTicketRecipientEmail(selectedTicket) ? 'Enviar y notificar' : 'Enviar'}
+                                            <Send size={14} />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -911,7 +1358,7 @@ const SupportCommandCenter: React.FC = () => {
                                 <p className="font-bold text-slate-800">{getContactLabel(selectedTicket)}</p>
                                 <p className="mt-1 text-xs text-slate-500">{selectedTicket.contact?.company_name || selectedTicket.tenant_name}</p>
 
-                                {selectedTicket.source === 'Email' && (selectedTicket.external_sender_email || selectedTicket.contact?.email) && (
+                                {getTicketRecipientEmail(selectedTicket) && (
                                     <button
                                         onClick={openContactModal}
                                         disabled={isCreatingContact}
@@ -967,6 +1414,13 @@ const SupportCommandCenter: React.FC = () => {
                         <section>
                             <h4 className="mb-2 text-xs font-semibold text-slate-500">Acciones rápidas</h4>
                             <div className="space-y-2">
+                                <button
+                                    onClick={openImprovementModal}
+                                    className="flex w-full items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs font-medium text-amber-800 hover:bg-amber-100"
+                                >
+                                    Marcar como mejora
+                                    <Lightbulb size={13} />
+                                </button>
                                 <button className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-600 hover:bg-slate-50">
                                     Forzar Sync Inbox
                                     <Link2 size={13} />
@@ -979,6 +1433,127 @@ const SupportCommandCenter: React.FC = () => {
                         </section>
                     </div>
                 </aside>
+            )}
+
+            {isImprovementModalOpen && selectedTicket && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+                    <div className="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="flex items-start justify-between gap-4 border-b border-slate-100 p-5">
+                            <div>
+                                <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-700">
+                                    <Lightbulb size={14} />
+                                    Mejora solicitada
+                                </div>
+                                <h2 className="text-lg font-black text-slate-900">Enviar caso a mejoras</h2>
+                                <p className="mt-1 text-sm text-slate-500">Se creara una oportunidad vinculada al ticket y se notificara al cliente.</p>
+                            </div>
+                            <button
+                                onClick={closeImprovementModal}
+                                className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50"
+                                aria-label="Cerrar"
+                                type="button"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4 p-5">
+                            <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Titulo</span>
+                                    <input
+                                        value={improvementDraft.title}
+                                        onChange={(event) => updateImprovementDraft('title', event.target.value)}
+                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                        placeholder="Ej. Promociones por forma de pago"
+                                    />
+                                </label>
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Prioridad</span>
+                                    <select
+                                        value={improvementDraft.priority}
+                                        onChange={(event) => updateImprovementDraft('priority', event.target.value as ImprovementPriority)}
+                                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    >
+                                        <option value="Baja">Baja</option>
+                                        <option value="Media">Media</option>
+                                        <option value="Alta">Alta</option>
+                                        <option value="Critica">Critica</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <label className="block">
+                                <span className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                                    Modulo afectado
+                                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700">Sugerido por IA</span>
+                                </span>
+                                <input
+                                    value={improvementDraft.affectedModule}
+                                    onChange={(event) => updateImprovementDraft('affectedModule', event.target.value)}
+                                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    placeholder="ERP, POS, Promociones, Activos fijos..."
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Solicitud del cliente</span>
+                                <textarea
+                                    value={improvementDraft.requestedCapability}
+                                    onChange={(event) => updateImprovementDraft('requestedCapability', event.target.value)}
+                                    rows={4}
+                                    className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    placeholder="Describe lo que el cliente esta solicitando..."
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
+                                    Impacto operativo
+                                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] text-violet-700">Sugerido por IA</span>
+                                </span>
+                                <textarea
+                                    value={improvementDraft.customerImpact}
+                                    onChange={(event) => updateImprovementDraft('customerImpact', event.target.value)}
+                                    rows={3}
+                                    className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    placeholder="Ej. Evita doble digitacion, reduce errores, desbloquea cierre de caja..."
+                                />
+                            </label>
+
+                            {improvementError && (
+                                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                                    {improvementError}
+                                </div>
+                            )}
+                            {improvementNotice && (
+                                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700">
+                                    {improvementNotice}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-4">
+                            <button
+                                onClick={closeImprovementModal}
+                                disabled={isSavingImprovement}
+                                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                type="button"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleCreateImprovement}
+                                disabled={isSavingImprovement}
+                                className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                type="button"
+                            >
+                                {isSavingImprovement ? <Loader2 className="animate-spin" size={16} /> : <Lightbulb size={16} />}
+                                Registrar y notificar
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
             {isContactModalOpen && selectedTicket && (

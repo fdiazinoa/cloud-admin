@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin } from "./supabase";
+import { supabase, supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from "./supabase";
 import type {
     Distributor,
     Tenant,
@@ -7,26 +7,59 @@ import type {
     TenantType,
     Terminal,
 } from "../types";
+import { provisionTenant, type ProvisionTenantInput, type SupabaseAdminClient } from "./tenantProvisioning";
 
 export interface DashboardStats {
+    totalTenants: number;
     activeTenants: number;
+    trialTenants: number;
     suspendedTenants: number;
     terminals: number;
+    activeSubscriptions: number;
+    openTickets: number;
+    criticalTickets: number;
+    tenantGrowth: DashboardTrendPoint[];
+    recentTickets: DashboardTicket[];
+    expiringSubscriptions: DashboardExpiringSubscription[];
+    supportSatisfaction: DashboardSupportSatisfaction;
+    lastUpdatedAt: string;
 }
 
-interface CreateTenantInput {
-    name: string;
-    slug: string;
-    email: string;
-    contactName: string;
-    contactEmail: string;
-    city: string;
-    capturedByDistributorId?: string;
-    servicedByDistributorId?: string;
-    plan?: string;
-    type?: TenantType;
-    cloudSync?: boolean;
+export interface DashboardSupportSatisfaction {
+    totalResponses: number;
+    excellent: DashboardSatisfactionBucket;
+    good: DashboardSatisfactionBucket;
+    bad: DashboardSatisfactionBucket;
 }
+
+export interface DashboardSatisfactionBucket {
+    count: number;
+    percentage: number;
+}
+
+export interface DashboardTrendPoint {
+    name: string;
+    value: number;
+}
+
+export interface DashboardTicket {
+    id: string;
+    subject: string;
+    priority: string;
+    status: string;
+    tenantName: string;
+    createdAt: string;
+}
+
+export interface DashboardExpiringSubscription {
+    tenantId: string;
+    tenantName: string;
+    planName: string;
+    endDate: string;
+    daysRemaining: number;
+}
+
+type CreateTenantInput = ProvisionTenantInput;
 
 type TenantUpdatePayload = {
     name: string;
@@ -41,12 +74,6 @@ type TenantUpdatePayload = {
     password?: string;
 };
 
-function normalizeOptional(value?: string): string | null {
-    if (!value) return null;
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-}
-
 function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | null {
     if (!error || typeof error !== "object") return null;
 
@@ -60,121 +87,175 @@ function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | n
     return null;
 }
 
-function generateTempPassword(): string {
-    const length = 14;
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let pwd = "";
-    for (let i = 0; i < length; i++) {
-        pwd += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return pwd;
+function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-export async function createTenant({
-    name,
-    slug,
-    email,
-    contactName,
-    contactEmail,
-    city,
-    capturedByDistributorId,
-    servicedByDistributorId,
-    plan = "TRIAL",
-    type = "full",
-    cloudSync = true,
-}: CreateTenantInput): Promise<{ tenantId: string; tempPassword: string }> {
-    const accessEmail = email.trim().toLowerCase();
-    const contactMail = contactEmail.trim().toLowerCase();
-    const tempPassword = generateTempPassword();
+function asText(value: unknown): string {
+    return typeof value === "string" ? value.trim() : "";
+}
 
-    const { error: authError, data: authUser } = await supabaseAdmin.auth.admin.createUser({
-        email: accessEmail,
-        password: tempPassword,
-        email_confirm: true,
-        user_metadata: {
-            name,
-            full_name: name,
-            slug,
-            type,
-            cloudSync,
-            contact_name: contactName.trim(),
-            contact_email: contactMail,
-            city: city.trim(),
-            captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
-            serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
-            is_new_user: true,
-        },
+function normalizeKey(value: unknown): string {
+    return asText(value).toUpperCase();
+}
+
+async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, string>> {
+    try {
+        const { data: erpTenant, error: erpTenantError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_tenants")
+            .select("id")
+            .eq("config->>cloudAdminTenantId", tenantId)
+            .maybeSingle();
+
+        if (erpTenantError) {
+            console.warn("ERP tenant lookup unavailable for terminal binding status:", erpTenantError);
+            return new Map();
+        }
+
+        const erpTenantId = (erpTenant as { id?: string } | null)?.id;
+        if (!erpTenantId) return new Map();
+
+        const { data: stores, error: storesError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_stores")
+            .select("id")
+            .eq("tenant_id", erpTenantId);
+
+        if (storesError) {
+            console.warn("ERP store lookup unavailable for terminal binding status:", storesError);
+            return new Map();
+        }
+
+        const storeIds = ((stores as Array<{ id?: string }> | null) || [])
+            .map((store) => store.id)
+            .filter((id): id is string => Boolean(id));
+
+        if (storeIds.length === 0) return new Map();
+
+        const { data: terminals, error: terminalsError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_terminals")
+            .select("id,device_id,name,config,last_seen,created_at")
+            .in("store_id", storeIds);
+
+        if (terminalsError) {
+            console.warn("ERP terminal lookup unavailable for terminal binding status:", terminalsError);
+            return new Map();
+        }
+
+        const bindings = new Map<string, string>();
+        for (const terminal of ((terminals as Array<Record<string, unknown>> | null) || [])) {
+            const deviceId = asText(terminal.device_id);
+            if (!deviceId) continue;
+
+            const config = asRecord(terminal.config);
+            const metadata = asRecord(config.metadata);
+            [
+                terminal.id,
+                metadata.terminal_id,
+                metadata.erp_terminal_id,
+            ].forEach((candidate) => {
+                const key = normalizeKey(candidate);
+                if (key) bindings.set(key, deviceId);
+            });
+        }
+
+        return bindings;
+    } catch (error) {
+        console.warn("ERP terminal binding status lookup failed:", error);
+        return new Map();
+    }
+}
+
+function applyRegistryBindingStatus(
+    registries: TenantTerminalRegistryEntry[],
+    bindings: Map<string, string>,
+): TenantTerminalRegistryEntry[] {
+    if (bindings.size === 0) return registries;
+
+    return registries.map((registry) => {
+        const lookupKeys = [
+            registry.terminal_id,
+            registry.terminal_name,
+            registry.device_id,
+        ].map(normalizeKey).filter(Boolean);
+
+        const authorizedDeviceId = lookupKeys
+            .map((key) => bindings.get(key))
+            .find((value): value is string => Boolean(value));
+
+        const isRevoked = Boolean(
+            authorizedDeviceId
+            && registry.device_id
+            && normalizeKey(registry.device_id) !== normalizeKey(authorizedDeviceId)
+        );
+
+        return {
+            ...registry,
+            authorized_device_id: authorizedDeviceId || registry.authorized_device_id || null,
+            is_revoked: isRevoked,
+        };
     });
+}
 
-    if (authError) {
-        console.error("Supabase user creation failed", authError);
-        throw authError;
-    }
+export interface RequestTerminalTakeoverInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    newDeviceId: string;
+    deviceName?: string;
+    reason: string;
+    confirmTakeover: boolean;
+}
 
-    const authUserId = authUser?.user?.id;
-    if (!authUserId) {
-        throw new Error("Supabase Auth user ID missing after tenant user creation");
-    }
+export interface TerminalTakeoverResult {
+    status: string;
+    terminal?: unknown;
+    previous_device_id?: string | null;
+    new_device_id?: string;
+    requires_auth?: boolean;
+    message?: string;
+}
 
-    const { data, error: fnError } = await supabaseAdmin.rpc("create_new_tenant", {
-        p_name: name,
-        p_slug: slug,
-        p_email: accessEmail,
-        p_type: type,
-        p_cloud_sync: cloudSync,
-        p_contact_name: contactName.trim(),
-        p_contact_email: contactMail,
-        p_city: city.trim(),
-        p_captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
-        p_serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
-    });
+export interface RequestTerminalLocalRebuildInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    reason: string;
+    confirmRebuild: boolean;
+}
 
-    if (fnError) {
-        console.error("Tenant provisioning failed", fnError);
-        await supabaseAdmin.auth.admin.deleteUser(authUserId);
-        throw fnError;
-    }
+export interface TerminalLocalRebuildResult {
+    status: string;
+    terminal?: unknown;
+    device_id?: string | null;
+    requires_full_bootstrap?: boolean;
+    message?: string;
+}
 
-    const tenantId = data as string;
+export interface RequestTerminalErpReadinessInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    deviceId: string;
+    terminalName?: string | null;
+}
 
-    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-        user_metadata: {
-            name,
-            full_name: name,
-            slug,
-            type,
-            cloudSync,
-            contact_name: contactName.trim(),
-            contact_email: contactMail,
-            city: city.trim(),
-            captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
-            serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
-            is_new_user: true,
-            tenant_id: tenantId,
-        },
-    });
+export interface TerminalErpReadinessResult {
+    status: string;
+    erpTenantId?: string | null;
+    companyId?: string | null;
+    storeId?: string | null;
+    terminalId?: string | null;
+    profileStatus?: string | null;
+    checks?: Record<string, unknown>;
+    erp_readiness?: Record<string, unknown>;
+    message?: string;
+}
 
-    if (metadataError) {
-        console.error("Failed to sync tenant metadata into Supabase Auth", metadataError);
-        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
-        await supabaseAdmin.auth.admin.deleteUser(authUserId);
-        throw metadataError;
-    }
-
-    const { error: subscriptionError } = await supabaseAdmin.from("subscriptions").insert({
-        tenant_id: tenantId,
-        plan_name: plan,
-        is_active: true,
-    });
-
-    if (subscriptionError) {
-        console.error("Failed to create tenant subscription", subscriptionError);
-        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
-        await supabaseAdmin.auth.admin.deleteUser(authUserId);
-        throw subscriptionError;
-    }
-
-    return { tenantId, tempPassword };
+export async function createTenant(input: CreateTenantInput): Promise<{ tenantId: string; tempPassword: string }> {
+    return provisionTenant(supabaseAdmin as unknown as SupabaseAdminClient, input);
 }
 
 export async function verifyTenantEmail(token: string): Promise<void> {
@@ -236,6 +317,50 @@ export async function updateTenant(
     throw new Error("Tenant update failed after retrying without optional columns.");
 }
 
+async function findTenantAuthUserId(tenant: Tenant): Promise<string | null> {
+    const tenantEmail = tenant.email.trim().toLowerCase();
+    let page = 1;
+    const perPage = 1000;
+
+    while (true) {
+        const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+        if (error) throw error;
+
+        const users = data.users || [];
+        const match = users.find((user) => {
+            const userEmail = user.email?.trim().toLowerCase();
+            const metadataTenantId = typeof user.user_metadata?.tenant_id === "string"
+                ? user.user_metadata.tenant_id
+                : null;
+            return userEmail === tenantEmail || metadataTenantId === tenant.id;
+        });
+
+        if (match) return match.id;
+        if (users.length < perPage) return null;
+        page += 1;
+    }
+}
+
+export async function deleteTenant(tenant: Tenant): Promise<void> {
+    const authUserId = await findTenantAuthUserId(tenant);
+
+    const { error } = await supabaseAdmin.rpc("delete_tenant", {
+        p_tenant_id: tenant.id,
+        p_confirm_name: tenant.name,
+    });
+
+    if (error) throw error;
+
+    if (authUserId) {
+        const { error: authDeleteError } = await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        if (authDeleteError) {
+            throw new Error(
+                `Tenant eliminado, pero no se pudo eliminar el usuario de acceso (${tenant.email}): ${authDeleteError.message}`,
+            );
+        }
+    }
+}
+
 export async function getDistributors(): Promise<Distributor[]> {
     const { data, error } = await supabaseAdmin
         .from("distributors")
@@ -285,6 +410,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     } else {
         registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
     }
+
+    registryRows = applyRegistryBindingStatus(registryRows, await loadErpTerminalBindings(tenantId));
 
     if (terminalsRes.error && registryRes.error) {
         throw terminalsRes.error;
@@ -418,27 +545,271 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     });
 }
 
+export async function requestTerminalTakeover(input: RequestTerminalTakeoverInput): Promise<TerminalTakeoverResult> {
+    const response = await fetch("/api/terminal-takeover", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            device_id: input.newDeviceId,
+            device_name: input.deviceName || null,
+            reason: input.reason,
+            confirm_takeover: input.confirmTakeover,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo ejecutar la recuperacion de terminal.");
+    }
+
+    return (payload || { status: "success" }) as TerminalTakeoverResult;
+}
+
+export async function requestTerminalLocalRebuild(input: RequestTerminalLocalRebuildInput): Promise<TerminalLocalRebuildResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-local-rebuild`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            reason: input.reason,
+            confirm_rebuild: input.confirmRebuild,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo preparar la reconstruccion local del POS.");
+    }
+
+    return (payload || { status: "success" }) as TerminalLocalRebuildResult;
+}
+
+export async function requestTerminalErpReadiness(input: RequestTerminalErpReadinessInput): Promise<TerminalErpReadinessResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-pos-erp-readiness`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            device_id: input.deviceId,
+            terminal_name: input.terminalName || null,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo preparar el contexto ERP del POS.");
+    }
+
+    return (payload || { status: "pending" }) as TerminalErpReadinessResult;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
-    const [tenantsRes, terminalsRes] = await Promise.all([
-        supabaseAdmin.from("tenants").select("status"),
+    const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
+        supabaseAdmin.from("tenants").select("id,name,status,created_at"),
         supabaseAdmin.schema("public").from("terminals").select("id", { count: "exact", head: true }),
+        getDashboardSubscriptions(),
+        getDashboardTickets(),
     ]);
 
     if (tenantsRes.error) throw tenantsRes.error;
     if (terminalsRes.error) throw terminalsRes.error;
 
-    const activeTenants = tenantsRes.data?.filter(
-        (tenant) => tenant.status === "ACTIVE" || tenant.status === "TRIAL",
-    ).length || 0;
-    const suspendedTenants = tenantsRes.data?.filter(
-        (tenant) => tenant.status === "SUSPENDED",
-    ).length || 0;
+    const tenantRows = ((tenantsRes.data as Array<Pick<Tenant, "id" | "name" | "status" | "created_at">>) || []);
+    const tenantsById = new Map(tenantRows.map((tenant) => [tenant.id, tenant]));
+    const activeTenants = tenantRows.filter((tenant) => tenant.status === "ACTIVE").length;
+    const trialTenants = tenantRows.filter((tenant) => tenant.status === "TRIAL").length;
+    const suspendedTenants = tenantRows.filter((tenant) => tenant.status === "SUSPENDED").length;
+    const today = startOfDay(new Date());
+    const activeSubscriptions = subscriptionRows.filter((subscription) => subscription.is_active).length;
+    const expiringSubscriptions = subscriptionRows
+        .filter((subscription) => subscription.is_active && Boolean(subscription.end_date))
+        .map((subscription) => {
+            const endDate = startOfDay(new Date(subscription.end_date as string));
+            const daysRemaining = Math.ceil((endDate.getTime() - today.getTime()) / 86400000);
+            const tenant = tenantsById.get(subscription.tenant_id);
+
+            return {
+                tenantId: subscription.tenant_id,
+                tenantName: tenant?.name || "Tenant no identificado",
+                planName: subscription.plan_name || "Plan activo",
+                endDate: subscription.end_date as string,
+                daysRemaining,
+            };
+        })
+        .filter((subscription) => subscription.daysRemaining >= 0 && subscription.daysRemaining <= 30)
+        .sort((a, b) => a.daysRemaining - b.daysRemaining)
+        .slice(0, 5);
+    const openTickets = ticketRows.filter((ticket) => !["Cerrado", "Resuelto"].includes(ticket.status)).length;
+    const criticalTickets = ticketRows.filter((ticket) => {
+        const isOpen = !["Cerrado", "Resuelto"].includes(ticket.status);
+        return isOpen && ticket.priority.toLowerCase().startsWith("cr");
+    }).length;
+    const recentTickets = ticketRows
+        .slice(0, 5)
+        .map((ticket) => ({
+            id: ticket.id,
+            subject: ticket.subject,
+            priority: ticket.priority,
+            status: ticket.status,
+            tenantName: ticket.tenant_id ? tenantsById.get(ticket.tenant_id)?.name || "Sin tenant asignado" : "Sin tenant asignado",
+            createdAt: ticket.created_at,
+        }));
 
     return {
+        totalTenants: tenantRows.length,
         activeTenants,
+        trialTenants,
         suspendedTenants,
         terminals: terminalsRes.count || 0,
+        activeSubscriptions,
+        openTickets,
+        criticalTickets,
+        tenantGrowth: buildTenantGrowth(tenantRows),
+        recentTickets,
+        expiringSubscriptions,
+        supportSatisfaction: buildSupportSatisfaction(ticketRows),
+        lastUpdatedAt: new Date().toISOString(),
     };
+}
+
+function startOfDay(value: Date): Date {
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+type DashboardSubscriptionRow = {
+    tenant_id: string;
+    is_active: boolean;
+    end_date?: string | null;
+    plan_name?: string | null;
+};
+
+type DashboardTicketRow = {
+    id: string;
+    subject: string;
+    priority: string;
+    status: string;
+    tenant_id?: string | null;
+    customer_rating?: number | null;
+    created_at: string;
+};
+
+async function getDashboardSubscriptions(): Promise<DashboardSubscriptionRow[]> {
+    const { data, error } = await supabaseAdmin
+        .from("subscriptions")
+        .select("tenant_id,is_active,end_date,plan_name");
+
+    if (!error) return (data as DashboardSubscriptionRow[]) || [];
+
+    const code = (error as { code?: string }).code;
+    if (code !== "42703" && code !== "PGRST204") {
+        console.warn("Dashboard subscriptions unavailable:", error);
+        return [];
+    }
+
+    const fallback = await supabaseAdmin
+        .from("subscriptions")
+        .select("tenant_id,is_active,plan_name");
+
+    if (fallback.error) {
+        console.warn("Dashboard subscriptions fallback unavailable:", fallback.error);
+        return [];
+    }
+
+    return ((fallback.data as DashboardSubscriptionRow[]) || []).map((subscription) => ({
+        ...subscription,
+        end_date: null,
+    }));
+}
+
+async function getDashboardTickets(): Promise<DashboardTicketRow[]> {
+    const { data, error } = await supabaseAdmin
+        .from("support_tickets")
+        .select("id,subject,priority,status,tenant_id,customer_rating,created_at")
+        .order("created_at", { ascending: false });
+
+    if (error) {
+        console.warn("Dashboard support tickets unavailable:", error);
+        return [];
+    }
+
+    return (data as DashboardTicketRow[]) || [];
+}
+
+function buildSupportSatisfaction(tickets: DashboardTicketRow[]): DashboardSupportSatisfaction {
+    const ratings = tickets
+        .map((ticket) => ticket.customer_rating)
+        .filter((rating): rating is number => typeof rating === "number" && rating >= 1 && rating <= 5);
+    const totalResponses = ratings.length;
+    const excellent = ratings.filter((rating) => rating === 5).length;
+    const good = ratings.filter((rating) => rating >= 3 && rating <= 4).length;
+    const bad = ratings.filter((rating) => rating <= 2).length;
+
+    const percentage = (count: number) => totalResponses ? Math.round((count / totalResponses) * 100) : 0;
+
+    return {
+        totalResponses,
+        excellent: {
+            count: excellent,
+            percentage: percentage(excellent),
+        },
+        good: {
+            count: good,
+            percentage: percentage(good),
+        },
+        bad: {
+            count: bad,
+            percentage: percentage(bad),
+        },
+    };
+}
+
+function buildTenantGrowth(tenants: Array<Pick<Tenant, "created_at">>): DashboardTrendPoint[] {
+    const formatter = new Intl.DateTimeFormat("es-DO", { month: "short" });
+    const now = new Date();
+    const buckets: DashboardTrendPoint[] = [];
+
+    for (let index = 5; index >= 0; index -= 1) {
+        const month = new Date(now.getFullYear(), now.getMonth() - index, 1);
+        buckets.push({
+            name: formatter.format(month).replace(".", ""),
+            value: 0,
+        });
+    }
+
+    tenants.forEach((tenant) => {
+        const createdAt = new Date(tenant.created_at);
+        const diffMonths = (now.getFullYear() - createdAt.getFullYear()) * 12 + now.getMonth() - createdAt.getMonth();
+
+        if (diffMonths >= 0 && diffMonths < buckets.length) {
+            buckets[buckets.length - 1 - diffMonths].value += 1;
+        }
+    });
+
+    return buckets;
 }
 
 export async function suspendTenant(id: string): Promise<void> {
@@ -570,8 +941,12 @@ export const tenantService = {
     getTenants,
     updateTenantTaxId,
     updateTenant,
+    deleteTenant,
     getDistributors,
     getTenantTerminalOverview,
+    requestTerminalTakeover,
+    requestTerminalLocalRebuild,
+    requestTerminalErpReadiness,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,

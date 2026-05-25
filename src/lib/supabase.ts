@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+export const supabaseProjectUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabaseServiceKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+export const supabaseServiceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
 const allowInsecureKeys = import.meta.env.VITE_ALLOW_INSECURE_SUPABASE_KEYS === 'true';
 
 function decodeJwtRole(token: string): string | null {
@@ -27,11 +27,11 @@ function isElevatedServerKey(token: string): boolean {
     return decodeJwtRole(token) === 'service_role';
 }
 
-if (!supabaseUrl || !supabaseKey) {
+if (!supabaseProjectUrl || !supabaseKey) {
     throw new Error('Missing Supabase Environment Variables');
 }
 
-if (!supabaseServiceKey) {
+if (!supabaseServiceRoleKey) {
     throw new Error('Missing VITE_SUPABASE_SERVICE_ROLE_KEY for administrative operations');
 }
 
@@ -40,25 +40,22 @@ if (!allowInsecureKeys) {
         const anonRole = decodeJwtRole(supabaseKey);
         throw new Error(`VITE_SUPABASE_ANON_KEY must be anon or sb_publishable (current role: ${anonRole || 'unknown'})`);
     }
-    if (!isElevatedServerKey(supabaseServiceKey)) {
-        const serviceRole = decodeJwtRole(supabaseServiceKey);
+    if (!isElevatedServerKey(supabaseServiceRoleKey)) {
+        const serviceRole = decodeJwtRole(supabaseServiceRoleKey);
         throw new Error(`VITE_SUPABASE_SERVICE_ROLE_KEY must be service_role or sb_secret (current role: ${serviceRole || 'unknown'})`);
     }
-    if (supabaseKey === supabaseServiceKey) {
+    if (supabaseKey === supabaseServiceRoleKey) {
         throw new Error('VITE_SUPABASE_ANON_KEY and VITE_SUPABASE_SERVICE_ROLE_KEY cannot be the same key');
     }
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey, {
+export const supabase = createClient(supabaseProjectUrl, supabaseKey, {
     auth: { persistSession: true },
     db: { schema: 'landlord' }
 });
 
-export const supabaseProjectUrl = supabaseUrl;
-export const supabaseServiceRoleKey = supabaseServiceKey;
-
 // TODO: Move all service-role operations to a trusted backend or Edge Function.
-export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+export const supabaseAdmin = createClient(supabaseProjectUrl, supabaseServiceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
     db: { schema: 'landlord' }
 });

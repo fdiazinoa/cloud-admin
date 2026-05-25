@@ -27,17 +27,6 @@ interface ResendInboundEvent {
     };
 }
 
-interface ResendAttachment {
-    id: string;
-    filename: string;
-    size?: number;
-    content_type?: string;
-    content_disposition?: string;
-    content_id?: string | null;
-    download_url?: string;
-    expires_at?: string;
-}
-
 interface TriageResult {
     category: TicketCategory;
     priority: TicketPriority;
@@ -57,6 +46,12 @@ interface TriageResult {
     incident_fingerprint: string | null;
     duplicate_signal: boolean;
     ai_tags: string[];
+    customer_improvement_requested: boolean;
+    improvement_title: string | null;
+    improvement_summary: string | null;
+    requested_capability: string | null;
+    customer_impact: string | null;
+    improvement_confidence: number;
 }
 
 interface TenantMatch {
@@ -69,7 +64,6 @@ interface IntegrationConfig {
     openAiApiKey?: string;
     anthropicApiKey?: string;
     fromAddress: string;
-    replyToAddress: string;
     aiProvider: 'openai' | 'anthropic' | 'disabled';
     aiModel: string;
     aiTriageEnabled: boolean;
@@ -78,7 +72,6 @@ interface IntegrationConfig {
 }
 
 interface IntegrationSettingsRow {
-    resend_inbound_email?: string | null;
     resend_from_name?: string | null;
     resend_from_email?: string | null;
     ai_provider?: 'openai' | 'anthropic' | 'disabled' | null;
@@ -104,15 +97,17 @@ const categoryMap: Record<string, TicketCategory> = {
     otros: 'Otros',
 };
 
-const supportAttachmentsBucket = 'support-attachments';
 const clicProductExpertPrompt = [
     'Eres un especialista senior de soporte de Clic-ERP y Clic-POS para comercios en Republica Dominicana.',
     'Conoces operaciones reales de caja, cierre Z, ventas POS, sincronizacion cloud, e-CF/NCF, DGII/Digifact, inventario, productos, promociones, pagos, terminales Android, impresoras, red y usuarios del ERP.',
+    'Distingue incidentes/preguntas de solicitudes de mejora de producto.',
+    'Marca customer_improvement_requested=true solo si el cliente pide una funcion nueva, cambio de comportamiento, automatizacion o capacidad no existente.',
     'Devuelve solo JSON estructurado y no inventes datos.',
     'Las suggested_replies deben ser respuestas listas para enviar al cliente, en espanol claro y profesional.',
-    'Cada suggested_reply debe: mencionar el problema concreto, dar 2 a 4 pasos accionables, indicar que datos/captura enviar si no se resuelve, y evitar frases vagas como "estamos revisando" sin instrucciones.',
-    'Si no hay suficiente informacion para diagnosticar, pide datos exactos: empresa, usuario, terminal, version, folio/NCF/e-CF, cierre/caja, modulo, hora aproximada y captura del error.',
-    'No prometas cambios de producto ni cierres tickets; si parece solicitud de nueva funcion, clasificala como mejora solicitada y responde que se registrara para evaluacion.',
+    'Cada suggested_reply debe mencionar el problema concreto, dar 2 a 4 pasos accionables, indicar que datos/captura enviar si no se resuelve y evitar frases vagas como "estamos revisando" sin instrucciones.',
+    'Si no hay suficiente informacion, pide datos exactos: empresa, usuario, terminal, version, folio/NCF/e-CF, cierre/caja, modulo, hora aproximada y captura del error.',
+    'Si el cliente pregunta como configurar DigiFact, facturacion electronica o e-CF, no inventes rutas, menus ni pasos de configuracion. Pide prerequisitos fiscales y responde que se validara la guia exacta de configuracion.',
+    'No prometas cambios de producto ni cierres tickets; si parece solicitud de nueva funcion, responde que se registrara para evaluacion.',
 ].join(' ');
 
 function json(body: unknown, status = 200) {
@@ -120,33 +115,6 @@ function json(body: unknown, status = 200) {
         status,
         headers: { 'Content-Type': 'application/json' },
     });
-}
-
-function describeError(error: unknown) {
-    if (error instanceof Error) return error.message;
-    if (error && typeof error === 'object') {
-        const record = error as Record<string, unknown>;
-        const parts = [
-            typeof record.message === 'string' ? record.message : null,
-            typeof record.details === 'string' ? record.details : null,
-            typeof record.hint === 'string' ? record.hint : null,
-            typeof record.code === 'string' ? `code: ${record.code}` : null,
-        ].filter(Boolean);
-
-        if (parts.length) return parts.join(' | ');
-
-        try {
-            return JSON.stringify(record);
-        } catch {
-            return String(error);
-        }
-    }
-
-    return String(error);
-}
-
-function failWithStage(stage: string, error: unknown): never {
-    throw new Error(`${stage}: ${describeError(error)}`);
 }
 
 function getEnv(name: string) {
@@ -191,7 +159,6 @@ async function loadIntegrationConfig(supabase: ReturnType<typeof createClient>):
         openAiApiKey: Deno.env.get('OPENAI_API_KEY'),
         anthropicApiKey: Deno.env.get('ANTHROPIC_API_KEY'),
         fromAddress: Deno.env.get('HELPDESK_FROM_EMAIL') ?? 'Cloud Admin Soporte <apoyotenico@mercasend.com>',
-        replyToAddress: Deno.env.get('HELPDESK_INBOUND_EMAIL') ?? 'apoyotenico@mercasend.com',
         aiProvider: 'openai',
         aiModel: Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini',
         aiTriageEnabled: true,
@@ -212,7 +179,6 @@ async function loadIntegrationConfig(supabase: ReturnType<typeof createClient>):
         config.aiTriageEnabled = row.ai_triage_enabled ?? config.aiTriageEnabled;
         config.aiSentimentEnabled = row.ai_sentiment_enabled ?? config.aiSentimentEnabled;
         config.aiAutoDraftsEnabled = row.ai_auto_drafts_enabled ?? config.aiAutoDraftsEnabled;
-        config.replyToAddress = row.resend_inbound_email ?? config.replyToAddress;
 
         if (row.resend_from_email) {
             config.fromAddress = formatFromAddress(row.resend_from_name ?? 'Cloud Admin Soporte', row.resend_from_email);
@@ -255,113 +221,6 @@ function extractDisplayName(rawFrom: string) {
     return rawFrom.replace(`<${email}>`, '').replace(email, '').replaceAll('"', '').trim() || null;
 }
 
-function stripQuotedEmailText(value: string) {
-    let text = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-
-    const quotePatterns = [
-        /\n\s*On\s.+?wrote:\s*[\s\S]*$/i,
-        /\s+On\s.+?wrote:\s*[\s\S]*$/i,
-        /\n\s*El\s+(lun|mar|mi[eé]|jue|vie|s[aá]b|dom).+?escribi[oó]:\s*[\s\S]*$/i,
-        /\s+El\s+(lun|mar|mi[eé]|jue|vie|s[aá]b|dom).+?escribi[oó]:\s*[\s\S]*$/i,
-        /\n\s*De:\s.+\n\s*Enviado:\s.+[\s\S]*$/i,
-        /\n\s*From:\s.+\n\s*Sent:\s.+[\s\S]*$/i,
-        /\n_{5,}[\s\S]*$/i,
-    ];
-
-    for (const pattern of quotePatterns) {
-        text = text.replace(pattern, '').trim();
-    }
-
-    text = text
-        .split('\n')
-        .filter((line) => !line.trim().startsWith('>'))
-        .join('\n')
-        .replace(/\n?\[image:[^\]]+\]\s*/gi, '\n')
-        .replace(/\n--\s*\n[\s\S]*$/m, '')
-        .replace(/\n--\[image:[\s\S]*$/i, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-
-    return text || value.trim();
-}
-
-function sanitizeStorageName(value: string) {
-    return value
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-zA-Z0-9._-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 120) || 'attachment';
-}
-
-async function getInboundAttachments(emailId: string, resendApiKey: string) {
-    const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}/attachments`, {
-        method: 'GET',
-        headers: {
-            Authorization: `Bearer ${resendApiKey}`,
-            'Content-Type': 'application/json',
-        },
-    });
-
-    if (!response.ok) {
-        console.error('Could not retrieve inbound email attachments', await response.text());
-        return [];
-    }
-
-    const payload = await response.json() as { data?: ResendAttachment[] };
-    return payload.data ?? [];
-}
-
-async function persistInboundAttachments(
-    supabase: ReturnType<typeof createClient>,
-    emailId: string,
-    resendApiKey: string,
-) {
-    const attachments = await getInboundAttachments(emailId, resendApiKey);
-    const storedAttachments = [];
-
-    for (const attachment of attachments) {
-        const fileName = sanitizeStorageName(attachment.filename || `${attachment.id}.bin`);
-        const storagePath = `${emailId}/${attachment.id}-${fileName}`;
-        let stored = false;
-
-        if (attachment.download_url) {
-            try {
-                const download = await fetch(attachment.download_url);
-                if (download.ok) {
-                    const bytes = new Uint8Array(await download.arrayBuffer());
-                    const upload = await supabase.storage
-                        .from(supportAttachmentsBucket)
-                        .upload(storagePath, bytes, {
-                            contentType: attachment.content_type || 'application/octet-stream',
-                            upsert: true,
-                        });
-
-                    stored = !upload.error;
-                    if (upload.error) console.error('Could not store inbound attachment', upload.error);
-                }
-            } catch (error) {
-                console.error('Attachment download/store failed', error);
-            }
-        }
-
-        storedAttachments.push({
-            id: attachment.id,
-            filename: attachment.filename,
-            size: attachment.size,
-            content_type: attachment.content_type,
-            content_disposition: attachment.content_disposition,
-            content_id: attachment.content_id,
-            resend_download_url: attachment.download_url,
-            resend_expires_at: attachment.expires_at,
-            storage_bucket: stored ? supportAttachmentsBucket : null,
-            storage_path: stored ? storagePath : null,
-        });
-    }
-
-    return storedAttachments;
-}
-
 function normalizeCategory(value?: string | null): TicketCategory {
     if (!value) return 'Otros';
     return categoryMap[value.toLowerCase()] ?? 'Otros';
@@ -373,43 +232,9 @@ function extractTicketNumberFromSubject(subject: string) {
 }
 
 function buildThreadSubject(ticketNumber: number | string, subject: string) {
+    const cleanSubject = subject.replace(/^\s*(re|fw|fwd):\s*/i, '').trim() || 'Solicitud técnica';
     const ticketToken = `[Ticket #${ticketNumber}]`;
-    const cleanSubject = subject
-        .replace(/^\s*(re|fw|fwd):\s*/i, '')
-        .replace(ticketToken, '')
-        .trim() || 'Solicitud técnica';
-
-    return `${ticketToken} Re: ${cleanSubject}`;
-}
-
-function mergeEmailThreadContext(
-    currentContext: Record<string, unknown> | null | undefined,
-    inbound: NonNullable<ResendInboundEvent['data']>,
-) {
-    const messageIds = Array.isArray(currentContext?.email_thread_message_ids)
-        ? currentContext.email_thread_message_ids.filter((value): value is string => typeof value === 'string')
-        : [];
-    const updatedMessageIds = inbound.message_id
-        ? Array.from(new Set([...messageIds, inbound.message_id]))
-        : messageIds;
-
-    return {
-        ...(currentContext ?? {}),
-        channel: 'email',
-        resend_email_id: inbound.email_id ?? currentContext?.resend_email_id,
-        resend_message_id: inbound.message_id ?? currentContext?.resend_message_id,
-        email_thread_message_ids: updatedMessageIds,
-        last_inbound_at: new Date().toISOString(),
-    };
-}
-
-function buildThreadHeaders(messageId?: string) {
-    return messageId
-        ? {
-            'In-Reply-To': messageId,
-            References: messageId,
-        }
-        : undefined;
+    return cleanSubject.includes(ticketToken) ? cleanSubject : `${ticketToken} ${cleanSubject}`;
 }
 
 function findPhoneCandidate(text: string) {
@@ -419,6 +244,7 @@ function findPhoneCandidate(text: string) {
 
 function detectAffectedModule(text: string, category: TicketCategory) {
     const normalized = text.toLowerCase();
+    if (normalized.includes('activo fijo') || normalized.includes('activos fijos') || normalized.includes('depreci')) return 'Activos fijos';
     if (normalized.includes('impres') || normalized.includes('recibo') || normalized.includes('comprobante')) return 'Impresión fiscal';
     if (normalized.includes('internet') || normalized.includes('wifi') || normalized.includes('red') || normalized.includes('timeout')) return 'Conectividad';
     if (normalized.includes('inventario') || normalized.includes('producto') || normalized.includes('stock')) return 'Inventario';
@@ -431,6 +257,83 @@ function buildIncidentFingerprint(category: TicketCategory, affectedModule: stri
     return `${category}:${affectedModule ?? 'general'}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+function truncateText(value: string, maxLength: number) {
+    const clean = value.replace(/\s+/g, ' ').trim();
+    return clean.length > maxLength ? `${clean.slice(0, maxLength - 3)}...` : clean;
+}
+
+function buildImprovementKey(value: string) {
+    return value
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 96) || 'mejora-general';
+}
+
+const improvementRequestPatterns = [
+    /ser[ií]a bueno/i,
+    /deber[ií]a(?:n)? (?:tener|permitir|agregar|incluir|hacer|existir)/i,
+    /podr[ií]a(?:n)? (?:agregar|incluir|hacer|poner|crear|permitir)/i,
+    /necesito que (?:el sistema|la app|el pos|el erp)?/i,
+    /queremos que (?:el sistema|la app|el pos|el erp)?/i,
+    /me gustar[ií]a que/i,
+    /hace falta (?:una|un|el|la)?/i,
+    /solicitamos (?:una|un|que|como mejora)/i,
+    /sugeri(?:mos|ria|r[ií]a|do|da|encia).{0,80}(?:mejora|cambio|funci[oó]n|m[oó]dulo|modulo|sistema)/i,
+    /(?:proponemos|recomendamos).{0,80}(?:mejora|cambio|funci[oó]n|m[oó]dulo|modulo|sistema)/i,
+    /opci[oó]n para/i,
+    /funci[oó]n para/i,
+    /mejora para/i,
+    /no permita(?:n)? .{0,100}(?:duplic|repet|m[aá]s de una vez|mas de una vez|depreci)/i,
+    /evit(?:a|ar|e).{0,100}(?:duplic|repet|m[aá]s de una vez|mas de una vez)/i,
+    /poder (?:aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar)/i,
+    /(?:aplicar|asignar|filtrar|configurar|seleccionar|elegir|limitar|condicionar).{0,80}(?:por|seg[uú]n) (?:forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)/i,
+    /promocion(?:es)? .{0,100}(?:forma de pago|m[eé]todo de pago|tipo de cliente|cliente|categor[ií]a|sucursal|lista de precio)/i,
+];
+
+function detectImprovementSignal(subject: string, body: string, affectedModule: string | null) {
+    const text = `${subject}\n${body}`;
+    const normalized = text.toLowerCase();
+    const isRequest = improvementRequestPatterns.some((pattern) => pattern.test(text));
+
+    if (!isRequest) {
+        return {
+            customer_improvement_requested: false,
+            improvement_title: null,
+            improvement_summary: null,
+            requested_capability: null,
+            customer_impact: null,
+            improvement_confidence: 0,
+        };
+    }
+
+    const title = truncateText(subject || body, 90);
+    const requestedCapability = truncateText(body || subject, 220);
+    const impact = normalized.includes('duplic') || normalized.includes('repet') || normalized.includes('depreci')
+        ? 'Puede evitar duplicidad operativa o contable.'
+        : normalized.includes('ventas') || normalized.includes('vender') || normalized.includes('cliente')
+        ? 'Puede impactar flujo de ventas o experiencia del cliente.'
+        : 'Solicitud funcional detectada para evaluacion de producto.';
+
+    return {
+        customer_improvement_requested: true,
+        improvement_title: title,
+        improvement_summary: truncateText(`Solicitud de mejora detectada${affectedModule ? ` en ${affectedModule}` : ''}: ${requestedCapability}`, 360),
+        requested_capability: requestedCapability,
+        customer_impact: impact,
+        improvement_confidence: 0.72,
+    };
+}
+
+function isElectronicInvoiceConfigurationQuestion(text: string) {
+    const asksConfiguration = /(configur|activar|habilitar|parametr|integrar|conectar|instalar|setup|credencial)/i.test(text);
+    const isElectronicInvoice = /(digifact|facturaci[oó]n electronica|facturaci[oó]n electr[oó]nica|e-?cf|ecf|dgii)/i.test(text);
+
+    return asksConfiguration && isElectronicInvoice;
+}
+
 function buildExpertSuggestedReplies(params: {
     category: TicketCategory;
     priority: TicketPriority;
@@ -440,56 +343,51 @@ function buildExpertSuggestedReplies(params: {
 }) {
     const text = `${params.subject} ${params.body}`.toLowerCase();
     const moduleLabel = params.affectedModule || params.category;
-    const isFeatureRequest = [
-        'necesito que',
-        'queremos que',
-        'seria bueno',
-        'sería bueno',
-        'me gustaria',
-        'me gustaría',
-        'opcion para',
-        'opción para',
-        'funcion para',
-        'función para',
-        'hace falta',
-    ].some((phrase) => text.includes(phrase));
+    const improvement = detectImprovementSignal(params.subject, params.body, params.affectedModule ?? null);
 
-    if (isFeatureRequest) {
+    if (isElectronicInvoiceConfigurationQuestion(text)) {
+        return [
+            'Hola, para no darte una ruta incorrecta de Clic-ERP, necesito validar la guia exacta de configuracion inicial de DigiFact/facturacion electronica antes de indicarte menus o pasos. Confirmanos si ya tienen credenciales/ambiente DigiFact activo (prueba o produccion) y si ya tienen asignadas sus secuencias e-CF/NCF/RNC emisor.',
+            'Hola, este caso es de parametrizacion fiscal DigiFact/e-CF. Antes de guiar la configuracion, confirma si la empresa ya esta habilitada con DigiFact, ambiente que usaran, RNC emisor y secuencias fiscales disponibles. Si el problema es al emitir una factura, envianos folio, NCF/e-CF y captura del rechazo.',
+        ];
+    }
+
+    if (improvement.customer_improvement_requested) {
         return [
             `Hola, gracias por la sugerencia. Por lo que nos indicas, esto es una mejora funcional para Clic-ERP/Clic-POS en el area de ${moduleLabel}. La vamos a registrar para evaluacion de producto con el caso de uso, impacto operativo y prioridad. Para documentarla bien, envianos un ejemplo del flujo actual, que resultado esperas y si aplica a una sucursal, caja o usuario especifico.`,
-            `Hola, lo que solicitas parece una nueva capacidad del sistema, no un incidente tecnico. Vamos a dejarla registrada como mejora solicitada por cliente. Para poder evaluarla correctamente, por favor confirma: modulo donde la necesitas, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.`,
+            'Hola, lo que solicitas parece una nueva capacidad del sistema, no un incidente tecnico. Vamos a dejarla registrada como mejora solicitada por cliente. Para evaluarla correctamente, por favor confirma: modulo donde la necesitas, pasos actuales, resultado esperado, frecuencia de uso y si bloquea ventas, facturacion o cierre de caja.',
         ];
     }
 
     if (params.category === 'Fiscal' || /e-cf|ecf|ncf|dgii|digifact|fiscal|comprobante|factura/.test(text)) {
         return [
-            'Hola, revisemos el flujo fiscal en Clic-ERP/Clic-POS. Primero confirma que el comprobante tenga tipo NCF/e-CF correcto, RNC o consumidor final valido, secuencia disponible y que la terminal tenga internet estable. Luego intenta reenviar solo ese comprobante desde el historial de ventas/facturas. Si vuelve a fallar, envianos el folio, NCF/e-CF, hora exacta y captura del mensaje para validar respuesta de DGII/Digifact.',
+            'Hola, revisemos el flujo fiscal en Clic-ERP/Clic-POS. Primero confirma que el comprobante tenga tipo NCF/e-CF correcto, RNC o consumidor final valido, secuencia disponible y que la terminal tenga internet estable. Luego intenta reenviar solo ese comprobante desde el historial de ventas/facturas. Si vuelve a fallar, envianos folio, NCF/e-CF, hora exacta y captura del mensaje para validar respuesta de DGII/Digifact.',
             'Hola, para este error fiscal evita recrear la venta hasta confirmar el estado del comprobante. Verifica si la factura quedo completada localmente, si aparece con e-CF pendiente/error y si hay conectividad en la caja. Con el folio, NCF/e-CF y captura podemos revisar si es rechazo de datos, secuencia, token/proveedor fiscal o sincronizacion.',
         ];
     }
 
-    if (params.category === 'Red' || /sync|sincron|internet|red|wifi|cloud|nube|enviar|subir/.test(text)) {
+    if (params.category === 'Red' || /sync|sincron|internet|red|wifi|cloud|nube|enviar|subir|viajar|cierre|z\b/.test(text)) {
         return [
             'Hola, esto parece un caso de sincronizacion entre Clic-POS y Cloud/ERP. Por favor valida internet en la terminal, fecha/hora correcta del dispositivo y que no haya VPN o red bloqueando la salida. Luego fuerza sincronizacion desde el POS y confirma si las ventas quedan en cola o si alguna transaccion muestra error. Envianos hora del cierre/caja, usuario, terminal y una captura del estado de sync.',
             'Hola, para proteger las ventas, no borres datos ni reinstales el POS. Primero confirma que las ventas esten visibles en el historial local y que el cierre Z exista. Despues intenta sincronizar con una red estable. Si no viajan al ERP, necesitamos terminal, version del POS, cantidad de transacciones pendientes, hora del cierre y ultimo error mostrado.',
         ];
     }
 
-    if (params.category === 'Hardware' || /impres|printer|terminal|tablet|scanner|bateria|batería/.test(text)) {
+    if (params.category === 'Hardware' || /impres|printer|terminal|tablet|scanner|bateria|hardware/.test(text)) {
         return [
             'Hola, vamos a validar el hardware del POS. Confirma si el problema ocurre en una sola terminal o en todas, revisa conexion de la impresora/scanner, bateria y red, y prueba imprimir un recibo de prueba desde la configuracion del POS. Si falla, envianos modelo del equipo, terminal afectada, version del POS y foto/captura del error.',
             'Hola, si el equipo no responde correctamente, primero reinicia la terminal y verifica que la impresora o scanner este emparejado/conectado. Luego prueba una venta pequena o reimpresion. Si el error continua, indicanos si afecta ventas, cocina, factura fiscal o solo impresion de recibos, para escalarlo con el modulo correcto.',
         ];
     }
 
-    if (params.category === 'Pagos' || /pago|tarjeta|cobro|credito|crédito|transferencia/.test(text)) {
+    if (params.category === 'Pagos' || /pago|tarjeta|cobro|credito|transferencia/.test(text)) {
         return [
             'Hola, validemos el pago en Clic-POS. Confirma metodo usado, monto, caja, usuario y si la venta quedo completada o pendiente. Revisa tambien si el pago aparece duplicado, rechazado o sin recibo. Si no cuadra, envianos folio de venta, hora, metodo de pago y captura para comparar POS, cierre de caja y ERP.',
             'Hola, para pagos es importante no repetir la venta hasta confirmar el estado. Verifica el historial de ventas y el cuadre de caja; si el cobro fue con tarjeta, confirma si el voucher o autorizacion existe. Con folio, monto, hora y terminal podemos identificar si es error de registro, sincronizacion o conciliacion.',
         ];
     }
 
-    if (params.category === 'Inventario' || /inventario|producto|stock|catalogo|catálogo|precio/.test(text)) {
+    if (params.category === 'Inventario' || /inventario|producto|stock|catalogo|precio/.test(text)) {
         return [
             'Hola, revisemos inventario/catalogo. Confirma si el producto existe en Clic-ERP, si esta activo para la sucursal y si el precio/impuesto estan configurados. Luego sincroniza catalogo en el POS y prueba buscarlo por nombre o codigo. Si sigue sin aparecer, envianos codigo del producto, sucursal, terminal y captura de la busqueda.',
             'Hola, si el stock o producto no coincide, valida primero el movimiento en ERP y despues sincroniza el POS. Indicanos producto, almacen/sucursal, cantidad esperada, cantidad mostrada y hora del ultimo ajuste o venta. Con eso podemos revisar si es configuracion, inventario pendiente o sincronizacion.',
@@ -497,7 +395,7 @@ function buildExpertSuggestedReplies(params: {
     }
 
     return [
-        `Hola, para ayudarte con Clic-ERP/Clic-POS necesito ubicar el punto exacto del fallo. Por favor confirma modulo afectado, usuario, sucursal/caja, terminal, version de la app, hora aproximada y captura del mensaje. Mientras tanto, valida conectividad, fecha/hora del equipo y si el caso ocurre en una sola terminal o en todas.`,
+        'Hola, para ayudarte con Clic-ERP/Clic-POS necesito ubicar el punto exacto del fallo. Por favor confirma modulo afectado, usuario, sucursal/caja, terminal, version de la app, hora aproximada y captura del mensaje. Mientras tanto, valida conectividad, fecha/hora del equipo y si el caso ocurre en una sola terminal o en todas.',
         `Hola, vamos a tratar este caso como ${params.priority === 'Critica' ? 'prioridad critica' : 'soporte operativo'} en ${moduleLabel}. Para avanzar sin suposiciones, envianos los pasos exactos que hiciste, resultado esperado, resultado obtenido, folio/NCF si aplica y captura del error. Con esos datos revisamos si corresponde a configuracion, sincronizacion o comportamiento del modulo.`,
     ];
 }
@@ -508,13 +406,13 @@ function isGenericSuggestedReply(reply: string) {
         'recibimos tu solicitud',
         'estamos revisando',
         'vamos a validar',
-        'te confirmamos los próximos pasos',
         'te confirmamos los proximos pasos',
+        'te confirmamos los próximos pasos',
         'a la brevedad',
         'origen del problema',
     ];
 
-    return reply.length < 120 || genericSignals.some((signal) => normalized.includes(signal));
+    return reply.trim().length < 120 || genericSignals.some((signal) => normalized.includes(signal));
 }
 
 function ensureExpertSuggestedReplies(
@@ -560,6 +458,7 @@ function heuristicTriage(subject: string, body: string): TriageResult {
         : 'neutral';
     const affectedModule = detectAffectedModule(`${subject} ${body}`, category);
     const incidentFingerprint = buildIncidentFingerprint(category, affectedModule);
+    const improvement = detectImprovementSignal(subject, body, affectedModule);
 
     return {
         category,
@@ -583,8 +482,56 @@ function heuristicTriage(subject: string, body: string): TriageResult {
         detected_identifiers: [],
         incident_fingerprint: incidentFingerprint,
         duplicate_signal: false,
-        ai_tags: [category, affectedModule].filter((tag): tag is string => Boolean(tag)),
+        ai_tags: [
+            category,
+            affectedModule,
+            improvement.customer_improvement_requested ? 'mejora-solicitada' : null,
+        ].filter((tag): tag is string => Boolean(tag)),
+        ...improvement,
     };
+}
+
+async function createCustomerImprovementRequest(
+    supabase: ReturnType<typeof createClient>,
+    params: {
+        ticketId: string;
+        tenantId: string | null;
+        contactId: string | null;
+        source: string;
+        subject: string;
+        body: string;
+        triage: TriageResult;
+    },
+) {
+    if (!params.triage.customer_improvement_requested) return;
+
+    const requestedCapability = params.triage.requested_capability || truncateText(params.body || params.subject, 260);
+    const title = params.triage.improvement_title || truncateText(params.subject || requestedCapability, 90);
+    const duplicateGroupKey = buildImprovementKey(`${params.triage.affected_module ?? 'general'}-${title}`);
+
+    const { error } = await supabase
+        .from('customer_improvement_requests')
+        .upsert({
+            ticket_id: params.ticketId,
+            tenant_id: params.tenantId,
+            contact_id: params.contactId,
+            source: params.source,
+            status: 'Nueva',
+            priority: params.triage.priority,
+            title,
+            request_text: truncateText(params.body || params.subject, 2000),
+            ai_summary: params.triage.improvement_summary || params.triage.summary,
+            requested_capability: requestedCapability,
+            affected_module: params.triage.affected_module,
+            customer_impact: params.triage.customer_impact,
+            duplicate_group_key: duplicateGroupKey,
+            ai_confidence: params.triage.improvement_confidence,
+            detected_by_ai: true,
+        }, { onConflict: 'ticket_id,duplicate_group_key', ignoreDuplicates: true });
+
+    if (error) {
+        console.error('Could not create customer improvement request', error);
+    }
 }
 
 function extractOpenAIText(payload: unknown): string | null {
@@ -668,6 +615,12 @@ async function runAiTriage(params: {
                                 'incident_fingerprint',
                                 'duplicate_signal',
                                 'ai_tags',
+                                'customer_improvement_requested',
+                                'improvement_title',
+                                'improvement_summary',
+                                'requested_capability',
+                                'customer_impact',
+                                'improvement_confidence',
                             ],
                             properties: {
                                 category: { type: 'string', enum: ['ventas', 'inventario', 'fiscal', 'hardware', 'pagos', 'red', 'otros'] },
@@ -701,6 +654,12 @@ async function runAiTriage(params: {
                                     maxItems: 8,
                                     items: { type: 'string' },
                                 },
+                                customer_improvement_requested: { type: 'boolean' },
+                                improvement_title: { type: ['string', 'null'] },
+                                improvement_summary: { type: ['string', 'null'] },
+                                requested_capability: { type: ['string', 'null'] },
+                                customer_impact: { type: ['string', 'null'] },
+                                improvement_confidence: { type: 'number', minimum: 0, maximum: 1 },
                             },
                         },
                     },
@@ -720,6 +679,7 @@ async function runAiTriage(params: {
         const parsed = JSON.parse(text) as Omit<TriageResult, 'category'> & { category: string };
         const category = normalizeCategory(parsed.category);
         const affectedModule = parsed.affected_module || detectAffectedModule(`${params.subject} ${params.body}`, category);
+        const heuristicImprovement = detectImprovementSignal(params.subject, params.body, affectedModule);
         return {
             ...parsed,
             category,
@@ -734,6 +694,12 @@ async function runAiTriage(params: {
             incident_fingerprint: parsed.incident_fingerprint || buildIncidentFingerprint(category, affectedModule),
             detected_identifiers: parsed.detected_identifiers || [],
             ai_tags: parsed.ai_tags || [],
+            customer_improvement_requested: parsed.customer_improvement_requested || heuristicImprovement.customer_improvement_requested,
+            improvement_title: parsed.improvement_title || heuristicImprovement.improvement_title,
+            improvement_summary: parsed.improvement_summary || heuristicImprovement.improvement_summary,
+            requested_capability: parsed.requested_capability || heuristicImprovement.requested_capability,
+            customer_impact: parsed.customer_impact || heuristicImprovement.customer_impact,
+            improvement_confidence: Math.max(parsed.improvement_confidence ?? 0, heuristicImprovement.improvement_confidence),
         };
     } catch (error) {
         console.error('OpenAI triage fallback', error);
@@ -767,10 +733,8 @@ Deno.serve(async (request) => {
     }
 
     let rawEventId: string | null = null;
-    let stage = 'start';
 
     try {
-        stage = 'init_supabase';
         const supabase = createClient(
             getEnv('SUPABASE_URL'),
             getEnv('SUPABASE_SERVICE_ROLE_KEY'),
@@ -780,13 +744,11 @@ Deno.serve(async (request) => {
             },
         );
 
-        stage = 'load_integration_config';
         const integrationConfig = await loadIntegrationConfig(supabase);
         if (!integrationConfig.resendApiKey) {
             throw new Error('Missing Resend API key. Configure it in Cloud Admin or RESEND_API_KEY.');
         }
 
-        stage = 'parse_event';
         const event = await request.json() as ResendInboundEvent;
         if (event.type && event.type !== 'email.received') {
             return json({ ok: true, ignored: true });
@@ -801,71 +763,64 @@ Deno.serve(async (request) => {
             external_id: emailId,
             payload: event,
         }).select('id').single();
-        if (rawInsert.error) failWithStage('record_raw_event', rawInsert.error);
 
         rawEventId = rawInsert.data?.id ?? null;
 
-        stage = 'check_duplicate_ticket';
         const existingTicket = await supabase
             .from('support_tickets')
             .select('id')
             .eq('source', 'Email')
             .eq('external_message_id', emailId)
             .maybeSingle();
-        if (existingTicket.error) failWithStage(stage, existingTicket.error);
 
         if (existingTicket.data?.id) {
             return json({ ok: true, duplicate: true, ticket_id: existingTicket.data.id });
         }
 
-        stage = 'extract_email_content';
         const senderEmail = extractEmailAddress(inbound.from);
         const subject = inbound.subject?.trim() || 'Solicitud técnica por email';
-        const rawBody = (inbound.text ?? inbound.textBody ?? inbound.text_body ?? '').trim()
+        const body = (inbound.text ?? inbound.textBody ?? inbound.text_body ?? '').trim()
             || (inbound.email_id ? await getInboundEmailBody(inbound.email_id, integrationConfig.resendApiKey) : '')
             || '(Correo recibido sin cuerpo de texto plano disponible.)';
-        const body = stripQuotedEmailText(rawBody);
-        const attachments = inbound.email_id
-            ? await persistInboundAttachments(supabase, inbound.email_id, integrationConfig.resendApiKey)
-            : [];
         const subjectTicketNumber = extractTicketNumberFromSubject(subject);
 
         if (subjectTicketNumber) {
             const threadedTicket = await supabase
                 .from('support_tickets')
-                .select('id, ticket_number, technical_context')
+                .select('id, ticket_number, tenant_id, contact_id, subject, source')
                 .eq('ticket_number', subjectTicketNumber)
                 .maybeSingle();
 
-            if (threadedTicket.error) failWithStage('find_threaded_ticket', threadedTicket.error);
+            if (threadedTicket.error) throw threadedTicket.error;
 
             if (threadedTicket.data?.id) {
                 const threadedMessage = await supabase.from('ticket_messages').insert({
                     ticket_id: threadedTicket.data.id,
                     sender_type: 'Client',
                     message: body.trim(),
-                    attachments,
                 });
 
-                if (threadedMessage.error) failWithStage('append_threaded_message', threadedMessage.error);
+                if (threadedMessage.error) throw threadedMessage.error;
 
-                const threadedTicketUpdate = await supabase
+                await supabase
                     .from('support_tickets')
-                    .update({
-                        status: 'En_Proceso',
-                        technical_context: mergeEmailThreadContext(
-                            threadedTicket.data.technical_context as Record<string, unknown> | null,
-                            inbound,
-                        ),
-                    })
+                    .update({ status: 'En_Proceso' })
                     .eq('id', threadedTicket.data.id);
-                if (threadedTicketUpdate.error) failWithStage('update_threaded_ticket', threadedTicketUpdate.error);
+
+                await createCustomerImprovementRequest(supabase, {
+                    ticketId: threadedTicket.data.id,
+                    tenantId: threadedTicket.data.tenant_id ?? null,
+                    contactId: threadedTicket.data.contact_id ?? null,
+                    source: threadedTicket.data.source ?? 'Email',
+                    subject: threadedTicket.data.subject ?? subject,
+                    body,
+                    triage: heuristicTriage(subject, body),
+                });
 
                 if (rawEventId) {
-                    const rawProcessed = await supabase.from('raw_support_events')
+                    await supabase.from('raw_support_events')
                         .update({ status: 'processed', processed_at: new Date().toISOString() })
                         .eq('id', rawEventId);
-                    if (rawProcessed.error) failWithStage('mark_raw_threaded_processed', rawProcessed.error);
                 }
 
                 return json({
@@ -877,7 +832,6 @@ Deno.serve(async (request) => {
             }
         }
 
-        stage = 'triage_email';
         const triage = integrationConfig.aiTriageEnabled && integrationConfig.aiProvider === 'openai'
             ? await runAiTriage({
                 openAiApiKey: integrationConfig.openAiApiKey,
@@ -888,13 +842,11 @@ Deno.serve(async (request) => {
             })
             : heuristicTriage(subject, body);
 
-        stage = 'lookup_contact';
         const contactLookup = await supabase
             .from('support_contacts')
             .select('id, tenant_id')
             .ilike('email', senderEmail)
             .maybeSingle();
-        if (contactLookup.error) failWithStage(stage, contactLookup.error);
 
         let contactId = contactLookup.data?.id ?? null;
         let tenantMatch: TenantMatch = {
@@ -903,13 +855,11 @@ Deno.serve(async (request) => {
         };
 
         if (!tenantMatch.id) {
-            stage = 'lookup_tenant';
             const tenantLookup = await supabase
                 .from('tenants')
                 .select('id, contact_email')
                 .ilike('contact_email', senderEmail)
                 .maybeSingle();
-            if (tenantLookup.error) failWithStage(stage, tenantLookup.error);
 
             tenantMatch = {
                 id: tenantLookup.data?.id ?? null,
@@ -918,7 +868,6 @@ Deno.serve(async (request) => {
         }
 
         if (!contactId) {
-            stage = 'create_contact';
             const contactInsert = await supabase
                 .from('support_contacts')
                 .insert({
@@ -937,11 +886,10 @@ Deno.serve(async (request) => {
                 .select('id')
                 .single();
 
-            if (contactInsert.error) failWithStage(stage, contactInsert.error);
+            if (contactInsert.error) throw contactInsert.error;
             contactId = contactInsert.data.id;
         }
 
-        stage = 'create_ticket';
         const ticketInsert = await supabase
             .from('support_tickets')
             .insert({
@@ -960,8 +908,6 @@ Deno.serve(async (request) => {
                     channel: 'email',
                     resend_email_id: inbound.email_id,
                     resend_message_id: inbound.message_id,
-                    email_thread_message_ids: inbound.message_id ? [inbound.message_id] : [],
-                    last_inbound_at: new Date().toISOString(),
                     to: inbound.to ?? [],
                     affected_module: triage.affected_module ?? undefined,
                     incident_fingerprint: triage.incident_fingerprint ?? undefined,
@@ -970,24 +916,21 @@ Deno.serve(async (request) => {
             .select('id, ticket_number')
             .single();
 
-        if (ticketInsert.error) failWithStage(stage, ticketInsert.error);
+        if (ticketInsert.error) throw ticketInsert.error;
 
         const ticketId = ticketInsert.data.id;
         const ticketNumber = ticketInsert.data.ticket_number ?? ticketId;
 
-        stage = 'create_ticket_message';
         const messageInsert = await supabase.from('ticket_messages').insert({
             ticket_id: ticketId,
             sender_type: 'Client',
             message: body.trim(),
-            attachments,
         });
 
-        if (messageInsert.error) failWithStage(stage, messageInsert.error);
+        if (messageInsert.error) throw messageInsert.error;
 
         let duplicateSignal = triage.duplicate_signal;
         if (triage.incident_fingerprint) {
-            stage = 'check_similar_tickets';
             const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
             const similarTickets = await supabase
                 .from('ai_ticket_insights')
@@ -1000,8 +943,7 @@ Deno.serve(async (request) => {
             }
         }
 
-        stage = 'create_ai_insights';
-        const insightInsert = await supabase.from('ai_ticket_insights').insert({
+        await supabase.from('ai_ticket_insights').insert({
             ticket_id: ticketId,
             sentiment: triage.sentiment,
             sentiment_score: triage.sentiment_score,
@@ -1021,9 +963,17 @@ Deno.serve(async (request) => {
             duplicate_signal: duplicateSignal,
             ai_tags: triage.ai_tags,
         });
-        if (insightInsert.error) failWithStage(stage, insightInsert.error);
 
-        stage = 'send_auto_reply';
+        await createCustomerImprovementRequest(supabase, {
+            ticketId,
+            tenantId: tenantMatch.id,
+            contactId,
+            source: 'Email',
+            subject,
+            body,
+            triage,
+        });
+
         const autoReply = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
@@ -1035,8 +985,6 @@ Deno.serve(async (request) => {
                 to: [senderEmail],
                 subject: buildThreadSubject(ticketNumber, subject),
                 text: `Hola, hemos recibido tu solicitud técnica. Se ha generado el ticket #${ticketNumber}. Un agente te responderá a la brevedad posible.`,
-                reply_to: [integrationConfig.replyToAddress],
-                headers: buildThreadHeaders(inbound.message_id),
             }),
         });
 
@@ -1045,11 +993,9 @@ Deno.serve(async (request) => {
         }
 
         if (rawEventId) {
-            stage = 'mark_raw_processed';
-            const rawProcessed = await supabase.from('raw_support_events')
+            await supabase.from('raw_support_events')
                 .update({ status: 'processed', processed_at: new Date().toISOString() })
                 .eq('id', rawEventId);
-            if (rawProcessed.error) failWithStage(stage, rawProcessed.error);
         }
 
         return json({
@@ -1076,7 +1022,7 @@ Deno.serve(async (request) => {
                 await supabase.from('raw_support_events')
                     .update({
                         status: 'failed',
-                        error_message: describeError(error),
+                        error_message: error instanceof Error ? error.message : String(error),
                         processed_at: new Date().toISOString(),
                     })
                     .eq('id', rawEventId);
@@ -1087,8 +1033,7 @@ Deno.serve(async (request) => {
 
         return json({
             error: 'Inbound email processing failed',
-            detail: describeError(error),
-            stage,
+            detail: error instanceof Error ? error.message : String(error),
         }, 500);
     }
 });

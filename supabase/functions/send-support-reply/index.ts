@@ -125,7 +125,7 @@ function buildThreadSubject(ticket: SupportTicket) {
     const cleanSubject = ticket.subject
         .replace(/^\s*(re|fw|fwd):\s*/i, '')
         .replace(ticketToken, '')
-        .trim() || 'Solicitud técnica';
+        .trim() || 'Solicitud tecnica';
 
     return `${ticketToken} Re: ${cleanSubject}`;
 }
@@ -216,10 +216,6 @@ Deno.serve(async (request) => {
         if (ticketError) throw ticketError;
 
         const supportTicket = ticket as SupportTicket;
-        if (supportTicket.source !== 'Email') {
-            return json({ error: 'Only email tickets can be sent through Resend' }, 400);
-        }
-
         const contact = normalizeRelation(supportTicket.support_contacts);
         const recipientEmail = contact?.email || supportTicket.external_sender_email;
         if (!recipientEmail) {
@@ -292,6 +288,20 @@ Deno.serve(async (request) => {
         }
 
         const resendPayload = await resendResponse.json() as { id?: string };
+        const deliveryMetadata = {
+            channel: 'email',
+            source: supportTicket.source,
+            subject: emailSubject,
+            resend_email_id: resendPayload.id,
+            to: recipientEmail,
+            delivery_status: 'sent',
+            notified_client: true,
+            notify_client: true,
+            notification: {
+                play_sound: true,
+                sound: 'support-reply',
+            },
+        };
 
         if (!adminMessage) {
             const { data: savedMessage, error: messageError } = await supabase
@@ -300,12 +310,7 @@ Deno.serve(async (request) => {
                     ticket_id: supportTicket.id,
                     message: messageText,
                     sender_type: 'Admin',
-                    attachments: {
-                        channel: 'email',
-                        subject: emailSubject,
-                        resend_email_id: resendPayload.id,
-                        to: recipientEmail,
-                    },
+                    attachments: deliveryMetadata,
                 })
                 .select('id')
                 .single();
@@ -317,10 +322,7 @@ Deno.serve(async (request) => {
                 .from('ticket_messages')
                 .update({
                     attachments: {
-                        channel: 'email',
-                        subject: emailSubject,
-                        resend_email_id: resendPayload.id,
-                        to: recipientEmail,
+                        ...deliveryMetadata,
                         sent_retroactively: true,
                     },
                 })
