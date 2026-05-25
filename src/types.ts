@@ -1,5 +1,25 @@
 export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL';
 export type TenantType = 'full' | 'pos_only' | 'erp_only';
+export type ContractedProduct = 'POS_ONLY' | 'POS_ERP';
+export type PosRuntime = 'LOCAL_SQLITE' | 'MASTER' | 'SLAVE';
+export type CloudChannel = 'NONE' | 'POS_CLOUD_STAGING' | 'ERP_ACTIVE' | 'POS_MASTER';
+export type DataMaster = 'POS' | 'ERP' | 'POS_MASTER';
+export type TenantLifecycleStatus =
+    | 'CLOUD_DISABLED'
+    | 'CLOUD_STAGING'
+    | 'CLOUD_SYNCING'
+    | 'CLOUD_READY'
+    | 'READY_FOR_ERP_ACTIVATION'
+    | 'ERP_ACTIVE'
+    | 'BLOCKED';
+export type TenantProvisioningStatus =
+    | 'PENDING'
+    | 'CLOUD_STAGING_REQUIRED'
+    | 'CLOUD_STAGING_READY'
+    | 'ERP_ACTIVE_REQUIRED'
+    | 'ERP_ACTIVE_READY'
+    | 'SLAVE_WAITING_MASTER'
+    | 'BLOCKED';
 
 export interface Tenant {
     id: string;
@@ -14,6 +34,22 @@ export interface Tenant {
     city?: string;
     type?: TenantType;
     cloud_sync?: boolean;
+    contracted_product?: ContractedProduct;
+    pos_runtime?: PosRuntime;
+    cloud_channel?: CloudChannel;
+    data_master?: DataMaster;
+    cloud_sync_enabled?: boolean;
+    erp_core_enabled?: boolean;
+    erp_ui_enabled?: boolean;
+    customer_erp_access?: boolean;
+    backup_enabled?: boolean;
+    lifecycle_status?: TenantLifecycleStatus;
+    provisioning_status?: TenantProvisioningStatus;
+    last_sync_received_at?: string | null;
+    last_backup_at?: string | null;
+    ready_for_erp_activation?: boolean | null;
+    pending_events_count?: number | null;
+    blocked_events_count?: number | null;
     captured_by_distributor_id?: string;
     serviced_by_distributor_id?: string;
     status: TenantStatus;

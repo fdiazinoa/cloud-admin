@@ -6,9 +6,12 @@ import { TenantProductsModal } from '../components/TenantProductsModal';
 import {
     deriveProductsFromTenant,
     deriveTenantConfigFromProducts,
+    deriveTenantSemanticsFromProducts,
+    deriveTenantSemanticsFromTenant,
     getActiveProductLabels,
     getDefaultTenantProducts,
     getTenantTypeLabel,
+    type TenantSemanticConfig,
     type TenantProductSelection
 } from '../lib/tenantProducts';
 
@@ -197,6 +200,7 @@ export const Tenants: React.FC = () => {
         try {
             const slug = formData.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
             const productConfig = deriveTenantConfigFromProducts(formData.products);
+            const semanticConfig = deriveTenantSemanticsFromProducts(formData.products);
 
             const { tenantId, tempPassword } = await tenantService.createTenant({
                 name: formData.name,
@@ -210,6 +214,17 @@ export const Tenants: React.FC = () => {
                 plan: 'TRIAL',
                 type: productConfig.type,
                 cloudSync: productConfig.cloudSync,
+                contractedProduct: semanticConfig.contractedProduct,
+                posRuntime: semanticConfig.posRuntime,
+                cloudChannel: semanticConfig.cloudChannel,
+                dataMaster: semanticConfig.dataMaster,
+                cloudSyncEnabled: semanticConfig.cloudSyncEnabled,
+                erpCoreEnabled: semanticConfig.erpCoreEnabled,
+                erpUiEnabled: semanticConfig.erpUiEnabled,
+                customerErpAccess: semanticConfig.customerErpAccess,
+                backupEnabled: semanticConfig.backupEnabled,
+                lifecycleStatus: semanticConfig.lifecycleStatus,
+                provisioningStatus: semanticConfig.provisioningStatus,
             });
 
             if (formData.taxId.trim()) {
@@ -284,7 +299,28 @@ export const Tenants: React.FC = () => {
         closeRebuildModal();
     };
 
-    const isLocalPosTenant = (tenant?: Tenant | null) => tenant?.type === 'pos_only' && tenant.cloud_sync === false;
+    const getTenantSemantics = (tenant: Tenant): TenantSemanticConfig => {
+        const fallback = deriveTenantSemanticsFromTenant(tenant.type, tenant.cloud_sync);
+        return {
+            contractedProduct: tenant.contracted_product || fallback.contractedProduct,
+            posRuntime: tenant.pos_runtime || fallback.posRuntime,
+            cloudChannel: tenant.cloud_channel || fallback.cloudChannel,
+            dataMaster: tenant.data_master || fallback.dataMaster,
+            cloudSyncEnabled: tenant.cloud_sync_enabled ?? fallback.cloudSyncEnabled,
+            erpCoreEnabled: tenant.erp_core_enabled ?? fallback.erpCoreEnabled,
+            erpUiEnabled: tenant.erp_ui_enabled ?? fallback.erpUiEnabled,
+            customerErpAccess: tenant.customer_erp_access ?? fallback.customerErpAccess,
+            backupEnabled: tenant.backup_enabled ?? fallback.backupEnabled,
+            lifecycleStatus: tenant.lifecycle_status || fallback.lifecycleStatus,
+            provisioningStatus: tenant.provisioning_status || fallback.provisioningStatus,
+        };
+    };
+
+    const isLocalPosTenant = (tenant?: Tenant | null) => {
+        if (!tenant) return false;
+        const semantics = getTenantSemantics(tenant);
+        return semantics.contractedProduct === 'POS_ONLY' && semantics.posRuntime !== 'SLAVE';
+    };
 
     const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => terminal.terminal_id || terminal.id;
 
@@ -587,6 +623,7 @@ export const Tenants: React.FC = () => {
         setIsEditSubmitting(true);
         try {
             const productConfig = deriveTenantConfigFromProducts(editFormData.products);
+            const semanticConfig = deriveTenantSemanticsFromProducts(editFormData.products);
 
             await tenantService.updateTenant(editingTenant.id, {
                 name: editFormData.name.trim(),
@@ -595,6 +632,17 @@ export const Tenants: React.FC = () => {
                 phone: normalizeOptional(editFormData.phone),
                 type: productConfig.type,
                 cloud_sync: productConfig.cloudSync,
+                contracted_product: semanticConfig.contractedProduct,
+                pos_runtime: semanticConfig.posRuntime,
+                cloud_channel: semanticConfig.cloudChannel,
+                data_master: semanticConfig.dataMaster,
+                cloud_sync_enabled: semanticConfig.cloudSyncEnabled,
+                erp_core_enabled: semanticConfig.erpCoreEnabled,
+                erp_ui_enabled: semanticConfig.erpUiEnabled,
+                customer_erp_access: semanticConfig.customerErpAccess,
+                backup_enabled: semanticConfig.backupEnabled,
+                lifecycle_status: semanticConfig.lifecycleStatus,
+                provisioning_status: semanticConfig.provisioningStatus,
             });
             closeEditModal();
             await fetchTenants();
@@ -617,6 +665,7 @@ export const Tenants: React.FC = () => {
 
     const renderProductSummary = (products: TenantProductSelection) => {
         const labels = getActiveProductLabels(products);
+        const semantics = deriveTenantSemanticsFromProducts(products);
         let solutionLabel = 'Selecciona productos';
 
         try {
@@ -637,6 +686,20 @@ export const Tenants: React.FC = () => {
                 <p className="text-xs text-slate-500">
                     Solucion base: <span className="font-bold text-slate-700">{solutionLabel}</span>
                 </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
+                        Contrato: <span className="font-black text-slate-800">{semantics.contractedProduct}</span>
+                    </span>
+                    <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
+                        Canal cloud: <span className="font-black text-slate-800">{semantics.cloudChannel}</span>
+                    </span>
+                    <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
+                        Fuente datos: <span className="font-black text-slate-800">{semantics.dataMaster}</span>
+                    </span>
+                    <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
+                        ERP cliente: <span className="font-black text-slate-800">{semantics.customerErpAccess ? 'SI' : 'NO'}</span>
+                    </span>
+                </div>
             </div>
         );
     };
@@ -645,6 +708,46 @@ export const Tenants: React.FC = () => {
         const parsed = new Date(value);
         if (Number.isNaN(parsed.getTime())) return 'N/D';
         return parsed.toLocaleString('es-DO');
+    };
+
+    const renderTenantSemanticsGrid = (tenant: Tenant) => {
+        const semantics = getTenantSemantics(tenant);
+        const fields = [
+            ['Producto contratado', semantics.contractedProduct],
+            ['Runtime POS', semantics.posRuntime],
+            ['Canal cloud', semantics.cloudChannel],
+            ['Fuente de datos', semantics.dataMaster],
+            ['Cloud Sync', semantics.cloudSyncEnabled ? 'ACTIVO' : 'INACTIVO'],
+            ['ERP Core interno', semantics.erpCoreEnabled ? 'PREPARADO' : 'NO PREPARADO'],
+            ['Acceso ERP cliente', semantics.customerErpAccess ? 'SI' : 'NO'],
+            ['ERP UI', semantics.erpUiEnabled ? 'SI' : 'NO'],
+            ['Lifecycle', semantics.lifecycleStatus],
+            ['Provisioning', semantics.provisioningStatus],
+            ['Ultimo sync recibido', formatDateTime(tenant.last_sync_received_at)],
+            ['Ultimo backup', formatDateTime(tenant.last_backup_at)],
+            ['Listo activar ERP', tenant.ready_for_erp_activation ? 'SI' : 'NO'],
+            ['Eventos pendientes', String(tenant.pending_events_count ?? 0)],
+            ['Eventos bloqueados', String(tenant.blocked_events_count ?? 0)],
+        ];
+
+        return (
+            <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
+                <div className="flex flex-col gap-1 mb-4">
+                    <p className="text-sm font-black text-slate-800">Semantica comercial y tecnica</p>
+                    <p className="text-xs text-slate-500">
+                        El contrato controla acceso ERP; el canal cloud controla sincronizacion, staging y recuperacion.
+                    </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {fields.map(([label, value]) => (
+                        <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+                            <p className="mt-1 text-sm font-bold text-slate-800 break-words">{value}</p>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
     };
 
     const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
@@ -788,7 +891,9 @@ export const Tenants: React.FC = () => {
                                 <td colSpan={5} className="px-6 py-8 text-center text-slate-500 italic">No se encontraron tenants.</td>
                             </tr>
                         )}
-                        {filteredTenants.map((tenant) => (
+                        {filteredTenants.map((tenant) => {
+                            const semantics = getTenantSemantics(tenant);
+                            return (
                             <tr key={tenant.id} className="hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4">
                                     <div className="font-bold text-slate-800">{tenant.name}</div>
@@ -799,6 +904,17 @@ export const Tenants: React.FC = () => {
                                                 {label}
                                             </span>
                                         ))}
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                        <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-black uppercase tracking-wide">
+                                            {semantics.contractedProduct}
+                                        </span>
+                                        <span className="px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[10px] font-black uppercase tracking-wide">
+                                            {semantics.cloudChannel}
+                                        </span>
+                                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-wide">
+                                            ERP cliente: {semantics.customerErpAccess ? 'SI' : 'NO'}
+                                        </span>
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 font-mono text-slate-600">{tenant.tax_id || 'N/A'}</td>
@@ -845,7 +961,7 @@ export const Tenants: React.FC = () => {
                                     </div>
                                 </td>
                             </tr>
-                        ))}
+                        )})}
                     </tbody>
                 </table>
             </div>
@@ -1070,6 +1186,8 @@ export const Tenants: React.FC = () => {
                                     {missingVersionCount > 0 ? <> <span className="font-bold">{missingVersionCount}</span> terminal(es) todavía no reportan versión.</> : null}
                                 </p>
                             </div>
+
+                            {renderTenantSemanticsGrid(selectedTenantForTerminals)}
 
                             {isTerminalModalLoading ? (
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500 flex items-center justify-center gap-3">

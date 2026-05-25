@@ -1,4 +1,12 @@
-import type { TenantType } from '../types';
+import type {
+    CloudChannel,
+    ContractedProduct,
+    DataMaster,
+    PosRuntime,
+    TenantLifecycleStatus,
+    TenantProvisioningStatus,
+    TenantType,
+} from '../types';
 
 export type TenantProductKey = 'pos' | 'erp' | 'backup';
 
@@ -6,6 +14,20 @@ export interface TenantProductSelection {
     pos: boolean;
     erp: boolean;
     backup: boolean;
+}
+
+export interface TenantSemanticConfig {
+    contractedProduct: ContractedProduct;
+    posRuntime: PosRuntime;
+    cloudChannel: CloudChannel;
+    dataMaster: DataMaster;
+    cloudSyncEnabled: boolean;
+    erpCoreEnabled: boolean;
+    erpUiEnabled: boolean;
+    customerErpAccess: boolean;
+    backupEnabled: boolean;
+    lifecycleStatus: TenantLifecycleStatus;
+    provisioningStatus: TenantProvisioningStatus;
 }
 
 export interface TenantProductDefinition {
@@ -68,7 +90,7 @@ export function deriveTenantConfigFromProducts(products: TenantProductSelection)
     if (products.pos && products.erp) {
         return {
             type: 'full',
-            cloudSync: products.backup
+            cloudSync: true
         };
     }
 
@@ -82,11 +104,89 @@ export function deriveTenantConfigFromProducts(products: TenantProductSelection)
     if (products.erp) {
         return {
             type: 'erp_only',
-            cloudSync: products.backup
+            cloudSync: true
         };
     }
 
     throw new Error('Activa al menos un producto principal: CLIC POS o CLIC ERP.');
+}
+
+export function deriveTenantSemanticsFromProducts(
+    products: TenantProductSelection,
+    posRuntime: PosRuntime = 'LOCAL_SQLITE',
+): TenantSemanticConfig {
+    if (posRuntime === 'SLAVE') {
+        return {
+            contractedProduct: products.erp ? 'POS_ERP' : 'POS_ONLY',
+            posRuntime: 'SLAVE',
+            cloudChannel: 'POS_MASTER',
+            dataMaster: 'POS_MASTER',
+            cloudSyncEnabled: false,
+            erpCoreEnabled: products.erp,
+            erpUiEnabled: false,
+            customerErpAccess: products.erp,
+            backupEnabled: false,
+            lifecycleStatus: 'CLOUD_STAGING',
+            provisioningStatus: 'SLAVE_WAITING_MASTER',
+        };
+    }
+
+    if (products.erp) {
+        return {
+            contractedProduct: 'POS_ERP',
+            posRuntime,
+            cloudChannel: 'ERP_ACTIVE',
+            dataMaster: 'ERP',
+            cloudSyncEnabled: true,
+            erpCoreEnabled: true,
+            erpUiEnabled: true,
+            customerErpAccess: true,
+            backupEnabled: true,
+            lifecycleStatus: 'ERP_ACTIVE',
+            provisioningStatus: 'ERP_ACTIVE_REQUIRED',
+        };
+    }
+
+    if (products.pos && products.backup) {
+        return {
+            contractedProduct: 'POS_ONLY',
+            posRuntime,
+            cloudChannel: 'POS_CLOUD_STAGING',
+            dataMaster: 'POS',
+            cloudSyncEnabled: true,
+            erpCoreEnabled: true,
+            erpUiEnabled: false,
+            customerErpAccess: false,
+            backupEnabled: true,
+            lifecycleStatus: 'CLOUD_STAGING',
+            provisioningStatus: 'CLOUD_STAGING_REQUIRED',
+        };
+    }
+
+    if (products.pos) {
+        return {
+            contractedProduct: 'POS_ONLY',
+            posRuntime,
+            cloudChannel: 'NONE',
+            dataMaster: 'POS',
+            cloudSyncEnabled: false,
+            erpCoreEnabled: false,
+            erpUiEnabled: false,
+            customerErpAccess: false,
+            backupEnabled: false,
+            lifecycleStatus: 'CLOUD_DISABLED',
+            provisioningStatus: 'PENDING',
+        };
+    }
+
+    throw new Error('Activa al menos CLIC POS o CLIC ERP.');
+}
+
+export function deriveTenantSemanticsFromTenant(
+    type: TenantType | undefined,
+    cloudSync: boolean | undefined,
+): TenantSemanticConfig {
+    return deriveTenantSemanticsFromProducts(deriveProductsFromTenant(type, cloudSync));
 }
 
 export function getTenantTypeLabel(type: TenantType | undefined): string {
