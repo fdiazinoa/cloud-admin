@@ -898,6 +898,42 @@ export async function toggleTerminalActiveStatus(terminalId: string, isActive: b
     if (setErr) throw setErr;
 }
 
+export async function registerTenantServerEndpoint(payload: {
+    tenantId: string;
+    deviceId: string;
+    terminalId: string;
+    terminalName?: string;
+    hostname?: string;
+    protocol?: string;
+    port?: number;
+    localIp: string;
+    localIps?: string[];
+    endpointUrl?: string;
+    isPrimary?: boolean;
+    appVersion?: string;
+    appVersionCode?: number;
+}): Promise<void> {
+    const { error } = await supabaseAdmin.rpc("register_tenant_server_endpoint", {
+        p_tenant_id: payload.tenantId,
+        p_device_id: payload.deviceId,
+        p_terminal_id: payload.terminalId,
+        p_terminal_name: payload.terminalName || null,
+        p_hostname: payload.hostname || null,
+        p_protocol: payload.protocol || 'http',
+        p_port: payload.port || 3001,
+        p_local_ip: payload.localIp,
+        p_local_ips: payload.localIps || [payload.localIp],
+        p_endpoint_url: payload.endpointUrl || null,
+        p_is_primary: payload.isPrimary !== false,
+        p_app_version: payload.appVersion || null,
+        p_app_version_code: payload.appVersionCode || null,
+        p_status: 'ONLINE',
+        p_last_seen_at: new Date().toISOString()
+    });
+
+    if (error) throw error;
+}
+
 export const tenantService = {
     createTenant,
     verifyTenantEmail,
@@ -916,4 +952,5 @@ export const tenantService = {
     reactivateTenant,
     updateTenantCredentials,
     toggleTerminalActiveStatus,
+    registerTenantServerEndpoint,
 };
