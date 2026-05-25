@@ -20,7 +20,19 @@ interface ReadinessRequest {
 interface TenantRecord {
     id: string;
     name: string;
+    slug?: string | null;
+    email?: string | null;
     status: string;
+    contracted_product?: string | null;
+    pos_runtime?: string | null;
+    cloud_channel?: string | null;
+    data_master?: string | null;
+    cloud_sync_enabled?: boolean | null;
+    erp_core_enabled?: boolean | null;
+    erp_ui_enabled?: boolean | null;
+    customer_erp_access?: boolean | null;
+    backup_enabled?: boolean | null;
+    lifecycle_status?: string | null;
 }
 
 interface RegistryRecord {
@@ -243,7 +255,23 @@ Deno.serve(async (request) => {
 
         const { data: tenantData, error: tenantError } = await supabase
             .from('tenants')
-            .select('id,name,status')
+            .select([
+                'id',
+                'name',
+                'slug',
+                'email',
+                'status',
+                'contracted_product',
+                'pos_runtime',
+                'cloud_channel',
+                'data_master',
+                'cloud_sync_enabled',
+                'erp_core_enabled',
+                'erp_ui_enabled',
+                'customer_erp_access',
+                'backup_enabled',
+                'lifecycle_status',
+            ].join(','))
             .eq('id', tenantId)
             .maybeSingle();
 
@@ -345,6 +373,20 @@ Deno.serve(async (request) => {
             },
             body: JSON.stringify({
                 cloudAdminTenantId: tenantId,
+                cloud_admin_tenant_id: tenantId,
+                name: tenant.name,
+                slug: tenant.slug || null,
+                email: tenant.email || null,
+                contracted_product: tenant.contracted_product || null,
+                pos_runtime: tenant.pos_runtime || null,
+                cloud_channel: tenant.cloud_channel || null,
+                data_master: tenant.data_master || null,
+                cloud_sync_enabled: tenant.cloud_sync_enabled ?? null,
+                erp_core_enabled: tenant.erp_core_enabled ?? null,
+                erp_ui_enabled: tenant.erp_ui_enabled ?? null,
+                customer_erp_access: tenant.customer_erp_access ?? null,
+                backup_enabled: tenant.backup_enabled ?? null,
+                lifecycle_status: tenant.lifecycle_status || null,
                 deviceId: effectiveDeviceId,
                 terminalId: effectiveTerminalId,
                 terminalName: effectiveTerminalName,
@@ -358,6 +400,7 @@ Deno.serve(async (request) => {
         const status = getReadinessStatus(sanitizedPayload, erpResponse.ok);
         const erpErrorCode = getErrorCode(sanitizedPayload);
         const checkedAt = new Date().toISOString();
+        const contractedProduct = tenant.contracted_product || 'POS_ERP';
         const storedReadiness = {
             ...sanitizedPayload,
             status,
@@ -379,6 +422,35 @@ Deno.serve(async (request) => {
 
             if (updateError) {
                 console.error('Failed to update tenant_server_registry ERP readiness', updateError);
+            }
+        }
+
+        const tenantStatusPatch: Record<string, unknown> = {};
+        if (status.toLowerCase() === 'ready') {
+            tenantStatusPatch.provisioning_status = contractedProduct === 'POS_ERP'
+                ? 'ERP_ACTIVE_READY'
+                : 'CLOUD_STAGING_READY';
+            tenantStatusPatch.lifecycle_status = contractedProduct === 'POS_ERP'
+                ? 'ERP_ACTIVE'
+                : 'CLOUD_READY';
+            tenantStatusPatch.ready_for_erp_activation = contractedProduct === 'POS_ONLY';
+        } else if (status.toLowerCase() === 'missing_catalog') {
+            tenantStatusPatch.provisioning_status = contractedProduct === 'POS_ERP'
+                ? 'ERP_ACTIVE_REQUIRED'
+                : 'CLOUD_STAGING_REQUIRED';
+        } else if (status.toLowerCase() === 'error') {
+            tenantStatusPatch.provisioning_status = 'BLOCKED';
+            tenantStatusPatch.lifecycle_status = 'BLOCKED';
+        }
+
+        if (Object.keys(tenantStatusPatch).length > 0) {
+            const { error: tenantUpdateError } = await supabase
+                .from('tenants')
+                .update(tenantStatusPatch)
+                .eq('id', tenantId);
+
+            if (tenantUpdateError) {
+                console.error('Failed to update tenant provisioning status', tenantUpdateError);
             }
         }
 

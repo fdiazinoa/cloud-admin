@@ -2,6 +2,12 @@ import { supabase, supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } f
 import type {
     Distributor,
     Tenant,
+    CloudChannel,
+    ContractedProduct,
+    DataMaster,
+    PosRuntime,
+    TenantLifecycleStatus,
+    TenantProvisioningStatus,
     TenantTerminalRegistryEntry,
     TenantTerminalSnapshot,
     TenantType,
@@ -70,6 +76,17 @@ type TenantUpdatePayload = {
     cloud_sync: boolean;
     max_pos_terminals?: number;
     max_erp_users?: number;
+    contracted_product?: ContractedProduct;
+    pos_runtime?: PosRuntime;
+    cloud_channel?: CloudChannel;
+    data_master?: DataMaster;
+    cloud_sync_enabled?: boolean;
+    erp_core_enabled?: boolean;
+    erp_ui_enabled?: boolean;
+    customer_erp_access?: boolean;
+    backup_enabled?: boolean;
+    lifecycle_status?: TenantLifecycleStatus;
+    provisioning_status?: TenantProvisioningStatus;
     email?: string;
     password?: string;
 };
