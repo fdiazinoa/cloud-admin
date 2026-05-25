@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle,
+    Archive,
     BatteryLow,
     Clock3,
     ExternalLink,
@@ -242,6 +243,49 @@ function buildLatestMessagePreviewMap(rows: Array<{ ticket_id?: string | null; m
     }
 
     return previewMap;
+}
+
+function isClosedTicket(ticket: Ticket) {
+    return ticket.status === 'Cerrado' || ticket.resolution_status === 'closed';
+}
+
+function isUrgentTicket(ticket: Ticket) {
+    return ticket.priority === 'Critica' || ticket.priority === 'Alta';
+}
+
+function getPriorityBadgeClass(priority: string) {
+    if (priority === 'Critica') {
+        return 'border-red-300 bg-red-100 text-red-800 ring-1 ring-red-200 shadow-sm';
+    }
+    if (priority === 'Alta') {
+        return 'border-amber-300 bg-amber-100 text-amber-900 ring-1 ring-amber-200';
+    }
+    if (priority === 'Media') {
+        return 'border-sky-200 bg-sky-50 text-sky-700';
+    }
+    return 'border-slate-200 bg-slate-50 text-slate-600';
+}
+
+function getTicketListCardClass(ticket: Ticket, isSelected: boolean, emphasizeClosed: boolean) {
+    if (isSelected) {
+        return 'border-blue-400 bg-blue-50 shadow-sm ring-2 ring-blue-500/30';
+    }
+
+    const closed = isClosedTicket(ticket);
+    const critical = ticket.priority === 'Critica';
+    const high = ticket.priority === 'Alta';
+
+    if (critical) {
+        return 'border-red-300 border-l-4 border-l-red-500 bg-gradient-to-r from-red-50 via-white to-white ring-1 ring-red-100 hover:border-red-400 hover:shadow-md';
+    }
+    if (high) {
+        return 'border-amber-300 border-l-4 border-l-amber-500 bg-gradient-to-r from-amber-50/90 via-white to-white ring-1 ring-amber-100 hover:border-amber-400 hover:shadow-md';
+    }
+    if (emphasizeClosed && closed) {
+        return 'border-slate-300 border-l-4 border-l-slate-400 bg-slate-100/95 text-slate-600 hover:border-slate-400 hover:bg-slate-100';
+    }
+
+    return 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm';
 }
 
 function getContactLabel(ticket: Ticket) {
@@ -1178,6 +1222,23 @@ const SupportCommandCenter: React.FC = () => {
                             Mostrando <span className="font-bold text-slate-800">{filteredTickets.length}</span> de{' '}
                             <span className="font-bold text-slate-800">{tickets.length}</span> tickets
                         </p>
+
+                        {filterStatus === 'Todos' ? (
+                            <div className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[10px] leading-relaxed text-slate-500">
+                                <p className="mb-1 font-bold uppercase tracking-wide text-slate-400">Leyenda en Todos</p>
+                                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                                    <span className="inline-flex items-center gap-1">
+                                        <span className="h-2 w-2 rounded-full bg-red-500" /> Crítico
+                                    </span>
+                                    <span className="inline-flex items-center gap-1">
+                                        <span className="h-2 w-2 rounded-full bg-amber-500" /> Alta
+                                    </span>
+                                    <span className="inline-flex items-center gap-1">
+                                        <span className="h-2 w-2 rounded-full bg-slate-400" /> Cerrado
+                                    </span>
+                                </div>
+                            </div>
+                        ) : null}
                     </div>
                 </div>
 
@@ -1193,21 +1254,29 @@ const SupportCommandCenter: React.FC = () => {
                         const previewText = preview?.message
                             ? truncatePreview(preview.message)
                             : truncatePreview(ticket.insight?.summary || ticket.subject);
+                        const emphasizeClosed = filterStatus === 'Todos';
+                        const closed = isClosedTicket(ticket);
+                        const urgent = isUrgentTicket(ticket);
+                        const isSelected = selectedTicket?.id === ticket.id;
 
                         return (
                             <button
                                 key={ticket.id}
                                 type="button"
                                 onClick={() => setSelectedTicket(ticket)}
-                                className={`mb-2 w-full rounded-xl border p-3 text-left transition-all ${
-                                    selectedTicket?.id === ticket.id
-                                        ? 'border-blue-400 bg-blue-50 shadow-sm ring-2 ring-blue-500/30'
-                                        : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'
-                                }`}
+                                className={`mb-2 w-full rounded-xl border p-3 text-left transition-all ${getTicketListCardClass(ticket, isSelected, emphasizeClosed)}`}
                             >
                                 <div className="mb-2 flex items-center justify-between gap-2">
-                                    <div className="flex min-w-0 items-center gap-2">
-                                        <span className="shrink-0 text-xs font-black text-slate-500">{getTicketNumberLabel(ticket)}</span>
+                                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                        <span className={`shrink-0 text-xs font-black ${closed && emphasizeClosed && !urgent ? 'text-slate-500' : 'text-slate-500'}`}>
+                                            {getTicketNumberLabel(ticket)}
+                                        </span>
+                                        {emphasizeClosed && closed ? (
+                                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-slate-300 bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700">
+                                                <Archive size={10} />
+                                                Cerrado
+                                            </span>
+                                        ) : null}
                                         <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>
                                             {ticket.source === 'Email' ? <Mail size={11} /> : <MonitorSmartphone size={11} />}
                                             {ticket.source}
@@ -1218,14 +1287,19 @@ const SupportCommandCenter: React.FC = () => {
                                             </span>
                                         )}
                                     </div>
-                                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${ticket.priority === 'Critica' ? 'border-red-200 bg-red-50 text-red-700' : 'border-orange-200 bg-orange-50 text-orange-700'}`}>
+                                    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${getPriorityBadgeClass(ticket.priority)}`}>
+                                        {urgent ? <AlertTriangle size={10} className={ticket.priority === 'Critica' ? 'text-red-700' : 'text-amber-700'} /> : null}
                                         {ticket.priority}
                                     </span>
                                 </div>
 
-                                <h3 className="truncate text-sm font-bold text-slate-900">{getTicketOwner(ticket)}</h3>
-                                <p className="mt-1 line-clamp-1 text-xs font-medium text-slate-700">{ticket.subject}</p>
-                                <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500">
+                                <h3 className={`truncate text-sm font-bold ${closed && emphasizeClosed && !urgent ? 'text-slate-700' : 'text-slate-900'}`}>
+                                    {getTicketOwner(ticket)}
+                                </h3>
+                                <p className={`mt-1 line-clamp-1 text-xs font-medium ${closed && emphasizeClosed && !urgent ? 'text-slate-500' : 'text-slate-700'}`}>
+                                    {ticket.subject}
+                                </p>
+                                <p className={`mt-2 line-clamp-2 text-xs leading-relaxed ${closed && emphasizeClosed && !urgent ? 'text-slate-400' : 'text-slate-500'}`}>
                                     {preview ? (
                                         <>
                                             <span className="font-semibold text-slate-600">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}
