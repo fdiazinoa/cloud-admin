@@ -50,8 +50,7 @@ export function extractGoogleDriveFileId(value: string): string | null {
 
     try {
         const parsed = new URL(trimmed);
-        const idParam = parsed.searchParams.get('id');
-        return idParam?.trim() || null;
+        return parsed.searchParams.get('id')?.trim() || null;
     } catch {
         return null;
     }
@@ -63,9 +62,7 @@ export function buildDirectDownloadUrl(value: string): string {
 }
 
 function normalizeList(values?: string[]): string[] {
-    return (values ?? [])
-        .map((value) => value.trim())
-        .filter(Boolean);
+    return (values ?? []).map((value) => value.trim()).filter(Boolean);
 }
 
 export async function getPosApkReleases(): Promise<PosApkRelease[]> {
@@ -73,7 +70,8 @@ export async function getPosApkReleases(): Promise<PosApkRelease[]> {
         .from('pos_apk_releases')
         .select('*')
         .order('is_latest', { ascending: false })
-        .order('published_at', { ascending: false });
+        .order('published_at', { ascending: false })
+        .order('version_code', { ascending: false });
 
     if (error) throw error;
     return (data as PosApkRelease[]) || [];
@@ -102,7 +100,7 @@ export async function createPosApkRelease(input: CreatePosApkReleaseInput): Prom
             checksum_sha256: input.checksumSha256?.trim() || null,
             changelog: input.changelog?.trim() || null,
             release_type: input.releaseType?.trim() || null,
-            release_status: input.releaseStatus?.trim() || null,
+            release_status: input.releaseStatus?.trim() || 'available',
             summary: input.summary?.trim() || null,
             bugs_fixed: normalizeList(input.bugsFixed),
             new_features: normalizeList(input.newFeatures),
@@ -118,10 +116,3 @@ export async function createPosApkRelease(input: CreatePosApkReleaseInput): Prom
     if (error) throw error;
     return data as PosApkRelease;
 }
-
-export const posApkReleaseService = {
-    buildDirectDownloadUrl,
-    createPosApkRelease,
-    extractGoogleDriveFileId,
-    getPosApkReleases,
-};
