@@ -25,6 +25,8 @@ interface TenantRecord {
     status: string;
     type?: string | null;
     cloud_sync?: boolean | null;
+    contracted_product?: string | null;
+    pos_runtime?: string | null;
 }
 
 interface RegistryRecord {
@@ -119,7 +121,10 @@ function getErrorMessage(status: number, payload: unknown) {
 }
 
 function isLocalPosTenant(tenant: TenantRecord) {
-    return tenant.type === 'pos_only' && tenant.cloud_sync === false;
+    if (tenant.contracted_product) {
+        return tenant.contracted_product === 'POS_ONLY' && (tenant.pos_runtime || 'LOCAL_SQLITE') !== 'SLAVE';
+    }
+    return tenant.type === 'pos_only';
 }
 
 async function insertAudit(
@@ -202,7 +207,7 @@ Deno.serve(async (request) => {
 
         const { data: tenantData, error: tenantError } = await supabase
             .from('tenants')
-            .select('id,name,email,status,type,cloud_sync')
+            .select('id,name,email,status,type,cloud_sync,contracted_product,pos_runtime')
             .eq('id', tenantId)
             .maybeSingle();
 
