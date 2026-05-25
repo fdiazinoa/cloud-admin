@@ -10,9 +10,11 @@ import {
     ListChecks,
     Loader2,
     PackageCheck,
+    Plus,
     Save,
     Smartphone,
     Sparkles,
+    X,
 } from 'lucide-react';
 import {
     buildDirectDownloadUrl,
@@ -185,6 +187,7 @@ const ReleaseDetails: React.FC<{ release: PosApkRelease }> = ({ release }) => (
 export const PosApkReleases: React.FC = () => {
     const [releases, setReleases] = useState<PosApkRelease[]>([]);
     const [selectedReleaseId, setSelectedReleaseId] = useState<string | null>(null);
+    const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
     const [form, setForm] = useState(defaultForm);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -194,6 +197,7 @@ export const PosApkReleases: React.FC = () => {
     const latestRelease = releases.find((release) => release.is_latest) || releases[0] || null;
     const selectedRelease = releases.find((release) => release.id === selectedReleaseId) || latestRelease;
     const previewDownloadUrl = useMemo(() => buildDirectDownloadUrl(form.apkUrl), [form.apkUrl]);
+    const availableCount = releases.filter((release) => release.release_status === 'available').length;
 
     const loadReleases = async () => {
         setLoading(true);
@@ -212,6 +216,18 @@ export const PosApkReleases: React.FC = () => {
     useEffect(() => {
         void loadReleases();
     }, []);
+
+    const openRegisterModal = () => {
+        setForm(defaultForm);
+        setMessage('');
+        setErrorMessage('');
+        setIsRegisterModalOpen(true);
+    };
+
+    const closeRegisterModal = () => {
+        if (saving) return;
+        setIsRegisterModalOpen(false);
+    };
 
     const updateForm = <K extends keyof typeof defaultForm>(key: K, value: (typeof defaultForm)[K]) => {
         setForm((current) => ({ ...current, [key]: value }));
@@ -254,6 +270,7 @@ export const PosApkReleases: React.FC = () => {
             setForm(defaultForm);
             setSelectedReleaseId(release.id);
             setMessage(`APK POS ${release.version_name} registrado.`);
+            setIsRegisterModalOpen(false);
             await loadReleases();
         } catch (error) {
             setErrorMessage(`No se pudo registrar el APK: ${getErrorMessage(error)}`);
@@ -266,15 +283,28 @@ export const PosApkReleases: React.FC = () => {
         <div className="space-y-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
-                    <h2 className="text-2xl font-black text-slate-800">APK POS</h2>
-                    <p className="text-sm text-slate-500">Versiones publicadas, notas de soporte e historico de APK.</p>
+                    <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">
+                        <Smartphone className="text-blue-600" size={28} />
+                        APK POS
+                    </h2>
+                    <p className="text-sm text-slate-500 mt-1">Versiones publicadas, notas de soporte e historico de APK.</p>
                 </div>
-                {loading ? (
-                    <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-500">
-                        <Loader2 className="animate-spin text-blue-500" size={16} />
-                        Cargando
-                    </div>
-                ) : null}
+                <div className="flex items-center gap-3">
+                    {loading ? (
+                        <div className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-500">
+                            <Loader2 className="animate-spin text-blue-500" size={16} />
+                            Cargando
+                        </div>
+                    ) : null}
+                    <button
+                        type="button"
+                        onClick={openRegisterModal}
+                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
+                    >
+                        <Plus size={16} />
+                        Nuevo
+                    </button>
+                </div>
             </div>
 
             {message ? (
@@ -283,281 +313,50 @@ export const PosApkReleases: React.FC = () => {
                 </div>
             ) : null}
 
-            {errorMessage ? (
+            {errorMessage && !isRegisterModalOpen ? (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-bold text-rose-800">
                     {errorMessage}
                 </div>
             ) : null}
 
-            <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_410px]">
-                <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-                    <div className="border-b border-slate-100 px-6 py-5">
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="flex items-start gap-4">
-                                <div className="rounded-2xl bg-blue-50 p-3 text-blue-600">
-                                    <Smartphone size={22} />
-                                </div>
-                                <div>
-                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">
-                                        {selectedRelease?.is_latest ? 'Ultimo release' : 'Release historico'}
-                                    </p>
-                                    <h3 className="mt-1 text-xl font-black text-slate-900">
-                                        {selectedRelease ? `POS ${selectedRelease.version_name}` : 'Sin APK registrado'}
-                                    </h3>
-                                    <p className="mt-1 text-sm font-medium text-slate-500">
-                                        {selectedRelease
-                                            ? `Build ${selectedRelease.version_code} · ${formatDateTime(selectedRelease.published_at)}`
-                                            : 'Registra el primer APK para habilitar descargas.'}
-                                    </p>
-                                </div>
-                            </div>
-
-                            {selectedRelease ? (
-                                <div className="flex flex-wrap gap-2">
-                                    <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ${selectedRelease.is_latest ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                                        {selectedRelease.is_latest ? 'Actual' : 'Historico'}
-                                    </span>
-                                    <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black uppercase text-blue-700">
-                                        {releaseStatusLabels[selectedRelease.release_status || ''] || selectedRelease.release_status || 'Sin estado'}
-                                    </span>
-                                </div>
-                            ) : null}
-                        </div>
-                    </div>
-
-                    {selectedRelease ? (
-                        <div className="space-y-5 px-6 py-5">
-                            <div className="flex flex-wrap gap-3">
-                                <a
-                                    href={selectedRelease.direct_download_url || selectedRelease.apk_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-sm transition-colors hover:bg-blue-700"
-                                >
-                                    <Download size={18} />
-                                    Descargar APK
-                                </a>
-                                <a
-                                    href={selectedRelease.apk_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition-colors hover:bg-slate-50"
-                                >
-                                    <ExternalLink size={18} />
-                                    Abrir fuente
-                                </a>
-                                <CopyButton value={selectedRelease.direct_download_url || selectedRelease.apk_url} label="Copiar enlace" />
-                            </div>
-                            <ReleaseDetails release={selectedRelease} />
-                        </div>
-                    ) : (
-                        <div className="px-6 py-12 text-center text-sm font-medium text-slate-500">
-                            No hay APK disponible.
-                        </div>
-                    )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Versión actual</p>
+                    <p className="mt-2 text-2xl font-black text-blue-900">
+                        {latestRelease ? `v${latestRelease.version_name}` : 'N/D'}
+                    </p>
+                    <p className="mt-1 text-[11px] font-medium text-blue-700">
+                        {latestRelease ? `Build ${latestRelease.version_code}` : 'Sin release activo'}
+                    </p>
                 </div>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Total releases</p>
+                    <p className="mt-2 text-2xl font-black text-slate-800">{releases.length}</p>
+                    <p className="mt-1 text-[11px] font-medium text-slate-500">En el historico</p>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 p-4 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-emerald-600">Disponibles</p>
+                    <p className="mt-2 text-2xl font-black text-emerald-800">{availableCount}</p>
+                    <p className="mt-1 text-[11px] font-medium text-emerald-700">Listas para descarga</p>
+                </div>
+                <div className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4 shadow-sm">
+                    <p className="text-xs font-bold uppercase tracking-wider text-violet-600">Última publicación</p>
+                    <p className="mt-2 text-sm font-black text-violet-900 leading-snug">
+                        {latestRelease ? formatDateTime(latestRelease.published_at) : 'N/D'}
+                    </p>
+                    <p className="mt-1 text-[11px] font-medium text-violet-700 truncate">
+                        {latestRelease?.rollout_scope || 'Todos los tenants'}
+                    </p>
+                </div>
+            </div>
 
-                <form onSubmit={handleSave} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-                    <div className="mb-5 flex items-center gap-3">
-                        <div className="rounded-xl bg-emerald-50 p-2 text-emerald-600">
-                            <PackageCheck size={18} />
-                        </div>
-                        <div>
-                            <h3 className="font-black text-slate-900">Registrar APK</h3>
-                            <p className="text-xs font-medium text-slate-500">Fuente externa: Google Drive o URL directa.</p>
-                        </div>
-                    </div>
-
-                    <div className="space-y-4">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                            <label className="block">
-                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Version</span>
-                                <input
-                                    required
-                                    value={form.versionName}
-                                    onChange={(event) => updateForm('versionName', event.target.value)}
-                                    placeholder="1.0.616"
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                                />
-                            </label>
-
-                            <label className="block">
-                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Version code</span>
-                                <input
-                                    required
-                                    type="number"
-                                    min="1"
-                                    step="1"
-                                    value={form.versionCode}
-                                    onChange={(event) => updateForm('versionCode', event.target.value)}
-                                    placeholder="616"
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                                />
-                            </label>
-                        </div>
-
-                        <label className="block">
-                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">URL del APK</span>
-                            <input
-                                required
-                                type="url"
-                                value={form.apkUrl}
-                                onChange={(event) => updateForm('apkUrl', event.target.value)}
-                                placeholder="https://drive.google.com/file/d/..."
-                                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                            />
-                        </label>
-
-                        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">URL de descarga</p>
-                            <p className="mt-1 break-all font-mono text-xs text-slate-600">{previewDownloadUrl || 'Pendiente'}</p>
-                        </div>
-
-                        <div className="grid gap-3 sm:grid-cols-2">
-                            <label className="block">
-                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Tipo</span>
-                                <select
-                                    value={form.releaseType}
-                                    onChange={(event) => updateForm('releaseType', event.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                                >
-                                    {Object.entries(releaseTypeLabels).map(([value, label]) => (
-                                        <option key={value} value={value}>{label}</option>
-                                    ))}
-                                </select>
-                            </label>
-
-                            <label className="block">
-                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Estado</span>
-                                <select
-                                    value={form.releaseStatus}
-                                    onChange={(event) => updateForm('releaseStatus', event.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                                >
-                                    {Object.entries(releaseStatusLabels).map(([value, label]) => (
-                                        <option key={value} value={value}>{label}</option>
-                                    ))}
-                                </select>
-                            </label>
-                        </div>
-
-                        <label className="block">
-                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Resumen</span>
-                            <textarea
-                                value={form.summary}
-                                onChange={(event) => updateForm('summary', event.target.value)}
-                                rows={3}
-                                placeholder="Que resuelve este APK y cuando debe instalarse"
-                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                            />
-                        </label>
-
-                        <label className="block">
-                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Soluciona bugs</span>
-                            <textarea
-                                value={form.bugsFixed}
-                                onChange={(event) => updateForm('bugsFixed', event.target.value)}
-                                rows={3}
-                                placeholder={'Un punto por linea\nEj: Corrige sincronizacion de ventas al cierre Z'}
-                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                            />
-                        </label>
-
-                        <label className="block">
-                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Agrega funcionalidades</span>
-                            <textarea
-                                value={form.newFeatures}
-                                onChange={(event) => updateForm('newFeatures', event.target.value)}
-                                rows={3}
-                                placeholder={'Un punto por linea\nEj: Valida version superior al iniciar POS'}
-                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                            />
-                        </label>
-
-                        <label className="block">
-                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Cambios internos</span>
-                            <textarea
-                                value={form.internalChanges}
-                                onChange={(event) => updateForm('internalChanges', event.target.value)}
-                                rows={3}
-                                placeholder={'Un punto por linea\nEj: Ajusta cola offline de sincronizacion'}
-                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                            />
-                        </label>
-
-                        <label className="block">
-                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Checklist QA</span>
-                            <textarea
-                                value={form.validationChecklist}
-                                onChange={(event) => updateForm('validationChecklist', event.target.value)}
-                                rows={3}
-                                placeholder={'Un punto por linea\nLogin\nVenta contado\nCierre Z\nSincronizacion cloud'}
-                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                            />
-                        </label>
-
-                        <label className="block">
-                            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Notas de instalacion</span>
-                            <textarea
-                                value={form.installNotes}
-                                onChange={(event) => updateForm('installNotes', event.target.value)}
-                                rows={3}
-                                placeholder="Ej: Sincronizar antes de actualizar. No reinstalar si hay ventas pendientes."
-                                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                            />
-                        </label>
-
-                        <div className="grid gap-3 sm:grid-cols-2">
-                            <label className="block">
-                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">SHA256</span>
-                                <input
-                                    value={form.checksumSha256}
-                                    onChange={(event) => updateForm('checksumSha256', event.target.value)}
-                                    placeholder="Opcional"
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                                />
-                            </label>
-
-                            <label className="block">
-                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Clientes recomendados</span>
-                                <input
-                                    value={form.rolloutScope}
-                                    onChange={(event) => updateForm('rolloutScope', event.target.value)}
-                                    placeholder="Todos / Solo DigiFact / Beta"
-                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                                />
-                            </label>
-                        </div>
-
-                        <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                            <span className="text-sm font-bold text-slate-700">Marcar como ultimo APK</span>
-                            <input
-                                type="checkbox"
-                                checked={form.isLatest}
-                                onChange={(event) => updateForm('isLatest', event.target.checked)}
-                                className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                            />
-                        </label>
-
-                        <button
-                            type="submit"
-                            disabled={saving}
-                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-black text-white shadow-sm transition-colors hover:bg-slate-800 disabled:opacity-60"
-                        >
-                            {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                            {saving ? 'Guardando...' : 'Guardar APK'}
-                        </button>
-                    </div>
-                </form>
-            </section>
-
-            <section className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
-                <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-                    <div className="border-b border-slate-100 px-6 py-4">
+            <section className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+                <div className="rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col min-h-[520px]">
+                    <div className="border-b border-slate-100 px-5 py-4">
                         <h3 className="font-black text-slate-900">Historial de APK</h3>
-                        <p className="mt-1 text-xs font-medium text-slate-500">Selecciona una version para ver sus notas completas.</p>
+                        <p className="mt-1 text-xs font-medium text-slate-500">Selecciona una version para ver detalle y descargar.</p>
                     </div>
-                    <div className="max-h-[620px] divide-y divide-slate-100 overflow-y-auto">
+                    <div className="flex-1 divide-y divide-slate-100 overflow-y-auto max-h-[680px]">
                         {releases.map((release) => {
                             const isSelected = selectedRelease?.id === release.id;
                             return (
@@ -565,14 +364,14 @@ export const PosApkReleases: React.FC = () => {
                                     key={release.id}
                                     type="button"
                                     onClick={() => setSelectedReleaseId(release.id)}
-                                    className={`w-full px-6 py-4 text-left transition-colors ${isSelected ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
+                                    className={`w-full px-5 py-4 text-left transition-colors ${isSelected ? 'bg-blue-50 border-l-4 border-l-blue-500' : 'hover:bg-slate-50 border-l-4 border-l-transparent'}`}
                                 >
                                     <div className="flex items-start justify-between gap-3">
                                         <div>
                                             <p className="font-black text-slate-800">POS {release.version_name}</p>
                                             <p className="mt-1 text-xs font-mono text-slate-400">Build {release.version_code}</p>
                                         </div>
-                                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase ${release.is_latest ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                        <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase shrink-0 ${release.is_latest ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
                                             {release.is_latest ? 'Actual' : 'Historico'}
                                         </span>
                                     </div>
@@ -587,47 +386,305 @@ export const PosApkReleases: React.FC = () => {
                             );
                         })}
                         {releases.length === 0 && !loading ? (
-                            <div className="px-6 py-10 text-center text-sm font-medium text-slate-500">
+                            <div className="px-5 py-12 text-center text-sm font-medium text-slate-500">
                                 No hay releases registrados.
+                                <button
+                                    type="button"
+                                    onClick={openRegisterModal}
+                                    className="mt-3 block w-full text-blue-600 font-bold hover:underline"
+                                >
+                                    Registrar el primer APK
+                                </button>
                             </div>
                         ) : null}
                     </div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-100 bg-white p-6 shadow-sm">
+                <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
                     {selectedRelease ? (
                         <>
-                            <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                <div>
-                                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Detalle historico</p>
-                                    <h3 className="mt-1 text-xl font-black text-slate-900">POS {selectedRelease.version_name}</h3>
-                                    <p className="mt-1 text-sm font-medium text-slate-500">
-                                        Build {selectedRelease.version_code} · {formatDateTime(selectedRelease.published_at)}
-                                    </p>
+                            <div className="border-b border-slate-100 px-6 py-5">
+                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="flex items-start gap-4">
+                                        <div className="rounded-2xl bg-blue-50 p-3 text-blue-600 shrink-0">
+                                            <Smartphone size={22} />
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-black uppercase tracking-widest text-slate-400">
+                                                {selectedRelease.is_latest ? 'Ultimo release' : 'Release historico'}
+                                            </p>
+                                            <h3 className="mt-1 text-xl font-black text-slate-900">
+                                                POS {selectedRelease.version_name}
+                                            </h3>
+                                            <p className="mt-1 text-sm font-medium text-slate-500">
+                                                Build {selectedRelease.version_code} · {formatDateTime(selectedRelease.published_at)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ${selectedRelease.is_latest ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                                            {selectedRelease.is_latest ? 'Actual' : 'Historico'}
+                                        </span>
+                                        <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black uppercase text-blue-700">
+                                            {releaseStatusLabels[selectedRelease.release_status || ''] || selectedRelease.release_status || 'Sin estado'}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
+                            </div>
+                            <div className="space-y-5 px-6 py-5">
+                                <div className="flex flex-wrap gap-3">
                                     <a
                                         href={selectedRelease.direct_download_url || selectedRelease.apk_url}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-sm transition-colors hover:bg-blue-700"
                                     >
-                                        <Download size={14} />
-                                        Descargar
+                                        <Download size={18} />
+                                        Descargar APK
                                     </a>
-                                    <CopyButton value={selectedRelease.direct_download_url || selectedRelease.apk_url} />
+                                    <a
+                                        href={selectedRelease.apk_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-black text-slate-700 transition-colors hover:bg-slate-50"
+                                    >
+                                        <ExternalLink size={18} />
+                                        Abrir fuente
+                                    </a>
+                                    <CopyButton value={selectedRelease.direct_download_url || selectedRelease.apk_url} label="Copiar enlace" />
                                 </div>
+                                <ReleaseDetails release={selectedRelease} />
                             </div>
-                            <ReleaseDetails release={selectedRelease} />
                         </>
                     ) : (
-                        <div className="flex min-h-80 flex-col items-center justify-center text-center text-slate-500">
-                            <AlertTriangle className="mb-3 text-amber-500" size={24} />
+                        <div className="flex min-h-[520px] flex-col items-center justify-center px-6 text-center text-slate-500">
+                            <AlertTriangle className="mb-3 text-amber-500" size={28} />
                             <p className="text-sm font-bold">No hay un APK seleccionado.</p>
+                            <p className="mt-1 text-xs">Usa el boton Nuevo para registrar la primera version.</p>
                         </div>
                     )}
                 </div>
             </section>
+
+            {isRegisterModalOpen && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-8">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div className="flex items-start gap-3">
+                                <div className="rounded-xl bg-emerald-50 p-2 text-emerald-600 shrink-0">
+                                    <PackageCheck size={20} />
+                                </div>
+                                <div>
+                                    <h3 className="font-black text-lg text-slate-900">Registrar APK</h3>
+                                    <p className="text-xs font-medium text-slate-500 mt-0.5">Fuente externa: Google Drive o URL directa.</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={closeRegisterModal}
+                                disabled={saving}
+                                className="text-slate-400 hover:text-slate-700 transition-colors p-1.5 hover:bg-slate-200/50 rounded-lg disabled:opacity-50"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                            {errorMessage ? (
+                                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-bold text-rose-800">
+                                    {errorMessage}
+                                </div>
+                            ) : null}
+
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Version</span>
+                                    <input
+                                        required
+                                        value={form.versionName}
+                                        onChange={(event) => updateForm('versionName', event.target.value)}
+                                        placeholder="1.0.616"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                </label>
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Version code</span>
+                                    <input
+                                        required
+                                        type="number"
+                                        min="1"
+                                        step="1"
+                                        value={form.versionCode}
+                                        onChange={(event) => updateForm('versionCode', event.target.value)}
+                                        placeholder="616"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                </label>
+                            </div>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">URL del APK</span>
+                                <input
+                                    required
+                                    type="url"
+                                    value={form.apkUrl}
+                                    onChange={(event) => updateForm('apkUrl', event.target.value)}
+                                    placeholder="https://drive.google.com/file/d/..."
+                                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+
+                            <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">URL de descarga</p>
+                                <p className="mt-1 break-all font-mono text-xs text-slate-600">{previewDownloadUrl || 'Pendiente'}</p>
+                            </div>
+
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Tipo</span>
+                                    <select
+                                        value={form.releaseType}
+                                        onChange={(event) => updateForm('releaseType', event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    >
+                                        {Object.entries(releaseTypeLabels).map(([value, label]) => (
+                                            <option key={value} value={value}>{label}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Estado</span>
+                                    <select
+                                        value={form.releaseStatus}
+                                        onChange={(event) => updateForm('releaseStatus', event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    >
+                                        {Object.entries(releaseStatusLabels).map(([value, label]) => (
+                                            <option key={value} value={value}>{label}</option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Resumen</span>
+                                <textarea
+                                    value={form.summary}
+                                    onChange={(event) => updateForm('summary', event.target.value)}
+                                    rows={2}
+                                    placeholder="Que resuelve este APK y cuando debe instalarse"
+                                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Soluciona bugs</span>
+                                <textarea
+                                    value={form.bugsFixed}
+                                    onChange={(event) => updateForm('bugsFixed', event.target.value)}
+                                    rows={2}
+                                    placeholder={'Un punto por linea\nEj: Corrige sincronizacion de ventas al cierre Z'}
+                                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Agrega funcionalidades</span>
+                                <textarea
+                                    value={form.newFeatures}
+                                    onChange={(event) => updateForm('newFeatures', event.target.value)}
+                                    rows={2}
+                                    placeholder={'Un punto por linea\nEj: Valida version superior al iniciar POS'}
+                                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Cambios internos</span>
+                                <textarea
+                                    value={form.internalChanges}
+                                    onChange={(event) => updateForm('internalChanges', event.target.value)}
+                                    rows={2}
+                                    placeholder={'Un punto por linea\nEj: Ajusta cola offline de sincronizacion'}
+                                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Checklist QA</span>
+                                <textarea
+                                    value={form.validationChecklist}
+                                    onChange={(event) => updateForm('validationChecklist', event.target.value)}
+                                    rows={2}
+                                    placeholder={'Un punto por linea\nLogin\nVenta contado\nCierre Z'}
+                                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Notas de instalacion</span>
+                                <textarea
+                                    value={form.installNotes}
+                                    onChange={(event) => updateForm('installNotes', event.target.value)}
+                                    rows={2}
+                                    placeholder="Ej: Sincronizar antes de actualizar."
+                                    className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                />
+                            </label>
+
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">SHA256</span>
+                                    <input
+                                        value={form.checksumSha256}
+                                        onChange={(event) => updateForm('checksumSha256', event.target.value)}
+                                        placeholder="Opcional"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                </label>
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Clientes recomendados</span>
+                                    <input
+                                        value={form.rolloutScope}
+                                        onChange={(event) => updateForm('rolloutScope', event.target.value)}
+                                        placeholder="Todos / Solo DigiFact / Beta"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                </label>
+                            </div>
+
+                            <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                <span className="text-sm font-bold text-slate-700">Marcar como ultimo APK</span>
+                                <input
+                                    type="checkbox"
+                                    checked={form.isLatest}
+                                    onChange={(event) => updateForm('isLatest', event.target.checked)}
+                                    className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                            </label>
+
+                            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 border-t border-slate-100 pt-4">
+                                <button
+                                    type="button"
+                                    onClick={closeRegisterModal}
+                                    disabled={saving}
+                                    className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors text-sm disabled:opacity-50"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={saving}
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-black text-white shadow-sm transition-colors hover:bg-slate-800 disabled:opacity-60"
+                                >
+                                    {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                                    {saving ? 'Guardando...' : 'Guardar APK'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
