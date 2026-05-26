@@ -1,6 +1,7 @@
 export type TenantStatus = 'ACTIVE' | 'SUSPENDED' | 'TRIAL';
 export type TenantType = 'full' | 'pos_only' | 'erp_only';
 export type ContractedProduct = 'POS_ONLY' | 'POS_ERP';
+export type PosVariant = 'POS_ONLY_STANDARD' | 'POS_ONLY_OFFLINE' | 'POS_ERP';
 export type PosRuntime = 'LOCAL_SQLITE' | 'MASTER' | 'SLAVE';
 export type CloudChannel = 'NONE' | 'POS_CLOUD_STAGING' | 'ERP_ACTIVE' | 'POS_MASTER';
 export type DataMaster = 'POS' | 'ERP' | 'POS_MASTER';
@@ -35,6 +36,10 @@ export interface Tenant {
     type?: TenantType;
     cloud_sync?: boolean;
     contracted_product?: ContractedProduct;
+    pos_variant?: PosVariant;
+    offline_mode?: boolean;
+    explicit_offline?: boolean;
+    cloud_disabled_reason?: string | null;
     pos_runtime?: PosRuntime;
     cloud_channel?: CloudChannel;
     data_master?: DataMaster;
