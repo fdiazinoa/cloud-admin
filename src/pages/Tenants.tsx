@@ -11,6 +11,7 @@ import {
     getActiveProductLabels,
     getDefaultTenantProducts,
     getTenantTypeLabel,
+    normalizeTenantProductSelection,
     type TenantSemanticConfig,
     type TenantProductSelection
 } from '../lib/tenantProducts';
@@ -199,8 +200,9 @@ export const Tenants: React.FC = () => {
         setIsSubmitting(true);
         try {
             const slug = formData.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
-            const productConfig = deriveTenantConfigFromProducts(formData.products);
-            const semanticConfig = deriveTenantSemanticsFromProducts(formData.products);
+            const products = normalizeTenantProductSelection(formData.products);
+            const productConfig = deriveTenantConfigFromProducts(products);
+            const semanticConfig = deriveTenantSemanticsFromProducts(products);
 
             const { tenantId, tempPassword } = await tenantService.createTenant({
                 name: formData.name,
@@ -215,6 +217,10 @@ export const Tenants: React.FC = () => {
                 type: productConfig.type,
                 cloudSync: productConfig.cloudSync,
                 contractedProduct: semanticConfig.contractedProduct,
+                posVariant: semanticConfig.posVariant,
+                offlineMode: semanticConfig.offlineMode,
+                explicitOffline: semanticConfig.explicitOffline,
+                cloudDisabledReason: semanticConfig.cloudDisabledReason,
                 posRuntime: semanticConfig.posRuntime,
                 cloudChannel: semanticConfig.cloudChannel,
                 dataMaster: semanticConfig.dataMaster,
@@ -269,7 +275,12 @@ export const Tenants: React.FC = () => {
             legalName: tenant.legal_name || '',
             taxId: tenant.tax_id || '',
             phone: tenant.phone || '',
-            products: deriveProductsFromTenant(tenant.type, tenant.cloud_sync),
+            products: deriveProductsFromTenant(tenant.type, tenant.cloud_sync, {
+                posVariant: tenant.pos_variant,
+                offlineMode: tenant.offline_mode,
+                explicitOffline: tenant.explicit_offline,
+                cloudChannel: tenant.cloud_channel,
+            }),
         });
         setIsEditModalOpen(true);
     };
@@ -300,9 +311,18 @@ export const Tenants: React.FC = () => {
     };
 
     const getTenantSemantics = (tenant: Tenant): TenantSemanticConfig => {
-        const fallback = deriveTenantSemanticsFromTenant(tenant.type, tenant.cloud_sync);
+        const fallback = deriveTenantSemanticsFromTenant(tenant.type, tenant.cloud_sync, {
+            posVariant: tenant.pos_variant,
+            offlineMode: tenant.offline_mode,
+            explicitOffline: tenant.explicit_offline,
+            cloudChannel: tenant.cloud_channel,
+        });
         return {
             contractedProduct: tenant.contracted_product || fallback.contractedProduct,
+            posVariant: tenant.pos_variant || fallback.posVariant,
+            offlineMode: tenant.offline_mode ?? fallback.offlineMode,
+            explicitOffline: tenant.explicit_offline ?? fallback.explicitOffline,
+            cloudDisabledReason: tenant.cloud_disabled_reason ?? fallback.cloudDisabledReason,
             posRuntime: tenant.pos_runtime || fallback.posRuntime,
             cloudChannel: tenant.cloud_channel || fallback.cloudChannel,
             dataMaster: tenant.data_master || fallback.dataMaster,
@@ -321,6 +341,17 @@ export const Tenants: React.FC = () => {
         const semantics = getTenantSemantics(tenant);
         return semantics.contractedProduct === 'POS_ONLY' && semantics.posRuntime !== 'SLAVE';
     };
+
+    const isExplicitOfflinePosTenant = (tenant?: Tenant | null) => {
+        if (!tenant) return false;
+        const semantics = getTenantSemantics(tenant);
+        return semantics.contractedProduct === 'POS_ONLY'
+            && (semantics.posVariant === 'POS_ONLY_OFFLINE' || semantics.offlineMode || semantics.cloudChannel === 'NONE');
+    };
+
+    const isCloudRecoverableLocalPosTenant = (tenant?: Tenant | null) => (
+        isLocalPosTenant(tenant) && !isExplicitOfflinePosTenant(tenant)
+    );
 
     const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => terminal.terminal_id || terminal.id;
 
@@ -496,8 +527,10 @@ export const Tenants: React.FC = () => {
         e.preventDefault();
         if (!selectedTenantForTerminals || !takeoverTerminal) return;
 
-        if (!isLocalPosTenant(selectedTenantForTerminals)) {
-            alert('La recuperacion de terminal solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.');
+        if (!isCloudRecoverableLocalPosTenant(selectedTenantForTerminals)) {
+            alert(isExplicitOfflinePosTenant(selectedTenantForTerminals)
+                ? 'Este POS esta en modo offline/sin Cloud Staging. No tiene recuperacion cloud desde Cloud-Admin.'
+                : 'La recuperacion de terminal solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.');
             return;
         }
 
@@ -561,8 +594,10 @@ export const Tenants: React.FC = () => {
         e.preventDefault();
         if (!selectedTenantForTerminals || !rebuildTerminal) return;
 
-        if (!isLocalPosTenant(selectedTenantForTerminals)) {
-            alert('La reconstruccion local solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.');
+        if (!isCloudRecoverableLocalPosTenant(selectedTenantForTerminals)) {
+            alert(isExplicitOfflinePosTenant(selectedTenantForTerminals)
+                ? 'Este POS esta en modo offline/sin Cloud Staging. No tiene reconstruccion cloud desde Cloud-Admin.'
+                : 'La reconstruccion local solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.');
             return;
         }
 
@@ -622,8 +657,9 @@ export const Tenants: React.FC = () => {
 
         setIsEditSubmitting(true);
         try {
-            const productConfig = deriveTenantConfigFromProducts(editFormData.products);
-            const semanticConfig = deriveTenantSemanticsFromProducts(editFormData.products);
+            const products = normalizeTenantProductSelection(editFormData.products);
+            const productConfig = deriveTenantConfigFromProducts(products);
+            const semanticConfig = deriveTenantSemanticsFromProducts(products);
 
             await tenantService.updateTenant(editingTenant.id, {
                 name: editFormData.name.trim(),
@@ -633,6 +669,10 @@ export const Tenants: React.FC = () => {
                 type: productConfig.type,
                 cloud_sync: productConfig.cloudSync,
                 contracted_product: semanticConfig.contractedProduct,
+                pos_variant: semanticConfig.posVariant,
+                offline_mode: semanticConfig.offlineMode,
+                explicit_offline: semanticConfig.explicitOffline,
+                cloud_disabled_reason: semanticConfig.cloudDisabledReason,
                 pos_runtime: semanticConfig.posRuntime,
                 cloud_channel: semanticConfig.cloudChannel,
                 data_master: semanticConfig.dataMaster,
@@ -664,8 +704,9 @@ export const Tenants: React.FC = () => {
     };
 
     const renderProductSummary = (products: TenantProductSelection) => {
-        const labels = getActiveProductLabels(products);
-        const semantics = deriveTenantSemanticsFromProducts(products);
+        const normalizedProducts = normalizeTenantProductSelection(products);
+        const labels = getActiveProductLabels(normalizedProducts);
+        const semantics = deriveTenantSemanticsFromProducts(normalizedProducts);
         let solutionLabel = 'Selecciona productos';
 
         try {
@@ -691,6 +732,9 @@ export const Tenants: React.FC = () => {
                         Contrato: <span className="font-black text-slate-800">{semantics.contractedProduct}</span>
                     </span>
                     <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
+                        Variante POS: <span className="font-black text-slate-800">{semantics.posVariant}</span>
+                    </span>
+                    <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
                         Canal cloud: <span className="font-black text-slate-800">{semantics.cloudChannel}</span>
                     </span>
                     <span className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-600">
@@ -700,6 +744,16 @@ export const Tenants: React.FC = () => {
                         ERP cliente: <span className="font-black text-slate-800">{semantics.customerErpAccess ? 'SI' : 'NO'}</span>
                     </span>
                 </div>
+                {semantics.contractedProduct === 'POS_ONLY' && semantics.cloudChannel === 'POS_CLOUD_STAGING' ? (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800">
+                        POS_ONLY SaaS: incluye Cloud Staging, respaldo, recuperacion y core interno. El cliente no ve ERP.
+                    </div>
+                ) : null}
+                {semantics.posVariant === 'POS_ONLY_OFFLINE' ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                        POS Offline explicito: no tendra respaldo cloud, recuperacion SaaS ni preparacion automatica para ERP.
+                    </div>
+                ) : null}
             </div>
         );
     };
@@ -714,6 +768,7 @@ export const Tenants: React.FC = () => {
         const semantics = getTenantSemantics(tenant);
         const fields = [
             ['Producto contratado', semantics.contractedProduct],
+            ['Variante POS', semantics.posVariant],
             ['Runtime POS', semantics.posRuntime],
             ['Canal cloud', semantics.cloudChannel],
             ['Fuente de datos', semantics.dataMaster],
@@ -721,6 +776,7 @@ export const Tenants: React.FC = () => {
             ['ERP Core interno', semantics.erpCoreEnabled ? 'PREPARADO' : 'NO PREPARADO'],
             ['Acceso ERP cliente', semantics.customerErpAccess ? 'SI' : 'NO'],
             ['ERP UI', semantics.erpUiEnabled ? 'SI' : 'NO'],
+            ['Modo offline', semantics.offlineMode ? 'SI' : 'NO'],
             ['Lifecycle', semantics.lifecycleStatus],
             ['Provisioning', semantics.provisioningStatus],
             ['Ultimo sync recibido', formatDateTime(tenant.last_sync_received_at)],
@@ -738,6 +794,16 @@ export const Tenants: React.FC = () => {
                         El contrato controla acceso ERP; el canal cloud controla sincronizacion, staging y recuperacion.
                     </p>
                 </div>
+                {semantics.contractedProduct === 'POS_ONLY' && semantics.cloudChannel === 'NONE' ? (
+                    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+                        Este POS esta en modo offline/sin Cloud Staging. No tendra respaldo cloud, recuperacion SaaS ni preparacion automatica para activar ERP.
+                    </div>
+                ) : null}
+                {semantics.contractedProduct === 'POS_ONLY' && semantics.cloudChannel === 'POS_CLOUD_STAGING' ? (
+                    <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                        POS_ONLY SaaS correcto: opera local con SQLite, sincroniza al cloud/core para respaldo y staging, y mantiene ERP visible apagado para el cliente.
+                    </div>
+                ) : null}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                     {fields.map(([label, value]) => (
                         <div key={label} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
@@ -899,7 +965,12 @@ export const Tenants: React.FC = () => {
                                     <div className="font-bold text-slate-800">{tenant.name}</div>
                                     <div className="text-xs text-slate-400 font-mono mt-0.5">{tenant.id}</div>
                                     <div className="flex flex-wrap gap-1.5 mt-2">
-                                        {getActiveProductLabels(deriveProductsFromTenant(tenant.type, tenant.cloud_sync)).map((label) => (
+                                        {getActiveProductLabels(deriveProductsFromTenant(tenant.type, tenant.cloud_sync, {
+                                            posVariant: tenant.pos_variant,
+                                            offlineMode: tenant.offline_mode,
+                                            explicitOffline: tenant.explicit_offline,
+                                            cloudChannel: tenant.cloud_channel,
+                                        })).map((label) => (
                                             <span key={label} className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-wide">
                                                 {label}
                                             </span>
@@ -1378,26 +1449,38 @@ export const Tenants: React.FC = () => {
                                                 </div>
 
                                                 {isLocalPosTenant(selectedTenantForTerminals) ? (
-                                                    <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                                    <div className={`mt-5 rounded-2xl border px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between ${
+                                                        isExplicitOfflinePosTenant(selectedTenantForTerminals)
+                                                            ? 'border-slate-200 bg-slate-50'
+                                                            : 'border-amber-200 bg-amber-50'
+                                                    }`}>
                                                         <div>
-                                                            <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Recuperacion POS local</p>
-                                                            <p className="mt-1 text-sm text-amber-800">
-                                                                Elige reemplazo de hardware o reconstruccion de BD local sin cambiar el dispositivo.
+                                                            <p className={`text-xs font-bold uppercase tracking-wider ${
+                                                                isExplicitOfflinePosTenant(selectedTenantForTerminals) ? 'text-slate-600' : 'text-amber-700'
+                                                            }`}>Recuperacion POS local</p>
+                                                            <p className={`mt-1 text-sm ${
+                                                                isExplicitOfflinePosTenant(selectedTenantForTerminals) ? 'text-slate-600' : 'text-amber-800'
+                                                            }`}>
+                                                                {isExplicitOfflinePosTenant(selectedTenantForTerminals)
+                                                                    ? 'Modo offline explicito: la recuperacion cloud no esta disponible desde Cloud-Admin.'
+                                                                    : 'Elige reemplazo de hardware o reconstruccion de BD local sin cambiar el dispositivo.'}
                                                             </p>
                                                         </div>
                                                         <div className="flex flex-col gap-2 sm:flex-row">
                                                             <button
                                                                 type="button"
+                                                                disabled={isExplicitOfflinePosTenant(selectedTenantForTerminals)}
                                                                 onClick={() => openRebuildModal(terminal)}
-                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-700 shadow-sm hover:bg-amber-100 transition-colors"
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-700 shadow-sm hover:bg-amber-100 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                                                             >
                                                                 <RefreshCcw size={16} />
                                                                 Reconstruir base local
                                                             </button>
                                                             <button
                                                                 type="button"
+                                                                disabled={isExplicitOfflinePosTenant(selectedTenantForTerminals)}
                                                                 onClick={() => openTakeoverModal(terminal)}
-                                                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors"
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                                                             >
                                                                 <RefreshCcw size={16} />
                                                                 Reemplazar tablet
@@ -1737,7 +1820,7 @@ export const Tenants: React.FC = () => {
                 initialProducts={formData.products}
                 onClose={() => setIsCreateProductsModalOpen(false)}
                 onSave={(products) => {
-                    setFormData((current) => ({ ...current, products }));
+                    setFormData((current) => ({ ...current, products: normalizeTenantProductSelection(products) }));
                     setIsCreateProductsModalOpen(false);
                 }}
             />
@@ -1750,7 +1833,7 @@ export const Tenants: React.FC = () => {
                 initialProducts={editFormData.products}
                 onClose={() => setIsEditProductsModalOpen(false)}
                 onSave={(products) => {
-                    setEditFormData((current) => ({ ...current, products }));
+                    setEditFormData((current) => ({ ...current, products: normalizeTenantProductSelection(products) }));
                     setIsEditProductsModalOpen(false);
                 }}
             />

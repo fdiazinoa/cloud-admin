@@ -5,6 +5,7 @@ import type {
     CloudChannel,
     ContractedProduct,
     DataMaster,
+    PosVariant,
     PosRuntime,
     TenantLifecycleStatus,
     TenantProvisioningStatus,
@@ -78,6 +79,10 @@ interface CreateTenantInput {
     type?: TenantType;
     cloudSync?: boolean;
     contractedProduct?: ContractedProduct;
+    posVariant?: PosVariant;
+    offlineMode?: boolean;
+    explicitOffline?: boolean;
+    cloudDisabledReason?: string | null;
     posRuntime?: PosRuntime;
     cloudChannel?: CloudChannel;
     dataMaster?: DataMaster;
@@ -162,10 +167,19 @@ function generateTempPassword(): string {
 }
 
 function normalizeTenantSemantics(input: CreateTenantInput): TenantSemanticConfig {
-    const inferred = deriveTenantSemanticsFromTenant(input.type, input.cloudSync);
+    const inferred = deriveTenantSemanticsFromTenant(input.type, input.cloudSync, {
+        posVariant: input.posVariant,
+        offlineMode: input.offlineMode,
+        explicitOffline: input.explicitOffline,
+        cloudChannel: input.cloudChannel,
+    });
     const semantics: TenantSemanticConfig = {
         ...inferred,
         contractedProduct: input.contractedProduct || inferred.contractedProduct,
+        posVariant: input.posVariant || inferred.posVariant,
+        offlineMode: input.offlineMode ?? inferred.offlineMode,
+        explicitOffline: input.explicitOffline ?? inferred.explicitOffline,
+        cloudDisabledReason: input.cloudDisabledReason ?? inferred.cloudDisabledReason,
         posRuntime: input.posRuntime || inferred.posRuntime,
         cloudChannel: input.cloudChannel || inferred.cloudChannel,
         dataMaster: input.dataMaster || inferred.dataMaster,
@@ -178,6 +192,42 @@ function normalizeTenantSemantics(input: CreateTenantInput): TenantSemanticConfi
         provisioningStatus: input.provisioningStatus || inferred.provisioningStatus,
     };
 
+    const explicitlyOffline = semantics.posVariant === "POS_ONLY_OFFLINE"
+        || semantics.offlineMode
+        || semantics.explicitOffline;
+
+    if (semantics.contractedProduct === "POS_ONLY" && !explicitlyOffline && semantics.posRuntime !== "SLAVE") {
+        semantics.posVariant = "POS_ONLY_STANDARD";
+        semantics.offlineMode = false;
+        semantics.explicitOffline = false;
+        semantics.cloudDisabledReason = null;
+        semantics.cloudChannel = "POS_CLOUD_STAGING";
+        semantics.dataMaster = "POS";
+        semantics.cloudSyncEnabled = true;
+        semantics.erpCoreEnabled = true;
+        semantics.erpUiEnabled = false;
+        semantics.customerErpAccess = false;
+        semantics.backupEnabled = true;
+        semantics.lifecycleStatus = "CLOUD_STAGING";
+        semantics.provisioningStatus = "CLOUD_STAGING_REQUIRED";
+    }
+
+    if (semantics.contractedProduct === "POS_ONLY" && explicitlyOffline && semantics.posRuntime !== "SLAVE") {
+        semantics.posVariant = "POS_ONLY_OFFLINE";
+        semantics.offlineMode = true;
+        semantics.explicitOffline = true;
+        semantics.cloudDisabledReason = semantics.cloudDisabledReason || "POS_ONLY_OFFLINE";
+        semantics.cloudChannel = "NONE";
+        semantics.dataMaster = "POS";
+        semantics.cloudSyncEnabled = false;
+        semantics.erpCoreEnabled = false;
+        semantics.erpUiEnabled = false;
+        semantics.customerErpAccess = false;
+        semantics.backupEnabled = false;
+        semantics.lifecycleStatus = "CLOUD_DISABLED";
+        semantics.provisioningStatus = "PENDING";
+    }
+
     if (semantics.contractedProduct === "POS_ONLY") {
         if (semantics.customerErpAccess) {
             throw new Error("POS_ONLY no puede tener acceso ERP visible para el cliente.");
@@ -185,9 +235,19 @@ function normalizeTenantSemantics(input: CreateTenantInput): TenantSemanticConfi
         if (semantics.erpUiEnabled) {
             throw new Error("POS_ONLY no puede tener ERP UI habilitado.");
         }
+        if (semantics.cloudChannel === "NONE" && !explicitlyOffline && semantics.posRuntime !== "SLAVE") {
+            throw new Error("POS_ONLY solo puede quedar sin nube cuando el modo offline es explicito.");
+        }
+        if (semantics.cloudChannel === "POS_CLOUD_STAGING" && (!semantics.cloudSyncEnabled || !semantics.erpCoreEnabled)) {
+            throw new Error("POS_ONLY con Cloud Staging requiere cloud_sync_enabled y erp_core_enabled activos.");
+        }
     }
 
     if (semantics.contractedProduct === "POS_ERP") {
+        semantics.posVariant = "POS_ERP";
+        semantics.offlineMode = false;
+        semantics.explicitOffline = false;
+        semantics.cloudDisabledReason = null;
         if (!semantics.customerErpAccess) {
             throw new Error("POS_ERP requiere acceso ERP para el cliente.");
         }
@@ -222,6 +282,10 @@ export async function createTenant({
     cloudSync = true,
     contractedProduct,
     posRuntime,
+    posVariant,
+    offlineMode,
+    explicitOffline,
+    cloudDisabledReason,
     cloudChannel,
     dataMaster,
     cloudSyncEnabled,
@@ -249,6 +313,10 @@ export async function createTenant({
         cloudSync,
         contractedProduct,
         posRuntime,
+        posVariant,
+        offlineMode,
+        explicitOffline,
+        cloudDisabledReason,
         cloudChannel,
         dataMaster,
         cloudSyncEnabled,
@@ -271,6 +339,10 @@ export async function createTenant({
             type,
             cloudSync,
             contracted_product: semantics.contractedProduct,
+            pos_variant: semantics.posVariant,
+            offline_mode: semantics.offlineMode,
+            explicit_offline: semantics.explicitOffline,
+            cloud_disabled_reason: semantics.cloudDisabledReason,
             pos_runtime: semantics.posRuntime,
             cloud_channel: semantics.cloudChannel,
             data_master: semantics.dataMaster,
@@ -307,6 +379,10 @@ export async function createTenant({
         p_type: type,
         p_cloud_sync: cloudSync,
         p_contracted_product: semantics.contractedProduct,
+        p_pos_variant: semantics.posVariant,
+        p_offline_mode: semantics.offlineMode,
+        p_explicit_offline: semantics.explicitOffline,
+        p_cloud_disabled_reason: semantics.cloudDisabledReason,
         p_pos_runtime: semantics.posRuntime,
         p_cloud_channel: semantics.cloudChannel,
         p_data_master: semantics.dataMaster,
@@ -340,6 +416,10 @@ export async function createTenant({
             type,
             cloudSync,
             contracted_product: semantics.contractedProduct,
+            pos_variant: semantics.posVariant,
+            offline_mode: semantics.offlineMode,
+            explicit_offline: semantics.explicitOffline,
+            cloud_disabled_reason: semantics.cloudDisabledReason,
             pos_runtime: semantics.posRuntime,
             cloud_channel: semantics.cloudChannel,
             data_master: semantics.dataMaster,
@@ -426,6 +506,10 @@ export async function updateTenant(
         type: TenantType;
         cloud_sync: boolean;
         contracted_product?: ContractedProduct;
+        pos_variant?: PosVariant;
+        offline_mode?: boolean;
+        explicit_offline?: boolean;
+        cloud_disabled_reason?: string | null;
         pos_runtime?: PosRuntime;
         cloud_channel?: CloudChannel;
         data_master?: DataMaster;

@@ -2,6 +2,7 @@ import type {
     CloudChannel,
     ContractedProduct,
     DataMaster,
+    PosVariant,
     PosRuntime,
     TenantLifecycleStatus,
     TenantProvisioningStatus,
@@ -14,10 +15,15 @@ export interface TenantProductSelection {
     pos: boolean;
     erp: boolean;
     backup: boolean;
+    offlineMode?: boolean;
 }
 
 export interface TenantSemanticConfig {
     contractedProduct: ContractedProduct;
+    posVariant: PosVariant;
+    offlineMode: boolean;
+    explicitOffline: boolean;
+    cloudDisabledReason?: string | null;
     posRuntime: PosRuntime;
     cloudChannel: CloudChannel;
     dataMaster: DataMaster;
@@ -58,16 +64,74 @@ export function getDefaultTenantProducts(): TenantProductSelection {
     return {
         pos: true,
         erp: true,
-        backup: true
+        backup: true,
+        offlineMode: false
     };
 }
 
-export function deriveProductsFromTenant(type: TenantType | undefined, cloudSync: boolean | undefined): TenantProductSelection {
+export function normalizeTenantProductSelection(products: TenantProductSelection): TenantProductSelection {
+    const normalized: TenantProductSelection = {
+        pos: Boolean(products.pos),
+        erp: Boolean(products.erp),
+        backup: Boolean(products.backup),
+        offlineMode: Boolean(products.offlineMode),
+    };
+
+    if (normalized.erp) {
+        return {
+            ...normalized,
+            backup: true,
+            offlineMode: false,
+        };
+    }
+
+    if (normalized.pos && normalized.offlineMode) {
+        return {
+            ...normalized,
+            backup: false,
+        };
+    }
+
+    if (normalized.pos) {
+        return {
+            ...normalized,
+            backup: true,
+        };
+    }
+
+    return {
+        ...normalized,
+        offlineMode: false,
+        backup: normalized.erp || normalized.backup,
+    };
+}
+
+export function isExplicitOfflineSelection(products: TenantProductSelection): boolean {
+    const normalized = normalizeTenantProductSelection(products);
+    return normalized.pos && !normalized.erp && normalized.offlineMode === true;
+}
+
+export function deriveProductsFromTenant(
+    type: TenantType | undefined,
+    cloudSync: boolean | undefined,
+    semantics?: {
+        posVariant?: PosVariant | null;
+        offlineMode?: boolean | null;
+        explicitOffline?: boolean | null;
+        cloudChannel?: CloudChannel | null;
+    },
+): TenantProductSelection {
+    const explicitOffline = semantics?.posVariant === 'POS_ONLY_OFFLINE'
+        || semantics?.offlineMode === true
+        || semantics?.explicitOffline === true
+        || semantics?.cloudChannel === 'NONE';
+
     if (type === 'pos_only') {
         return {
             pos: true,
             erp: false,
-            backup: cloudSync ?? true
+            backup: explicitOffline ? false : true,
+            offlineMode: explicitOffline,
         };
     }
 
@@ -75,33 +139,37 @@ export function deriveProductsFromTenant(type: TenantType | undefined, cloudSync
         return {
             pos: false,
             erp: true,
-            backup: cloudSync ?? true
+            backup: cloudSync ?? true,
+            offlineMode: false,
         };
     }
 
     return {
         pos: true,
         erp: true,
-        backup: cloudSync ?? true
+        backup: true,
+        offlineMode: false,
     };
 }
 
 export function deriveTenantConfigFromProducts(products: TenantProductSelection): { type: TenantType; cloudSync: boolean } {
-    if (products.pos && products.erp) {
+    const normalized = normalizeTenantProductSelection(products);
+
+    if (normalized.pos && normalized.erp) {
         return {
             type: 'full',
             cloudSync: true
         };
     }
 
-    if (products.pos) {
+    if (normalized.pos) {
         return {
             type: 'pos_only',
-            cloudSync: products.backup
+            cloudSync: !normalized.offlineMode
         };
     }
 
-    if (products.erp) {
+    if (normalized.erp) {
         return {
             type: 'erp_only',
             cloudSync: true
@@ -115,25 +183,36 @@ export function deriveTenantSemanticsFromProducts(
     products: TenantProductSelection,
     posRuntime: PosRuntime = 'LOCAL_SQLITE',
 ): TenantSemanticConfig {
+    const normalized = normalizeTenantProductSelection(products);
+    const explicitOffline = normalized.pos && !normalized.erp && normalized.offlineMode === true;
+
     if (posRuntime === 'SLAVE') {
         return {
-            contractedProduct: products.erp ? 'POS_ERP' : 'POS_ONLY',
+            contractedProduct: normalized.erp ? 'POS_ERP' : 'POS_ONLY',
+            posVariant: normalized.erp ? 'POS_ERP' : explicitOffline ? 'POS_ONLY_OFFLINE' : 'POS_ONLY_STANDARD',
+            offlineMode: explicitOffline,
+            explicitOffline,
+            cloudDisabledReason: explicitOffline ? 'POS_ONLY_OFFLINE' : null,
             posRuntime: 'SLAVE',
             cloudChannel: 'POS_MASTER',
             dataMaster: 'POS_MASTER',
             cloudSyncEnabled: false,
-            erpCoreEnabled: products.erp,
+            erpCoreEnabled: normalized.erp,
             erpUiEnabled: false,
-            customerErpAccess: products.erp,
+            customerErpAccess: normalized.erp,
             backupEnabled: false,
             lifecycleStatus: 'CLOUD_STAGING',
             provisioningStatus: 'SLAVE_WAITING_MASTER',
         };
     }
 
-    if (products.erp) {
+    if (normalized.erp) {
         return {
             contractedProduct: 'POS_ERP',
+            posVariant: 'POS_ERP',
+            offlineMode: false,
+            explicitOffline: false,
+            cloudDisabledReason: null,
             posRuntime,
             cloudChannel: 'ERP_ACTIVE',
             dataMaster: 'ERP',
@@ -147,25 +226,13 @@ export function deriveTenantSemanticsFromProducts(
         };
     }
 
-    if (products.pos && products.backup) {
+    if (normalized.pos && explicitOffline) {
         return {
             contractedProduct: 'POS_ONLY',
-            posRuntime,
-            cloudChannel: 'POS_CLOUD_STAGING',
-            dataMaster: 'POS',
-            cloudSyncEnabled: true,
-            erpCoreEnabled: true,
-            erpUiEnabled: false,
-            customerErpAccess: false,
-            backupEnabled: true,
-            lifecycleStatus: 'CLOUD_STAGING',
-            provisioningStatus: 'CLOUD_STAGING_REQUIRED',
-        };
-    }
-
-    if (products.pos) {
-        return {
-            contractedProduct: 'POS_ONLY',
+            posVariant: 'POS_ONLY_OFFLINE',
+            offlineMode: true,
+            explicitOffline: true,
+            cloudDisabledReason: 'POS_ONLY_OFFLINE',
             posRuntime,
             cloudChannel: 'NONE',
             dataMaster: 'POS',
@@ -179,14 +246,40 @@ export function deriveTenantSemanticsFromProducts(
         };
     }
 
+    if (normalized.pos) {
+        return {
+            contractedProduct: 'POS_ONLY',
+            posVariant: 'POS_ONLY_STANDARD',
+            offlineMode: false,
+            explicitOffline: false,
+            cloudDisabledReason: null,
+            posRuntime,
+            cloudChannel: 'POS_CLOUD_STAGING',
+            dataMaster: 'POS',
+            cloudSyncEnabled: true,
+            erpCoreEnabled: true,
+            erpUiEnabled: false,
+            customerErpAccess: false,
+            backupEnabled: true,
+            lifecycleStatus: 'CLOUD_STAGING',
+            provisioningStatus: 'CLOUD_STAGING_REQUIRED',
+        };
+    }
+
     throw new Error('Activa al menos CLIC POS o CLIC ERP.');
 }
 
 export function deriveTenantSemanticsFromTenant(
     type: TenantType | undefined,
     cloudSync: boolean | undefined,
+    semantics?: {
+        posVariant?: PosVariant | null;
+        offlineMode?: boolean | null;
+        explicitOffline?: boolean | null;
+        cloudChannel?: CloudChannel | null;
+    },
 ): TenantSemanticConfig {
-    return deriveTenantSemanticsFromProducts(deriveProductsFromTenant(type, cloudSync));
+    return deriveTenantSemanticsFromProducts(deriveProductsFromTenant(type, cloudSync, semantics));
 }
 
 export function getTenantTypeLabel(type: TenantType | undefined): string {
