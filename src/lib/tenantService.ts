@@ -5,6 +5,7 @@ import type {
     CloudChannel,
     ContractedProduct,
     DataMaster,
+    PosVariant,
     PosRuntime,
     TenantLifecycleStatus,
     TenantProvisioningStatus,
@@ -77,6 +78,10 @@ type TenantUpdatePayload = {
     max_pos_terminals?: number;
     max_erp_users?: number;
     contracted_product?: ContractedProduct;
+    pos_variant?: PosVariant;
+    offline_mode?: boolean;
+    explicit_offline?: boolean;
+    cloud_disabled_reason?: string | null;
     pos_runtime?: PosRuntime;
     cloud_channel?: CloudChannel;
     data_master?: DataMaster;

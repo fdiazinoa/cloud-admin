@@ -24,6 +24,10 @@ interface TenantRecord {
     email?: string | null;
     status: string;
     contracted_product?: string | null;
+    pos_variant?: string | null;
+    offline_mode?: boolean | null;
+    explicit_offline?: boolean | null;
+    cloud_disabled_reason?: string | null;
     pos_runtime?: string | null;
     cloud_channel?: string | null;
     data_master?: string | null;
@@ -33,6 +37,7 @@ interface TenantRecord {
     customer_erp_access?: boolean | null;
     backup_enabled?: boolean | null;
     lifecycle_status?: string | null;
+    provisioning_status?: string | null;
 }
 
 interface RegistryRecord {
@@ -262,6 +267,10 @@ Deno.serve(async (request) => {
                 'email',
                 'status',
                 'contracted_product',
+                'pos_variant',
+                'offline_mode',
+                'explicit_offline',
+                'cloud_disabled_reason',
                 'pos_runtime',
                 'cloud_channel',
                 'data_master',
@@ -378,6 +387,10 @@ Deno.serve(async (request) => {
                 slug: tenant.slug || null,
                 email: tenant.email || null,
                 contracted_product: tenant.contracted_product || null,
+                pos_variant: tenant.pos_variant || null,
+                offline_mode: tenant.offline_mode ?? null,
+                explicit_offline: tenant.explicit_offline ?? null,
+                cloud_disabled_reason: tenant.cloud_disabled_reason || null,
                 pos_runtime: tenant.pos_runtime || null,
                 cloud_channel: tenant.cloud_channel || null,
                 data_master: tenant.data_master || null,
@@ -387,6 +400,7 @@ Deno.serve(async (request) => {
                 customer_erp_access: tenant.customer_erp_access ?? null,
                 backup_enabled: tenant.backup_enabled ?? null,
                 lifecycle_status: tenant.lifecycle_status || null,
+                provisioning_status: tenant.provisioning_status || null,
                 deviceId: effectiveDeviceId,
                 terminalId: effectiveTerminalId,
                 terminalName: effectiveTerminalName,
