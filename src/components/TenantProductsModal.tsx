@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Check, Database, HardDrive, MonitorSmartphone, X } from 'lucide-react';
+import { AlertTriangle, Check, Cloud, CloudOff, Database, HardDrive, MonitorSmartphone, X } from 'lucide-react';
 import type { TenantProductKey, TenantProductSelection } from '../lib/tenantProducts';
-import { TENANT_PRODUCTS } from '../lib/tenantProducts';
+import { normalizeTenantProductSelection, TENANT_PRODUCTS } from '../lib/tenantProducts';
 
 const PRODUCT_ICONS: Record<TenantProductKey, React.ComponentType<{ size?: number; className?: string }>> = {
     pos: MonitorSmartphone,
@@ -30,12 +30,36 @@ export const TenantProductsModal: React.FC<TenantProductsModalProps> = ({
 
     if (!isOpen) return null;
 
-    const hasMainProduct = draft.pos || draft.erp;
+    const normalizedDraft = normalizeTenantProductSelection(draft);
+    const hasMainProduct = normalizedDraft.pos || normalizedDraft.erp;
 
     const toggleProduct = (key: TenantProductKey) => {
-        setDraft((current) => ({
+        setDraft((current) => {
+            const next = {
+                ...current,
+                [key]: !current[key]
+            };
+
+            if (key === 'erp' && next.erp) {
+                next.backup = true;
+                next.offlineMode = false;
+            }
+
+            if (key === 'backup' && next.pos && !next.erp) {
+                next.offlineMode = !next.backup;
+            }
+
+            return normalizeTenantProductSelection(next);
+        });
+    };
+
+    const setPosOnlyVariant = (offlineMode: boolean) => {
+        setDraft((current) => normalizeTenantProductSelection({
             ...current,
-            [key]: !current[key]
+            pos: true,
+            erp: false,
+            backup: !offlineMode,
+            offlineMode,
         }));
     };
 
@@ -62,7 +86,7 @@ export const TenantProductsModal: React.FC<TenantProductsModalProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         {TENANT_PRODUCTS.map((product) => {
                             const Icon = PRODUCT_ICONS[product.key];
-                            const active = draft[product.key];
+                            const active = normalizedDraft[product.key];
 
                             return (
                                 <div
@@ -128,6 +152,64 @@ export const TenantProductsModal: React.FC<TenantProductsModalProps> = ({
                         })}
                     </div>
 
+                    {normalizedDraft.pos && !normalizedDraft.erp && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <button
+                                type="button"
+                                onClick={() => setPosOnlyVariant(false)}
+                                className={`rounded-2xl border p-4 text-left transition-all ${
+                                    !normalizedDraft.offlineMode
+                                        ? 'border-emerald-300 bg-emerald-50 shadow-sm shadow-emerald-100'
+                                        : 'border-slate-200 bg-white hover:border-slate-300'
+                                }`}
+                            >
+                                <div className="flex items-start gap-3">
+                                    <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${
+                                        !normalizedDraft.offlineMode ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'
+                                    }`}>
+                                        <Cloud size={20} />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-black text-slate-800">POS_ONLY SaaS con Cloud Staging</h4>
+                                        <p className="mt-2 text-sm text-slate-500 leading-relaxed">
+                                            Recomendado. Incluye respaldo cloud, recuperacion SaaS y core interno sin ERP visible.
+                                        </p>
+                                    </div>
+                                </div>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setPosOnlyVariant(true)}
+                                className={`rounded-2xl border p-4 text-left transition-all ${
+                                    normalizedDraft.offlineMode
+                                        ? 'border-amber-300 bg-amber-50 shadow-sm shadow-amber-100'
+                                        : 'border-slate-200 bg-white hover:border-slate-300'
+                                }`}
+                            >
+                                <div className="flex items-start gap-3">
+                                    <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${
+                                        normalizedDraft.offlineMode ? 'bg-amber-600 text-white' : 'bg-slate-100 text-slate-500'
+                                    }`}>
+                                        <CloudOff size={20} />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-black text-slate-800">POS_ONLY Offline / Sin nube</h4>
+                                        <p className="mt-2 text-sm text-slate-500 leading-relaxed">
+                                            Solo para excepciones. Sin backup cloud, recuperacion SaaS ni staging automatico.
+                                        </p>
+                                    </div>
+                                </div>
+                            </button>
+                        </div>
+                    )}
+
+                    {normalizedDraft.offlineMode && (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 flex gap-2">
+                            <AlertTriangle size={18} className="shrink-0" />
+                            Este tenant quedara explicitamente sin nube. Usa este modo solo cuando el contrato lo requiera.
+                        </div>
+                    )}
+
                     {!hasMainProduct && (
                         <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
                             Debes activar al menos uno de los productos principales: CLIC POS o CLIC ERP.
@@ -145,7 +227,7 @@ export const TenantProductsModal: React.FC<TenantProductsModalProps> = ({
                         <button
                             type="button"
                             disabled={!hasMainProduct}
-                            onClick={() => onSave(draft)}
+                            onClick={() => onSave(normalizedDraft)}
                             className="flex-1 px-4 py-3 text-white bg-blue-600 hover:bg-blue-700 rounded-xl font-bold shadow-sm transition-colors disabled:opacity-60"
                         >
                             Aplicar Productos

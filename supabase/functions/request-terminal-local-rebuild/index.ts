@@ -24,6 +24,10 @@ interface TenantRecord {
     type?: string | null;
     cloud_sync?: boolean | null;
     contracted_product?: string | null;
+    pos_variant?: string | null;
+    offline_mode?: boolean | null;
+    explicit_offline?: boolean | null;
+    cloud_channel?: string | null;
     pos_runtime?: string | null;
 }
 
@@ -125,6 +129,16 @@ function isLocalPosTenant(tenant: TenantRecord) {
     return tenant.type === 'pos_only';
 }
 
+function isExplicitOfflinePosTenant(tenant: TenantRecord) {
+    return tenant.contracted_product === 'POS_ONLY'
+        && (
+            tenant.pos_variant === 'POS_ONLY_OFFLINE'
+            || tenant.offline_mode === true
+            || tenant.explicit_offline === true
+            || tenant.cloud_channel === 'NONE'
+        );
+}
+
 async function insertAudit(
     supabase: ReturnType<typeof createClient>,
     payload: {
@@ -202,7 +216,7 @@ Deno.serve(async (request) => {
 
         const { data: tenantData, error: tenantError } = await supabase
             .from('tenants')
-            .select('id,name,email,status,type,cloud_sync,contracted_product,pos_runtime')
+            .select('id,name,email,status,type,cloud_sync,contracted_product,pos_variant,offline_mode,explicit_offline,cloud_channel,pos_runtime')
             .eq('id', tenantId)
             .maybeSingle();
 
@@ -218,6 +232,12 @@ Deno.serve(async (request) => {
             return json({
                 error: 'POS_LOCAL_ONLY',
                 message: 'La reconstruccion local solo aplica a POS configurado como local. POS + ERP mantiene el flujo actual.',
+            }, 400);
+        }
+        if (isExplicitOfflinePosTenant(tenant)) {
+            return json({
+                error: 'POS_OFFLINE_NO_CLOUD_RECOVERY',
+                message: 'Este tenant POS_ONLY esta en modo offline/sin Cloud Staging. No tiene reconstruccion cloud desde Cloud-Admin.',
             }, 400);
         }
 
