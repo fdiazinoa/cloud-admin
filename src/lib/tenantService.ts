@@ -96,6 +96,28 @@ type TenantUpdatePayload = {
     password?: string;
 };
 
+const OPTIONAL_TENANT_UPDATE_COLUMNS: Array<keyof TenantUpdatePayload> = [
+    "legal_name",
+    "phone",
+    "max_pos_terminals",
+    "max_erp_users",
+    "contracted_product",
+    "pos_variant",
+    "offline_mode",
+    "explicit_offline",
+    "cloud_disabled_reason",
+    "pos_runtime",
+    "cloud_channel",
+    "data_master",
+    "cloud_sync_enabled",
+    "erp_core_enabled",
+    "erp_ui_enabled",
+    "customer_erp_access",
+    "backup_enabled",
+    "lifecycle_status",
+    "provisioning_status",
+];
+
 function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | null {
     if (!error || typeof error !== "object") return null;
 
@@ -103,10 +125,12 @@ function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | n
     const details = "details" in error && typeof error.details === "string" ? error.details : "";
     const haystack = `${message} ${details}`.toLowerCase();
 
-    if (haystack.includes("legal_name")) return "legal_name";
-    if (haystack.includes("phone")) return "phone";
+    return OPTIONAL_TENANT_UPDATE_COLUMNS.find((column) => haystack.includes(column.toLowerCase())) || null;
+}
 
-    return null;
+function getMissingColumnRetryLimit(payload: Partial<TenantUpdatePayload>): number {
+    const optionalColumnCount = OPTIONAL_TENANT_UPDATE_COLUMNS.filter((column) => column in payload).length;
+    return optionalColumnCount + 1;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -318,8 +342,9 @@ export async function updateTenant(
     payload: TenantUpdatePayload,
 ): Promise<void> {
     const nextPayload: Partial<TenantUpdatePayload> = { ...payload };
+    const maxAttempts = getMissingColumnRetryLimit(nextPayload);
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         const { error } = await supabaseAdmin
             .from("tenants")
             .update(nextPayload)
@@ -336,7 +361,7 @@ export async function updateTenant(
         throw error;
     }
 
-    throw new Error("Tenant update failed after retrying without optional columns.");
+    throw new Error("Tenant update failed after retrying without schema-cache optional columns.");
 }
 
 async function findTenantAuthUserId(tenant: Tenant): Promise<string | null> {
