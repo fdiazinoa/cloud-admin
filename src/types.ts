@@ -114,6 +114,8 @@ export interface TenantTerminalRegistryEntry {
     requires_full_bootstrap?: boolean | null;
     erp_readiness?: TenantTerminalErpReadiness | null;
     last_erp_readiness_at?: string | null;
+    fiscal_readiness?: TerminalFiscalReadiness | null;
+    last_fiscal_readiness_at?: string | null;
     is_primary?: boolean | null;
     status?: string | null;
     last_seen_at?: string | null;
@@ -189,6 +191,49 @@ export interface TerminalAuthAttempt {
     created_at?: string | null;
     pairing_required?: boolean | null;
     metadata?: Record<string, unknown> | null;
+}
+
+export type TerminalFiscalStatus = 'MISSING' | 'READY' | 'DEMO_READY' | 'ERROR';
+
+export interface TerminalFiscalReadiness {
+    status?: TerminalFiscalStatus | string | null;
+    fiscalReadiness?: TerminalFiscalStatus | string | null;
+    fiscal_readiness?: TerminalFiscalStatus | string | null;
+    canIssueFiscalDocuments?: boolean | null;
+    can_issue_fiscal_documents?: boolean | null;
+    canIssueNonFiscalSales?: boolean | null;
+    can_issue_non_fiscal_sales?: boolean | null;
+    documentTypes?: Array<string | Record<string, unknown>> | null;
+    document_types?: Array<string | Record<string, unknown>> | null;
+    series?: Array<string | Record<string, unknown>> | null;
+    assignedSeries?: Array<string | Record<string, unknown>> | null;
+    assigned_series?: Array<string | Record<string, unknown>> | null;
+    ranges?: Array<string | Record<string, unknown>> | null;
+    assignedRanges?: Array<string | Record<string, unknown>> | null;
+    assigned_ranges?: Array<string | Record<string, unknown>> | null;
+    currentConsecutive?: string | number | null;
+    current_consecutive?: string | number | null;
+    nextConsecutive?: string | number | null;
+    next_consecutive?: string | number | null;
+    expiresAt?: string | null;
+    expires_at?: string | null;
+    collection?: string | null;
+    message?: string | null;
+    checked_at?: string | null;
+    [key: string]: unknown;
+}
+
+export interface TerminalFiscalProductionConfig {
+    documentType: string;
+    series: string;
+    prefix: string;
+    rangeFrom: string;
+    rangeTo: string;
+    nextConsecutive: string;
+    expiresAt: string;
+    companyId: string;
+    storeId: string;
+    terminalName: string;
 }
 
 export interface BillingPlan {

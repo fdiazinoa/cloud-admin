@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban } from 'lucide-react';
-import type { Distributor, Tenant, TerminalAuthAttempt, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
+import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import {
@@ -45,6 +45,11 @@ export const Tenants: React.FC = () => {
     const [authAttemptsByTerminal, setAuthAttemptsByTerminal] = useState<Record<string, TerminalAuthAttempt[]>>({});
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
+    const [fiscalReadinessByTerminal, setFiscalReadinessByTerminal] = useState<Record<string, TerminalFiscalReadiness>>({});
+    const [fiscalReadinessLoadingKey, setFiscalReadinessLoadingKey] = useState<string | null>(null);
+    const [fiscalConfigSubmittingKey, setFiscalConfigSubmittingKey] = useState<string | null>(null);
+    const [fiscalConfigTerminal, setFiscalConfigTerminal] = useState<TenantTerminalSnapshot | null>(null);
+    const [isFiscalConfigModalOpen, setIsFiscalConfigModalOpen] = useState(false);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
@@ -79,6 +84,18 @@ export const Tenants: React.FC = () => {
     const [rebuildFormData, setRebuildFormData] = useState({
         reason: '',
         confirmRebuild: false,
+    });
+    const [fiscalFormData, setFiscalFormData] = useState({
+        documentType: '',
+        series: '',
+        prefix: '',
+        rangeFrom: '',
+        rangeTo: '',
+        nextConsecutive: '',
+        expiresAt: '',
+        companyId: '',
+        storeId: '',
+        terminalName: '',
     });
 
     const getErrorMessage = (error: unknown) => {
@@ -292,6 +309,7 @@ export const Tenants: React.FC = () => {
         setSelectedTenantForTerminals(tenant);
         setTenantTerminals([]);
         setAuthAttemptsByTerminal({});
+        setFiscalReadinessByTerminal({});
         setIsTerminalModalOpen(true);
         setIsTerminalModalLoading(true);
 
@@ -299,6 +317,9 @@ export const Tenants: React.FC = () => {
             const data = await tenantService.getTenantTerminalOverview(tenant.id);
             setTenantTerminals(data);
             void loadAuthAttemptsForTerminals(tenant.id, data);
+            if (isFiscalEligibleTenant(tenant)) {
+                void loadFiscalReadinessForTerminals(tenant.id, data);
+            }
         } catch (err) {
             console.error('Error fetching tenant terminals:', err);
             alert('No se pudieron cargar las terminales de este tenant.');
@@ -312,8 +333,10 @@ export const Tenants: React.FC = () => {
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
         setAuthAttemptsByTerminal({});
+        setFiscalReadinessByTerminal({});
         closeTakeoverModal();
         closeRebuildModal();
+        closeFiscalConfigModal();
     };
 
     const getTenantSemantics = (tenant: Tenant): TenantSemanticConfig => {
@@ -358,6 +381,12 @@ export const Tenants: React.FC = () => {
     const isCloudRecoverableLocalPosTenant = (tenant?: Tenant | null) => (
         isLocalPosTenant(tenant) && !isExplicitOfflinePosTenant(tenant)
     );
+
+    const isFiscalEligibleTenant = (tenant?: Tenant | null) => {
+        if (!tenant) return false;
+        const semantics = getTenantSemantics(tenant);
+        return semantics.contractedProduct === 'POS_ERP' || semantics.cloudChannel === 'ERP_ACTIVE';
+    };
 
     const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => terminal.terminal_id || terminal.id;
 
@@ -434,6 +463,85 @@ export const Tenants: React.FC = () => {
         if (status === 'TAKEOVER_PENDING' || status === 'TOKEN_ROTATION_REQUIRED') return 'border-amber-200 bg-amber-50 text-amber-700';
         if (status === 'OLD_DEVICE_REVOKED') return 'border-slate-200 bg-slate-100 text-slate-700';
         return 'border-slate-200 bg-slate-50 text-slate-600';
+    };
+
+    const getFiscalReadiness = (terminal: TenantTerminalSnapshot) => (
+        fiscalReadinessByTerminal[getTerminalKey(terminal)]
+        || terminal.registry?.fiscal_readiness
+        || null
+    );
+
+    const getFiscalStatus = (readiness: TerminalFiscalReadiness | null | undefined) => {
+        const value = readiness?.status || readiness?.fiscalReadiness || readiness?.fiscal_readiness || 'MISSING';
+        return value.toString().toUpperCase();
+    };
+
+    const getFiscalStatusLabel = (status: string) => {
+        if (status === 'READY') return 'READY';
+        if (status === 'DEMO_READY') return 'DEMO READY';
+        if (status === 'ERROR') return 'ERROR';
+        return 'MISSING';
+    };
+
+    const getFiscalStatusClasses = (status: string) => {
+        if (status === 'READY') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        if (status === 'DEMO_READY') return 'border-blue-200 bg-blue-50 text-blue-700';
+        if (status === 'ERROR') return 'border-red-200 bg-red-50 text-red-700';
+        return 'border-amber-200 bg-amber-50 text-amber-800';
+    };
+
+    const getFiscalBoolean = (readiness: TerminalFiscalReadiness | null | undefined, keys: string[]) => {
+        if (!readiness) return null;
+        for (const key of keys) {
+            const value = readiness[key];
+            if (typeof value === 'boolean') return value;
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                if (['true', 'yes', 'si', 'ready', 'active'].includes(normalized)) return true;
+                if (['false', 'no', 'missing', 'inactive'].includes(normalized)) return false;
+            }
+        }
+        return null;
+    };
+
+    const getFiscalValue = (readiness: TerminalFiscalReadiness | null | undefined, keys: string[]) => {
+        if (!readiness) return null;
+        for (const key of keys) {
+            const value = readiness[key];
+            if (typeof value === 'string' && value.trim()) return value.trim();
+            if (typeof value === 'number') return String(value);
+        }
+        return null;
+    };
+
+    const formatFiscalItem = (item: string | Record<string, unknown>) => {
+        if (typeof item === 'string') return item;
+        const candidates = [
+            item.name,
+            item.label,
+            item.code,
+            item.documentType,
+            item.document_type,
+            item.series,
+            item.serie,
+            item.prefix,
+        ];
+        const label = candidates.find((value) => typeof value === 'string' && value.trim());
+        if (typeof label === 'string') return label;
+        return JSON.stringify(item);
+    };
+
+    const getFiscalList = (readiness: TerminalFiscalReadiness | null | undefined, keys: string[]) => {
+        if (!readiness) return [];
+        for (const key of keys) {
+            const value = readiness[key];
+            if (Array.isArray(value)) {
+                return value
+                    .map((item) => typeof item === 'string' || (item && typeof item === 'object') ? formatFiscalItem(item as string | Record<string, unknown>) : '')
+                    .filter(Boolean);
+            }
+        }
+        return [];
     };
 
     const getReadinessValue = (readiness: TenantTerminalErpReadiness | null | undefined, keys: string[]) => {
@@ -539,6 +647,41 @@ export const Tenants: React.FC = () => {
         });
     };
 
+    const openFiscalConfigModal = (terminal: TenantTerminalSnapshot) => {
+        const fiscalReadiness = getFiscalReadiness(terminal);
+        setFiscalConfigTerminal(terminal);
+        setFiscalFormData({
+            documentType: getFiscalList(fiscalReadiness, ['documentTypes', 'document_types'])[0] || '',
+            series: getFiscalList(fiscalReadiness, ['series', 'assignedSeries', 'assigned_series'])[0] || '',
+            prefix: getFiscalValue(fiscalReadiness, ['prefix']) || '',
+            rangeFrom: getFiscalValue(fiscalReadiness, ['rangeFrom', 'range_from']) || '',
+            rangeTo: getFiscalValue(fiscalReadiness, ['rangeTo', 'range_to']) || '',
+            nextConsecutive: getFiscalValue(fiscalReadiness, ['nextConsecutive', 'next_consecutive']) || '',
+            expiresAt: getFiscalValue(fiscalReadiness, ['expiresAt', 'expires_at']) || '',
+            companyId: getFiscalValue(fiscalReadiness, ['companyId', 'company_id']) || '',
+            storeId: getFiscalValue(fiscalReadiness, ['storeId', 'store_id']) || '',
+            terminalName: terminal.name || '',
+        });
+        setIsFiscalConfigModalOpen(true);
+    };
+
+    const closeFiscalConfigModal = () => {
+        setIsFiscalConfigModalOpen(false);
+        setFiscalConfigTerminal(null);
+        setFiscalFormData({
+            documentType: '',
+            series: '',
+            prefix: '',
+            rangeFrom: '',
+            rangeTo: '',
+            nextConsecutive: '',
+            expiresAt: '',
+            companyId: '',
+            storeId: '',
+            terminalName: '',
+        });
+    };
+
     const requestErpReadinessForTerminal = async (
         terminal: TenantTerminalSnapshot,
         options?: { deviceId?: string; terminalName?: string; silent?: boolean },
@@ -619,6 +762,141 @@ export const Tenants: React.FC = () => {
         const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
         setTenantTerminals(data);
         void loadAuthAttemptsForTerminals(selectedTenantForTerminals.id, data);
+        if (isFiscalEligibleTenant(selectedTenantForTerminals)) {
+            void loadFiscalReadinessForTerminals(selectedTenantForTerminals.id, data);
+        }
+    };
+
+    const loadTerminalFiscalReadiness = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
+        const key = getTerminalKey(terminal);
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) return;
+
+        setFiscalReadinessLoadingKey(key);
+        try {
+            const readiness = await tenantService.getTerminalFiscalReadiness({
+                tenantId,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+            });
+            setFiscalReadinessByTerminal((current) => ({
+                ...current,
+                [key]: readiness,
+            }));
+        } catch (err) {
+            console.warn('Error fetching terminal fiscal readiness:', err);
+            setFiscalReadinessByTerminal((current) => ({
+                ...current,
+                [key]: {
+                    status: 'ERROR',
+                    message: getErrorMessage(err),
+                    checked_at: new Date().toISOString(),
+                },
+            }));
+        } finally {
+            setFiscalReadinessLoadingKey((current) => current === key ? null : current);
+        }
+    };
+
+    const loadFiscalReadinessForTerminals = async (tenantId: string, terminals: TenantTerminalSnapshot[]) => {
+        for (const terminal of terminals) {
+            void loadTerminalFiscalReadiness(tenantId, terminal);
+        }
+    };
+
+    const handleCreateFiscalDemoConfig = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) {
+            alert('Esta terminal necesita terminal_id para crear configuracion fiscal demo.');
+            return;
+        }
+
+        const confirmed = confirm('Se creara una configuracion fiscal de prueba para QA. No uses rangos demo para produccion. ¿Deseas continuar?');
+        if (!confirmed) return;
+
+        const key = `${getTerminalKey(terminal)}-QA_DEMO`;
+        setFiscalConfigSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalFiscalConfig({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                mode: 'QA_DEMO',
+            });
+            if (result.readiness || result.fiscal_readiness) {
+                setFiscalReadinessByTerminal((current) => ({
+                    ...current,
+                    [getTerminalKey(terminal)]: result.readiness || result.fiscal_readiness || { status: 'DEMO_READY' },
+                }));
+            }
+            alert(result.message || 'Configuracion fiscal demo creada.');
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error creating fiscal demo config:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setFiscalConfigSubmittingKey(null);
+        }
+    };
+
+    const handleProductionFiscalConfig = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedTenantForTerminals || !fiscalConfigTerminal) return;
+
+        const terminalId = getTerminalTakeoverId(fiscalConfigTerminal);
+        if (!terminalId) {
+            alert('Esta terminal necesita terminal_id para configurar fiscalmente.');
+            return;
+        }
+
+        const requiredValues = [
+            fiscalFormData.documentType,
+            fiscalFormData.series,
+            fiscalFormData.prefix,
+            fiscalFormData.rangeFrom,
+            fiscalFormData.rangeTo,
+            fiscalFormData.nextConsecutive,
+            fiscalFormData.expiresAt,
+            fiscalFormData.companyId,
+            fiscalFormData.storeId,
+            fiscalFormData.terminalName,
+        ];
+        if (requiredValues.some((value) => !value.trim())) {
+            alert('Completa todos los campos productivos antes de guardar.');
+            return;
+        }
+
+        const confirmed = confirm('Los comprobantes fiscales productivos deben coincidir con rangos autorizados oficialmente. ¿Confirmas que estos rangos son correctos?');
+        if (!confirmed) return;
+
+        const key = `${getTerminalKey(fiscalConfigTerminal)}-PRODUCTION`;
+        setFiscalConfigSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalFiscalConfig({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: fiscalConfigTerminal.registry?.id || null,
+                terminalName: fiscalConfigTerminal.name,
+                mode: 'PRODUCTION',
+                config: fiscalFormData,
+            });
+            if (result.readiness || result.fiscal_readiness) {
+                setFiscalReadinessByTerminal((current) => ({
+                    ...current,
+                    [getTerminalKey(fiscalConfigTerminal)]: result.readiness || result.fiscal_readiness || { status: 'READY' },
+                }));
+            }
+            alert(result.message || 'Configuracion fiscal productiva guardada.');
+            closeFiscalConfigModal();
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error saving production fiscal config:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setFiscalConfigSubmittingKey(null);
+        }
     };
 
     const handleReauthorizeAttempt = async (terminal: TenantTerminalSnapshot, attempt: TerminalAuthAttempt) => {
@@ -1522,6 +1800,19 @@ export const Tenants: React.FC = () => {
                                         const rotateSubmittingKey = `${terminalKey}-ROTATE`;
                                         const revokeDeviceId = terminal.registry?.previous_device_id || lastRejectedDeviceId;
                                         const revokeSubmittingKey = revokeDeviceId ? `${terminalKey}-REVOKE-${revokeDeviceId}` : '';
+                                        const fiscalReadiness = getFiscalReadiness(terminal);
+                                        const fiscalStatus = getFiscalStatus(fiscalReadiness);
+                                        const fiscalStatusClasses = getFiscalStatusClasses(fiscalStatus);
+                                        const fiscalCanIssue = getFiscalBoolean(fiscalReadiness, ['canIssueFiscalDocuments', 'can_issue_fiscal_documents']);
+                                        const fiscalCanIssueNonFiscal = getFiscalBoolean(fiscalReadiness, ['canIssueNonFiscalSales', 'can_issue_non_fiscal_sales']);
+                                        const fiscalDocumentTypes = getFiscalList(fiscalReadiness, ['documentTypes', 'document_types']);
+                                        const fiscalSeries = getFiscalList(fiscalReadiness, ['series', 'assignedSeries', 'assigned_series']);
+                                        const fiscalRanges = getFiscalList(fiscalReadiness, ['ranges', 'assignedRanges', 'assigned_ranges']);
+                                        const fiscalCurrent = getFiscalValue(fiscalReadiness, ['currentConsecutive', 'current_consecutive']);
+                                        const fiscalNext = getFiscalValue(fiscalReadiness, ['nextConsecutive', 'next_consecutive']);
+                                        const fiscalCheckedAt = fiscalReadiness?.checked_at || terminal.registry?.last_fiscal_readiness_at || null;
+                                        const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
+                                        const fiscalDemoSubmittingKey = `${terminalKey}-QA_DEMO`;
 
                                         return (
                                             <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
@@ -1828,6 +2119,95 @@ export const Tenants: React.FC = () => {
                                                     ) : null}
                                                 </div>
 
+                                                {isFiscalEligibleTenant(selectedTenantForTerminals) ? (
+                                                    <div className={`mt-5 rounded-2xl border px-4 py-4 ${fiscalStatusClasses}`}>
+                                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                                            <div>
+                                                                <p className="text-xs font-bold uppercase tracking-wider">Configuracion fiscal</p>
+                                                                <p className="mt-1 text-sm font-bold">{getFiscalStatusLabel(fiscalStatus)}</p>
+                                                                {fiscalStatus === 'MISSING' ? (
+                                                                    <p className="mt-1 text-sm">
+                                                                        Falta configuracion fiscal para esta terminal. El POS puede recibir FISCAL_CONFIG_MISSING al emitir.
+                                                                    </p>
+                                                                ) : null}
+                                                                {fiscalReadiness?.message ? (
+                                                                    <p className="mt-1 text-sm">{fiscalReadiness.message}</p>
+                                                                ) : null}
+                                                            </div>
+                                                            <div className="flex flex-col gap-2 sm:flex-row">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void loadTerminalFiscalReadiness(selectedTenantForTerminals.id, terminal)}
+                                                                    disabled={isFiscalLoading}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                                >
+                                                                    {isFiscalLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                    Refrescar fiscal
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => openFiscalConfigModal(terminal)}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-800 shadow-sm hover:bg-amber-100 transition-colors"
+                                                                >
+                                                                    Configurar fiscal
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handleCreateFiscalDemoConfig(terminal)}
+                                                                    disabled={fiscalConfigSubmittingKey === fiscalDemoSubmittingKey}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-60"
+                                                                >
+                                                                    {fiscalConfigSubmittingKey === fiscalDemoSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : null}
+                                                                    Crear fiscal demo
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-4 rounded-xl border border-amber-200 bg-white/80 px-3 py-2 text-xs font-semibold text-amber-800">
+                                                            Los comprobantes fiscales productivos deben coincidir con rangos autorizados oficialmente.
+                                                        </div>
+
+                                                        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Fiscal readiness</p>
+                                                                <p className="mt-1 font-bold">{getFiscalStatusLabel(fiscalStatus)}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Fiscal</p>
+                                                                <p className="mt-1 font-bold">{getCheckLabel(fiscalCanIssue, 'Puede emitir e-CF', 'No puede emitir fiscal')}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">No fiscal</p>
+                                                                <p className="mt-1 font-bold">{getCheckLabel(fiscalCanIssueNonFiscal, 'Venta no fiscal OK', 'No fiscal bloqueado')}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Tipos documento</p>
+                                                                <p className="mt-1 break-words">{fiscalDocumentTypes.length ? fiscalDocumentTypes.join(', ') : 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Series asignadas</p>
+                                                                <p className="mt-1 break-words">{fiscalSeries.length ? fiscalSeries.join(', ') : 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Rangos asignados</p>
+                                                                <p className="mt-1 break-words">{fiscalRanges.length ? fiscalRanges.join(', ') : 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Consecutivo actual</p>
+                                                                <p className="mt-1 font-mono">{fiscalCurrent || 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Siguiente</p>
+                                                                <p className="mt-1 font-mono">{fiscalNext || 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultima validacion</p>
+                                                                <p className="mt-1">{formatDateTime(fiscalCheckedAt)}</p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ) : null}
+
                                                 {isLocalPosTenant(selectedTenantForTerminals) ? (
                                                     <div className={`mt-5 rounded-2xl border px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between ${
                                                         isExplicitOfflinePosTenant(selectedTenantForTerminals)
@@ -2079,6 +2459,163 @@ export const Tenants: React.FC = () => {
                                 >
                                     {isTakeoverSubmitting ? <Loader2 className="animate-spin" size={18} /> : <RefreshCcw size={18} />}
                                     Ejecutar recuperacion
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {isFiscalConfigModalOpen && selectedTenantForTerminals && fiscalConfigTerminal && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
+                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
+                            <div>
+                                <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-700">
+                                    Configuracion fiscal
+                                </div>
+                                <h3 className="mt-3 font-black text-lg text-slate-800">Configurar fiscalmente la terminal</h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    {selectedTenantForTerminals.name} · {fiscalConfigTerminal.name}
+                                </p>
+                            </div>
+                            <button type="button" onClick={closeFiscalConfigModal} className="text-slate-400 hover:text-slate-700 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleProductionFiscalConfig} className="p-6 space-y-5">
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                                <p className="font-bold">Importante:</p>
+                                <p className="mt-1">
+                                    Los comprobantes fiscales productivos deben coincidir con rangos autorizados oficialmente. Cloud-Admin no genera rangos productivos inventados.
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de comprobante <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.documentType}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, documentType: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="B01, B02, E31..."
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Serie <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.series}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, series: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="A, B, E..."
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Prefijo <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.prefix}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, prefix: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="E31"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Rango desde <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.rangeFrom}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, rangeFrom: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 font-mono"
+                                        placeholder="1"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Rango hasta <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.rangeTo}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, rangeTo: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 font-mono"
+                                        placeholder="1000"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Proximo consecutivo <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.nextConsecutive}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, nextConsecutive: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 font-mono"
+                                        placeholder="1"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Vence <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        type="date"
+                                        value={fiscalFormData.expiresAt}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, expiresAt: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Compañía <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.companyId}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, companyId: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="company_id"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Sucursal <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.storeId}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, storeId: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="store_id"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Terminal / caja <span className="text-red-500">*</span></label>
+                                    <input
+                                        required
+                                        value={fiscalFormData.terminalName}
+                                        onChange={e => setFiscalFormData({ ...fiscalFormData, terminalName: e.target.value })}
+                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
+                                        placeholder="Caja 2"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 border-t border-slate-100 pt-5">
+                                <button
+                                    type="button"
+                                    onClick={closeFiscalConfigModal}
+                                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={fiscalConfigSubmittingKey === `${getTerminalKey(fiscalConfigTerminal)}-PRODUCTION`}
+                                    className="px-5 py-3 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    {fiscalConfigSubmittingKey === `${getTerminalKey(fiscalConfigTerminal)}-PRODUCTION` ? <Loader2 className="animate-spin" size={18} /> : null}
+                                    Guardar configuracion
                                 </button>
                             </div>
                         </form>
