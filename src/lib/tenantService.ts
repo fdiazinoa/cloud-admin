@@ -10,6 +10,8 @@ import type {
     TenantLifecycleStatus,
     TenantProvisioningStatus,
     TerminalAuthAttempt,
+    TerminalFiscalProductionConfig,
+    TerminalFiscalReadiness,
     TenantTerminalRegistryEntry,
     TenantTerminalSnapshot,
     TenantType,
@@ -175,6 +177,36 @@ export interface TerminalDeviceActionResult {
     deviceTokenIssued?: boolean;
     deviceTokenStatus?: string | null;
     tokenPreview?: string | null;
+    message?: string;
+}
+
+export interface RequestTerminalFiscalReadinessInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+}
+
+export interface TerminalFiscalReadinessResult {
+    status: string;
+    readiness?: TerminalFiscalReadiness | null;
+    fiscal_readiness?: TerminalFiscalReadiness | null;
+    message?: string;
+}
+
+export interface RequestTerminalFiscalConfigInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    terminalName?: string | null;
+    mode: "QA_DEMO" | "PRODUCTION";
+    config?: TerminalFiscalProductionConfig;
+}
+
+export interface TerminalFiscalConfigResult {
+    status: string;
+    mode?: "QA_DEMO" | "PRODUCTION";
+    readiness?: TerminalFiscalReadiness | null;
+    fiscal_readiness?: TerminalFiscalReadiness | null;
     message?: string;
 }
 
@@ -848,6 +880,63 @@ export async function requestTerminalDeviceAction(
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
 }
 
+export async function getTerminalFiscalReadiness(
+    input: RequestTerminalFiscalReadinessInput,
+): Promise<TerminalFiscalReadiness> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-fiscal-readiness`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as TerminalFiscalReadinessResult & { error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo cargar la configuracion fiscal de la terminal.");
+    }
+
+    return payload?.readiness || payload?.fiscal_readiness || { status: "MISSING" };
+}
+
+export async function requestTerminalFiscalConfig(
+    input: RequestTerminalFiscalConfigInput,
+): Promise<TerminalFiscalConfigResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-fiscal-config`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            terminal_name: input.terminalName || null,
+            mode: input.mode,
+            config: input.config || null,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as TerminalFiscalConfigResult & { error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo configurar fiscalmente la terminal.");
+    }
+
+    return payload || { status: "success", mode: input.mode };
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
         supabaseAdmin.from("tenants").select("id,name,status,created_at"),
@@ -1064,6 +1153,8 @@ export const tenantService = {
     requestTerminalErpReadiness,
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
+    getTerminalFiscalReadiness,
+    requestTerminalFiscalConfig,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
