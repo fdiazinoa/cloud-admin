@@ -115,12 +115,20 @@ export interface TenantTerminalRegistryEntry {
     previous_device_id?: string | null;
     current_device_id?: string | null;
     authorized_device_id?: string | null;
+    last_rejected_device_id?: string | null;
+    auth_status?: TerminalAuthorizationStatus | string | null;
+    last_auth_error?: string | null;
+    last_auth_attempt_at?: string | null;
+    device_token_status?: string | null;
+    token_preview?: string | null;
     is_revoked?: boolean | null;
     revocation_reason?: string | null;
     requires_pos_reauth?: boolean | null;
     requires_full_bootstrap?: boolean | null;
     erp_readiness?: TenantTerminalErpReadiness | null;
     last_erp_readiness_at?: string | null;
+    fiscal_readiness?: TerminalFiscalReadiness | null;
+    last_fiscal_readiness_at?: string | null;
     is_primary?: boolean | null;
     status?: string | null;
     last_seen_at?: string | null;
@@ -165,6 +173,81 @@ export interface TenantTerminalSnapshot {
     created_at?: string | null;
     registry?: TenantTerminalRegistryEntry | null;
     registries: TenantTerminalRegistryEntry[];
+}
+
+export type TerminalAuthorizationStatus =
+    | 'AUTHORIZED'
+    | 'DEVICE_MISMATCH'
+    | 'TAKEOVER_PENDING'
+    | 'TAKEOVER_COMPLETED'
+    | 'OLD_DEVICE_REVOKED'
+    | 'TOKEN_ROTATION_REQUIRED'
+    | 'ERP_AUTH_ERROR';
+
+export interface TerminalAuthAttempt {
+    id?: string | null;
+    tenant_id?: string | null;
+    terminal_id?: string | null;
+    terminal_name?: string | null;
+    requested_device_id?: string | null;
+    authorized_device_id?: string | null;
+    device_id?: string | null;
+    deviceId?: string | null;
+    reason?: string | null;
+    message?: string | null;
+    status?: string | null;
+    resolution_status?: string | null;
+    endpoint_url?: string | null;
+    ip_address?: string | null;
+    apk_version?: string | null;
+    app_version?: string | null;
+    attempted_at?: string | null;
+    created_at?: string | null;
+    pairing_required?: boolean | null;
+    metadata?: Record<string, unknown> | null;
+}
+
+export type TerminalFiscalStatus = 'MISSING' | 'READY' | 'DEMO_READY' | 'ERROR';
+
+export interface TerminalFiscalReadiness {
+    status?: TerminalFiscalStatus | string | null;
+    fiscalReadiness?: TerminalFiscalStatus | string | null;
+    fiscal_readiness?: TerminalFiscalStatus | string | null;
+    canIssueFiscalDocuments?: boolean | null;
+    can_issue_fiscal_documents?: boolean | null;
+    canIssueNonFiscalSales?: boolean | null;
+    can_issue_non_fiscal_sales?: boolean | null;
+    documentTypes?: Array<string | Record<string, unknown>> | null;
+    document_types?: Array<string | Record<string, unknown>> | null;
+    series?: Array<string | Record<string, unknown>> | null;
+    assignedSeries?: Array<string | Record<string, unknown>> | null;
+    assigned_series?: Array<string | Record<string, unknown>> | null;
+    ranges?: Array<string | Record<string, unknown>> | null;
+    assignedRanges?: Array<string | Record<string, unknown>> | null;
+    assigned_ranges?: Array<string | Record<string, unknown>> | null;
+    currentConsecutive?: string | number | null;
+    current_consecutive?: string | number | null;
+    nextConsecutive?: string | number | null;
+    next_consecutive?: string | number | null;
+    expiresAt?: string | null;
+    expires_at?: string | null;
+    collection?: string | null;
+    message?: string | null;
+    checked_at?: string | null;
+    [key: string]: unknown;
+}
+
+export interface TerminalFiscalProductionConfig {
+    documentType: string;
+    series: string;
+    prefix: string;
+    rangeFrom: string;
+    rangeTo: string;
+    nextConsecutive: string;
+    expiresAt: string;
+    companyId: string;
+    storeId: string;
+    terminalName: string;
 }
 
 export interface BillingPlan {
