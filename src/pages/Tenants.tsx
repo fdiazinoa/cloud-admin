@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle, Trash2, RefreshCcw } from 'lucide-react';
-import type { Distributor, Tenant, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban } from 'lucide-react';
+import type { Distributor, Tenant, TerminalAuthAttempt, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import {
@@ -42,6 +42,9 @@ export const Tenants: React.FC = () => {
     const [isRebuildModalOpen, setIsRebuildModalOpen] = useState(false);
     const [isRebuildSubmitting, setIsRebuildSubmitting] = useState(false);
     const [erpReadinessSubmittingKey, setErpReadinessSubmittingKey] = useState<string | null>(null);
+    const [authAttemptsByTerminal, setAuthAttemptsByTerminal] = useState<Record<string, TerminalAuthAttempt[]>>({});
+    const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
+    const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
@@ -288,12 +291,14 @@ export const Tenants: React.FC = () => {
     const openTerminalModal = async (tenant: Tenant) => {
         setSelectedTenantForTerminals(tenant);
         setTenantTerminals([]);
+        setAuthAttemptsByTerminal({});
         setIsTerminalModalOpen(true);
         setIsTerminalModalLoading(true);
 
         try {
             const data = await tenantService.getTenantTerminalOverview(tenant.id);
             setTenantTerminals(data);
+            void loadAuthAttemptsForTerminals(tenant.id, data);
         } catch (err) {
             console.error('Error fetching tenant terminals:', err);
             alert('No se pudieron cargar las terminales de este tenant.');
@@ -306,6 +311,7 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalOpen(false);
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
+        setAuthAttemptsByTerminal({});
         closeTakeoverModal();
         closeRebuildModal();
     };
@@ -356,13 +362,79 @@ export const Tenants: React.FC = () => {
     const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => terminal.terminal_id || terminal.id;
 
     const getTerminalCurrentDeviceId = (terminal: TenantTerminalSnapshot) => (
-        terminal.registry?.current_device_id
+        terminal.registry?.authorized_device_id
+        || terminal.registry?.current_device_id
         || terminal.registry?.device_id
         || terminal.device_token
         || ''
     );
 
     const getTerminalKey = (terminal: TenantTerminalSnapshot) => `${terminal.id}-${terminal.registry?.id || 'catalog'}`;
+
+    const getTerminalAuthorizedDeviceId = (terminal: TenantTerminalSnapshot) => (
+        terminal.registry?.authorized_device_id
+        || terminal.registry?.current_device_id
+        || terminal.registry?.device_id
+        || terminal.device_token
+        || ''
+    );
+
+    const getTerminalLastSeenDeviceId = (terminal: TenantTerminalSnapshot) => (
+        terminal.registry?.current_device_id
+        || terminal.registry?.device_id
+        || terminal.device_token
+        || ''
+    );
+
+    const getAttemptDeviceId = (attempt: TerminalAuthAttempt) => (
+        attempt.requested_device_id
+        || attempt.device_id
+        || attempt.deviceId
+        || ''
+    );
+
+    const getAttemptTime = (attempt: TerminalAuthAttempt) => attempt.attempted_at || attempt.created_at || null;
+
+    const isPendingDeviceUnauthorizedAttempt = (attempt: TerminalAuthAttempt) => {
+        const reason = (attempt.reason || '').toUpperCase();
+        const status = (attempt.resolution_status || attempt.status || '').toUpperCase();
+        return reason === 'DEVICE_NOT_AUTHORIZED' && status !== 'RESOLVED' && status !== 'COMPLETED';
+    };
+
+    const getTerminalLastRejectedDeviceId = (terminal: TenantTerminalSnapshot, attempts: TerminalAuthAttempt[] = []) => {
+        const fromRegistry = terminal.registry?.last_rejected_device_id || '';
+        if (fromRegistry) return fromRegistry;
+        const pendingAttempt = attempts.find(isPendingDeviceUnauthorizedAttempt);
+        return pendingAttempt ? getAttemptDeviceId(pendingAttempt) : '';
+    };
+
+    const getTerminalAuthStatus = (terminal: TenantTerminalSnapshot, attempts: TerminalAuthAttempt[] = []) => {
+        const registryStatus = (terminal.registry?.auth_status || '').toUpperCase();
+        if (registryStatus) return registryStatus;
+        if (getTerminalLastRejectedDeviceId(terminal, attempts)) return 'DEVICE_MISMATCH';
+        return 'AUTHORIZED';
+    };
+
+    const getAuthStatusLabel = (status: string) => {
+        switch (status) {
+            case 'AUTHORIZED': return 'Autorizado';
+            case 'DEVICE_MISMATCH': return 'Device rechazado';
+            case 'TAKEOVER_PENDING': return 'Takeover pendiente';
+            case 'TAKEOVER_COMPLETED': return 'Takeover completado';
+            case 'OLD_DEVICE_REVOKED': return 'Equipo revocado';
+            case 'TOKEN_ROTATION_REQUIRED': return 'Rotacion requerida';
+            case 'ERP_AUTH_ERROR': return 'Error auth ERP';
+            default: return status || 'N/D';
+        }
+    };
+
+    const getAuthStatusClasses = (status: string) => {
+        if (status === 'AUTHORIZED' || status === 'TAKEOVER_COMPLETED') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        if (status === 'DEVICE_MISMATCH' || status === 'ERP_AUTH_ERROR') return 'border-red-200 bg-red-50 text-red-700';
+        if (status === 'TAKEOVER_PENDING' || status === 'TOKEN_ROTATION_REQUIRED') return 'border-amber-200 bg-amber-50 text-amber-700';
+        if (status === 'OLD_DEVICE_REVOKED') return 'border-slate-200 bg-slate-100 text-slate-700';
+        return 'border-slate-200 bg-slate-50 text-slate-600';
+    };
 
     const getReadinessValue = (readiness: TenantTerminalErpReadiness | null | undefined, keys: string[]) => {
         if (!readiness) return null;
@@ -510,6 +582,155 @@ export const Tenants: React.FC = () => {
             alert(getErrorMessage(err));
         } finally {
             setErpReadinessSubmittingKey(null);
+        }
+    };
+
+    const loadTerminalAuthAttempts = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
+        const key = getTerminalKey(terminal);
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) return;
+
+        setAuthAttemptsLoadingKey(key);
+        try {
+            const attempts = await tenantService.getTerminalAuthAttempts(tenantId, terminalId);
+            setAuthAttemptsByTerminal((current) => ({
+                ...current,
+                [key]: attempts,
+            }));
+        } catch (err) {
+            console.warn('Error fetching terminal auth attempts:', err);
+            setAuthAttemptsByTerminal((current) => ({
+                ...current,
+                [key]: [],
+            }));
+        } finally {
+            setAuthAttemptsLoadingKey((current) => current === key ? null : current);
+        }
+    };
+
+    const loadAuthAttemptsForTerminals = async (tenantId: string, terminals: TenantTerminalSnapshot[]) => {
+        for (const terminal of terminals) {
+            void loadTerminalAuthAttempts(tenantId, terminal);
+        }
+    };
+
+    const refreshTerminalModalData = async () => {
+        if (!selectedTenantForTerminals) return;
+        const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+        setTenantTerminals(data);
+        void loadAuthAttemptsForTerminals(selectedTenantForTerminals.id, data);
+    };
+
+    const handleReauthorizeAttempt = async (terminal: TenantTerminalSnapshot, attempt: TerminalAuthAttempt) => {
+        if (!selectedTenantForTerminals) return;
+
+        const requestedDeviceId = getAttemptDeviceId(attempt);
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId || !requestedDeviceId) {
+            alert('El intento rechazado no tiene terminal o device_id suficiente para reautorizar.');
+            return;
+        }
+
+        const authorizedDeviceId = getTerminalAuthorizedDeviceId(terminal) || attempt.authorized_device_id || 'N/D';
+        const confirmed = confirm(
+            `Esta accion autorizara el equipo ${requestedDeviceId} para usar ${terminal.name} / ${terminalId}. `
+            + `El equipo anterior (${authorizedDeviceId}) dejara de poder sincronizar como esta terminal. `
+            + 'No se borraran ventas, productos ni datos operativos.',
+        );
+        if (!confirmed) return;
+
+        const pairingCode = attempt.pairing_required
+            ? prompt('Codigo de vinculacion')
+            : null;
+        if (attempt.pairing_required && !pairingCode?.trim()) {
+            alert('El codigo de vinculacion es requerido para reautorizar este equipo.');
+            return;
+        }
+
+        const key = `${getTerminalKey(terminal)}-TAKEOVER-${requestedDeviceId}`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                deviceId: requestedDeviceId,
+                action: 'TAKEOVER',
+                reason: 'DEVICE_REINSTALL_OR_REPLACEMENT',
+                pairingCode: pairingCode?.trim() || null,
+            });
+            alert(result.message || 'Terminal reautorizada correctamente. El POS debe reintentar autenticacion para recibir un nuevo syncToken.');
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error reauthorizing terminal device:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
+    const handleRotateTerminalCredentials = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        const deviceId = getTerminalAuthorizedDeviceId(terminal);
+        if (!terminalId || !deviceId) {
+            alert('Esta terminal necesita terminal_id y device_id autorizado para rotar credenciales.');
+            return;
+        }
+
+        const confirmed = confirm(`Se invalidara el token anterior de ${deviceId}. El POS debera reautenticarse para recibir un nuevo syncToken. ¿Deseas continuar?`);
+        if (!confirmed) return;
+
+        const key = `${getTerminalKey(terminal)}-ROTATE`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                deviceId,
+                action: 'ROTATE_TOKEN',
+                reason: 'TOKEN_ROTATION_REQUIRED',
+            });
+            alert(result.message || 'Credenciales rotadas correctamente. El POS debe reintentar autenticacion.');
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error rotating terminal credentials:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
+    const handleRevokePreviousDevice = async (terminal: TenantTerminalSnapshot, deviceId: string) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId || !deviceId) return;
+
+        const confirmed = confirm(`Se marcara ${deviceId} como equipo revocado para ${terminal.name}. No se borrara data operacional. ¿Deseas continuar?`);
+        if (!confirmed) return;
+
+        const key = `${getTerminalKey(terminal)}-REVOKE-${deviceId}`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                deviceId,
+                action: 'REVOKE_DEVICE',
+                reason: 'MANUAL_REVOKE_DEVICE',
+            });
+            alert(result.message || 'Equipo anterior marcado como revocado.');
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error revoking terminal device:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
         }
     };
 
@@ -817,6 +1038,7 @@ export const Tenants: React.FC = () => {
     };
 
     const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
+        if (terminal.registry?.is_revoked || terminal.registry?.auth_status === 'OLD_DEVICE_REVOKED') return 'REVOCADA';
         const registryStatus = (terminal.registry?.status || '').toUpperCase();
         if (registryStatus === 'ONLINE') return 'ONLINE';
         if (registryStatus === 'OFFLINE') return 'OFFLINE';
@@ -1286,6 +1508,20 @@ export const Tenants: React.FC = () => {
                                         const lastSyncAt = getReadinessValue(erpReadiness, ['lastSyncEventAt', 'last_sync_event_at', 'lastSyncAt', 'last_sync_at']);
                                         const lastSyncType = getReadinessValue(erpReadiness, ['lastSyncEventType', 'last_sync_event_type', 'lastSyncStatus', 'last_sync_status']);
                                         const isReadinessSubmitting = erpReadinessSubmittingKey === getTerminalKey(terminal);
+                                        const terminalKey = getTerminalKey(terminal);
+                                        const authAttempts = authAttemptsByTerminal[terminalKey] || [];
+                                        const authStatus = getTerminalAuthStatus(terminal, authAttempts);
+                                        const authStatusClasses = getAuthStatusClasses(authStatus);
+                                        const authorizedDeviceId = getTerminalAuthorizedDeviceId(terminal);
+                                        const lastSeenDeviceId = getTerminalLastSeenDeviceId(terminal);
+                                        const lastRejectedDeviceId = getTerminalLastRejectedDeviceId(terminal, authAttempts);
+                                        const lastAuthAttempt = authAttempts[0] || null;
+                                        const lastAuthAttemptAt = terminal.registry?.last_auth_attempt_at || (lastAuthAttempt ? getAttemptTime(lastAuthAttempt) : null);
+                                        const lastAuthError = terminal.registry?.last_auth_error || lastAuthAttempt?.reason || lastAuthAttempt?.message || '';
+                                        const isAuthAttemptsLoading = authAttemptsLoadingKey === terminalKey;
+                                        const rotateSubmittingKey = `${terminalKey}-ROTATE`;
+                                        const revokeDeviceId = terminal.registry?.previous_device_id || lastRejectedDeviceId;
+                                        const revokeSubmittingKey = revokeDeviceId ? `${terminalKey}-REVOKE-${revokeDeviceId}` : '';
 
                                         return (
                                             <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
@@ -1318,6 +1554,9 @@ export const Tenants: React.FC = () => {
                                                         </span>
                                                         <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
                                                             {getReadinessLabel(erpReadinessStatus)}
+                                                        </span>
+                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${authStatusClasses}`}>
+                                                            {getAuthStatusLabel(authStatus)}
                                                         </span>
                                                     </div>
                                                 </div>
@@ -1391,6 +1630,147 @@ export const Tenants: React.FC = () => {
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Creada</p>
                                                         <p className="mt-1 text-slate-700">{formatDateTime(terminal.created_at)}</p>
                                                     </div>
+                                                </div>
+
+                                                <div className={`mt-5 rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
+                                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                                        <div>
+                                                            <p className="text-xs font-bold uppercase tracking-wider">Autorizacion de dispositivo</p>
+                                                            <p className="mt-1 text-sm font-bold">{getAuthStatusLabel(authStatus)}</p>
+                                                            {authStatus === 'DEVICE_MISMATCH' ? (
+                                                                <p className="mt-1 text-sm">
+                                                                    Este POS intenta usar una terminal autorizada para otro equipo. Puedes reautorizarlo si realmente reemplazaste el dispositivo.
+                                                                </p>
+                                                            ) : null}
+                                                        </div>
+                                                        <div className="flex flex-col gap-2 sm:flex-row">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal)}
+                                                                disabled={isAuthAttemptsLoading}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                            >
+                                                                {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                Actualizar intentos
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleRotateTerminalCredentials(terminal)}
+                                                                disabled={!authorizedDeviceId || deviceActionSubmittingKey === rotateSubmittingKey}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 shadow-sm hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                                            >
+                                                                {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
+                                                                Rotar credenciales
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device autorizado</p>
+                                                            <p className="mt-1 font-mono break-all">{authorizedDeviceId || 'N/D'}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo device visto</p>
+                                                            <p className="mt-1 font-mono break-all">{lastSeenDeviceId || 'N/D'}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo rechazado</p>
+                                                            <p className="mt-1 font-mono break-all">{lastRejectedDeviceId || 'N/D'}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo error auth</p>
+                                                            <p className="mt-1 font-bold break-words">{lastAuthError || 'N/D'}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo intento</p>
+                                                            <p className="mt-1">{formatDateTime(lastAuthAttemptAt)}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Token</p>
+                                                            <p className="mt-1 font-bold">
+                                                                {terminal.registry?.device_token_status || 'N/D'}
+                                                                {terminal.registry?.token_preview ? <span className="font-mono"> · {terminal.registry.token_preview}</span> : null}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="mt-4 rounded-xl border border-white/60 bg-white/70 overflow-hidden">
+                                                        <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/60">
+                                                            <p className="text-xs font-bold uppercase tracking-wider">Intentos de conexion rechazados</p>
+                                                            {isAuthAttemptsLoading ? <Loader2 size={15} className="animate-spin" /> : null}
+                                                        </div>
+                                                        {authAttempts.length === 0 ? (
+                                                            <div className="px-3 py-4 text-sm opacity-75">
+                                                                No hay intentos rechazados reportados por ERP para esta terminal.
+                                                            </div>
+                                                        ) : (
+                                                            <div className="overflow-x-auto">
+                                                                <table className="w-full text-left text-xs">
+                                                                    <thead className="bg-white/80 uppercase tracking-wider opacity-70">
+                                                                        <tr>
+                                                                            <th className="px-3 py-2">Device solicitado</th>
+                                                                            <th className="px-3 py-2">Autorizado</th>
+                                                                            <th className="px-3 py-2">Motivo</th>
+                                                                            <th className="px-3 py-2">Fecha</th>
+                                                                            <th className="px-3 py-2">Estado</th>
+                                                                            <th className="px-3 py-2 text-right">Accion</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody className="divide-y divide-white/70">
+                                                                        {authAttempts.map((attempt, attemptIndex) => {
+                                                                            const requestedDeviceId = getAttemptDeviceId(attempt);
+                                                                            const attemptStatus = attempt.resolution_status || attempt.status || 'PENDING';
+                                                                            const canReauthorize = isPendingDeviceUnauthorizedAttempt(attempt);
+                                                                            const reauthorizeKey = `${terminalKey}-TAKEOVER-${requestedDeviceId}`;
+                                                                            return (
+                                                                                <tr key={attempt.id || `${requestedDeviceId}-${attemptIndex}`}>
+                                                                                    <td className="px-3 py-2 font-mono font-bold">{requestedDeviceId || 'N/D'}</td>
+                                                                                    <td className="px-3 py-2 font-mono">{attempt.authorized_device_id || authorizedDeviceId || 'N/D'}</td>
+                                                                                    <td className="px-3 py-2">{attempt.reason || attempt.message || 'N/D'}</td>
+                                                                                    <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(getAttemptTime(attempt))}</td>
+                                                                                    <td className="px-3 py-2 font-bold uppercase">{attemptStatus}</td>
+                                                                                    <td className="px-3 py-2 text-right">
+                                                                                        {canReauthorize ? (
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={() => void handleReauthorizeAttempt(terminal, attempt)}
+                                                                                                disabled={deviceActionSubmittingKey === reauthorizeKey}
+                                                                                                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-60"
+                                                                                            >
+                                                                                                {deviceActionSubmittingKey === reauthorizeKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
+                                                                                                Reautorizar
+                                                                                            </button>
+                                                                                        ) : (
+                                                                                            <span className="text-slate-400">Sin accion</span>
+                                                                                        )}
+                                                                                    </td>
+                                                                                </tr>
+                                                                            );
+                                                                        })}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {revokeDeviceId && revokeDeviceId !== authorizedDeviceId ? (
+                                                        <div className="mt-4 flex flex-col gap-3 rounded-xl border border-white/60 bg-white/70 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                                                            <div className="text-sm">
+                                                                <p className="font-bold">Device anterior detectado</p>
+                                                                <p className="font-mono text-xs break-all">{revokeDeviceId}</p>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleRevokePreviousDevice(terminal, revokeDeviceId)}
+                                                                disabled={deviceActionSubmittingKey === revokeSubmittingKey}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-60"
+                                                            >
+                                                                {deviceActionSubmittingKey === revokeSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
+                                                                Revocar equipo anterior
+                                                            </button>
+                                                        </div>
+                                                    ) : null}
                                                 </div>
 
                                                 <div className={`mt-5 rounded-2xl border px-4 py-4 ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
