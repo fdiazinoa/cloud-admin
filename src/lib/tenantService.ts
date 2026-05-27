@@ -9,6 +9,7 @@ import type {
     PosRuntime,
     TenantLifecycleStatus,
     TenantProvisioningStatus,
+    TerminalAuthAttempt,
     TenantTerminalRegistryEntry,
     TenantTerminalSnapshot,
     TenantType,
@@ -147,6 +148,33 @@ export interface TerminalErpReadinessResult {
     profileStatus?: string | null;
     checks?: Record<string, unknown>;
     erp_readiness?: Record<string, unknown>;
+    message?: string;
+}
+
+export type TerminalDeviceAction = "TAKEOVER" | "ROTATE_TOKEN" | "REVOKE_DEVICE";
+
+export interface RequestTerminalDeviceActionInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    terminalName?: string | null;
+    deviceId: string;
+    action: TerminalDeviceAction;
+    reason: string;
+    pairingCode?: string | null;
+}
+
+export interface TerminalDeviceActionResult {
+    status: string;
+    success?: boolean;
+    action?: string;
+    old_device_id?: string | null;
+    new_device_id?: string | null;
+    authorized_device_id?: string | null;
+    revoked_device_id?: string | null;
+    deviceTokenIssued?: boolean;
+    deviceTokenStatus?: string | null;
+    tokenPreview?: string | null;
     message?: string;
 }
 
@@ -756,6 +784,70 @@ export async function requestTerminalErpReadiness(input: RequestTerminalErpReadi
     return (payload || { status: "pending" }) as TerminalErpReadinessResult;
 }
 
+export async function getTerminalAuthAttempts(
+    tenantId: string,
+    terminalId: string,
+): Promise<TerminalAuthAttempt[]> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-auth-attempts`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: tenantId,
+            terminal_id: terminalId,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as {
+        attempts?: TerminalAuthAttempt[];
+        message?: string;
+        error?: string;
+    } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudieron cargar los intentos rechazados.");
+    }
+
+    return Array.isArray(payload?.attempts) ? payload.attempts : [];
+}
+
+export async function requestTerminalDeviceAction(
+    input: RequestTerminalDeviceActionInput,
+): Promise<TerminalDeviceActionResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-device-authorization`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            terminal_name: input.terminalName || null,
+            device_id: input.deviceId,
+            action: input.action,
+            reason: input.reason,
+            pairing_code: input.pairingCode || null,
+            confirm_action: true,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo ejecutar la accion de autorizacion.");
+    }
+
+    return (payload || { status: "success" }) as TerminalDeviceActionResult;
+}
+
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
         supabaseAdmin.from("tenants").select("id,name,status,created_at"),
@@ -970,6 +1062,8 @@ export const tenantService = {
     requestTerminalTakeover,
     requestTerminalLocalRebuild,
     requestTerminalErpReadiness,
+    getTerminalAuthAttempts,
+    requestTerminalDeviceAction,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,

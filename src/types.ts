@@ -101,6 +101,14 @@ export interface TenantTerminalRegistryEntry {
     last_rebuild_at?: string | null;
     previous_device_id?: string | null;
     current_device_id?: string | null;
+    authorized_device_id?: string | null;
+    last_rejected_device_id?: string | null;
+    auth_status?: TerminalAuthorizationStatus | string | null;
+    last_auth_error?: string | null;
+    last_auth_attempt_at?: string | null;
+    device_token_status?: string | null;
+    token_preview?: string | null;
+    is_revoked?: boolean | null;
     revocation_reason?: string | null;
     requires_pos_reauth?: boolean | null;
     requires_full_bootstrap?: boolean | null;
@@ -149,6 +157,38 @@ export interface TenantTerminalSnapshot {
     last_checkin_at?: string | null;
     created_at?: string | null;
     registry?: TenantTerminalRegistryEntry | null;
+}
+
+export type TerminalAuthorizationStatus =
+    | 'AUTHORIZED'
+    | 'DEVICE_MISMATCH'
+    | 'TAKEOVER_PENDING'
+    | 'TAKEOVER_COMPLETED'
+    | 'OLD_DEVICE_REVOKED'
+    | 'TOKEN_ROTATION_REQUIRED'
+    | 'ERP_AUTH_ERROR';
+
+export interface TerminalAuthAttempt {
+    id?: string | null;
+    tenant_id?: string | null;
+    terminal_id?: string | null;
+    terminal_name?: string | null;
+    requested_device_id?: string | null;
+    authorized_device_id?: string | null;
+    device_id?: string | null;
+    deviceId?: string | null;
+    reason?: string | null;
+    message?: string | null;
+    status?: string | null;
+    resolution_status?: string | null;
+    endpoint_url?: string | null;
+    ip_address?: string | null;
+    apk_version?: string | null;
+    app_version?: string | null;
+    attempted_at?: string | null;
+    created_at?: string | null;
+    pairing_required?: boolean | null;
+    metadata?: Record<string, unknown> | null;
 }
 
 export interface BillingPlan {
