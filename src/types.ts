@@ -171,6 +171,8 @@ export interface TenantTerminalSnapshot {
     is_active: boolean;
     last_checkin_at?: string | null;
     created_at?: string | null;
+    erp_terminal_uuid?: string | null;
+    erp_current_device_id?: string | null;
     registry?: TenantTerminalRegistryEntry | null;
     registries: TenantTerminalRegistryEntry[];
 }

@@ -128,7 +128,25 @@ function normalizeKey(value: unknown): string {
     return asText(value).toUpperCase();
 }
 
-async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, string>> {
+interface ErpTerminalBinding {
+    deviceId: string;
+    erpTerminalId: string;
+}
+
+function resolveErpTerminalBinding(
+    bindings: Map<string, ErpTerminalBinding>,
+    ...candidates: Array<string | null | undefined>
+): ErpTerminalBinding | null {
+    for (const candidate of candidates) {
+        const key = normalizeKey(candidate);
+        if (!key) continue;
+        const hit = bindings.get(key);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, ErpTerminalBinding>> {
     try {
         const { data: erpTenant, error: erpTenantError } = await supabaseAdmin
             .schema("public")
@@ -173,11 +191,13 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, st
             return new Map();
         }
 
-        const bindings = new Map<string, string>();
+        const bindings = new Map<string, ErpTerminalBinding>();
         for (const terminal of ((terminals as Array<Record<string, unknown>> | null) || [])) {
             const deviceId = asText(terminal.device_id);
-            if (!deviceId) continue;
+            const erpTerminalId = asText(terminal.id);
+            if (!deviceId || !erpTerminalId) continue;
 
+            const binding: ErpTerminalBinding = { deviceId, erpTerminalId };
             const config = asRecord(terminal.config);
             const metadata = asRecord(config.metadata);
             [
@@ -186,7 +206,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, st
                 metadata.erp_terminal_id,
             ].forEach((candidate) => {
                 const key = normalizeKey(candidate);
-                if (key) bindings.set(key, deviceId);
+                if (key) bindings.set(key, binding);
             });
         }
 
@@ -199,20 +219,18 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, st
 
 function applyRegistryBindingStatus(
     registries: TenantTerminalRegistryEntry[],
-    bindings: Map<string, string>,
+    bindings: Map<string, ErpTerminalBinding>,
 ): TenantTerminalRegistryEntry[] {
     if (bindings.size === 0) return registries;
 
     return registries.map((registry) => {
-        const lookupKeys = [
+        const binding = resolveErpTerminalBinding(
+            bindings,
             registry.terminal_id,
             registry.terminal_name,
             registry.device_id,
-        ].map(normalizeKey).filter(Boolean);
-
-        const authorizedDeviceId = lookupKeys
-            .map((key) => bindings.get(key))
-            .find((value): value is string => Boolean(value));
+        );
+        const authorizedDeviceId = binding?.deviceId || null;
 
         const isRevoked = Boolean(
             authorizedDeviceId
@@ -806,7 +824,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
     }
 
-    registryRows = applyRegistryBindingStatus(registryRows, await loadErpTerminalBindings(tenantId));
+    const erpBindings = await loadErpTerminalBindings(tenantId);
+    registryRows = applyRegistryBindingStatus(registryRows, erpBindings);
 
     if (terminalsRes.error && registryRes.error) {
         throw terminalsRes.error;
@@ -878,6 +897,12 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         consolidatedRegistries.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
 
         const registry = consolidatedRegistries.length > 0 ? consolidatedRegistries[0] : null;
+        const erpBinding = resolveErpTerminalBinding(
+            erpBindings,
+            primaryTerminal.id,
+            registry?.terminal_id,
+            terminalName,
+        );
 
         snapshots.push({
             id: primaryTerminal.id,
@@ -888,6 +913,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             is_active: primaryTerminal.config?.is_active ?? primaryTerminal.is_active ?? primaryTerminal.active ?? true,
             last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.updated_at || null,
             created_at: primaryTerminal.created_at || null,
+            erp_terminal_uuid: erpBinding?.erpTerminalId || null,
+            erp_current_device_id: erpBinding?.deviceId || null,
             registry,
             registries: consolidatedRegistries,
         });
@@ -919,15 +946,24 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     for (const arr of orphanedRegistriesGrouped.values()) {
         arr.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
         const primary = arr[0];
+        const orphanName = (primary.terminal_name || primary.terminal_id || primary.device_id || "Terminal sin catálogo").trim();
+        const orphanBinding = resolveErpTerminalBinding(
+            erpBindings,
+            primary.terminal_id,
+            primary.id,
+            orphanName,
+        );
         snapshots.push({
             id: primary.id || primary.device_id || `orphan-${Date.now()}`,
             tenant_id: primary.tenant_id,
             terminal_id: primary.terminal_id || null,
-            name: (primary.terminal_name || primary.terminal_id || primary.device_id || "Terminal sin catálogo").trim(),
+            name: orphanName,
             device_token: primary.device_id || null,
             is_active: (primary.status || "").toUpperCase() === "ONLINE",
             last_checkin_at: primary.last_seen_at || null,
             created_at: primary.created_at || null,
+            erp_terminal_uuid: orphanBinding?.erpTerminalId || null,
+            erp_current_device_id: orphanBinding?.deviceId || null,
             registry: primary,
             registries: arr,
         });
@@ -1084,6 +1120,33 @@ export async function requestTerminalDeviceAction(
     }
 
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
+}
+
+export async function getTerminalFiscalDebug(
+    input: RequestTerminalFiscalReadinessInput,
+): Promise<TerminalFiscalReadiness> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-fiscal-debug`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as TerminalFiscalReadinessResult & { error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo verificar el mapping fiscal de la terminal.");
+    }
+
+    return payload?.readiness || payload?.fiscal_readiness || { status: "MISSING" };
 }
 
 export async function getTerminalFiscalReadiness(
@@ -1465,6 +1528,7 @@ export const tenantService = {
     requestTerminalErpReadiness,
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
+    getTerminalFiscalDebug,
     getTerminalFiscalReadiness,
     requestTerminalFiscalConfig,
     getDashboardStats,
