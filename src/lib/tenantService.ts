@@ -103,15 +103,53 @@ type TenantUpdatePayload = {
     password?: string;
 };
 
+const OPTIONAL_TENANT_UPDATE_COLUMNS: Array<keyof TenantUpdatePayload> = [
+    "legal_name",
+    "phone",
+    "max_pos_terminals",
+    "max_erp_users",
+    "contracted_product",
+    "pos_variant",
+    "offline_mode",
+    "explicit_offline",
+    "cloud_disabled_reason",
+    "pos_runtime",
+    "cloud_channel",
+    "data_master",
+    "cloud_sync_enabled",
+    "erp_core_enabled",
+    "erp_ui_enabled",
+    "customer_erp_access",
+    "backup_enabled",
+    "lifecycle_status",
+    "provisioning_status",
+    "email",
+    "password",
+];
+
 function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | null {
     if (!error || typeof error !== "object") return null;
 
     const message = "message" in error && typeof error.message === "string" ? error.message : "";
     const details = "details" in error && typeof error.details === "string" ? error.details : "";
-    const haystack = `${message} ${details}`.toLowerCase();
+    const haystack = `${message} ${details}`;
 
-    if (haystack.includes("legal_name")) return "legal_name";
-    if (haystack.includes("phone")) return "phone";
+    const quotedMatch = haystack.match(/'([a-z][a-z0-9_]*)'\s+column/i)
+        || haystack.match(/column\s+"([a-z][a-z0-9_]*)"/i)
+        || haystack.match(/column\s+'([a-z][a-z0-9_]*)'/i);
+    if (quotedMatch?.[1]) {
+        const column = quotedMatch[1] as keyof TenantUpdatePayload;
+        if (OPTIONAL_TENANT_UPDATE_COLUMNS.includes(column)) {
+            return column;
+        }
+    }
+
+    const lowerHaystack = haystack.toLowerCase();
+    for (const column of OPTIONAL_TENANT_UPDATE_COLUMNS) {
+        if (lowerHaystack.includes(column)) {
+            return column;
+        }
+    }
 
     return null;
 }
@@ -710,7 +748,8 @@ export async function updateTenant(
 ): Promise<void> {
     const nextPayload: Partial<TenantUpdatePayload> = { ...payload };
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    const maxAttempts = Math.max(3, OPTIONAL_TENANT_UPDATE_COLUMNS.length + 1);
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         const { error } = await supabaseAdmin
             .from("tenants")
             .update(nextPayload)
