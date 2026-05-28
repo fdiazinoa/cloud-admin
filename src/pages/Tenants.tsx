@@ -17,6 +17,18 @@ import {
     type TenantSemanticConfig,
     type TenantProductSelection
 } from '../lib/tenantProducts';
+import {
+    buildTerminalIdentitySummary,
+    getAttemptDeviceId,
+    getDeviceRoleClasses,
+    getDeviceRoleLabel,
+    getRegistryEndpointRole,
+    getTerminalAuthStatus,
+    getTerminalAuthorizedDeviceId,
+    getTerminalPosReportedDeviceId,
+    isPendingDeviceUnauthorizedAttempt,
+    summarizeTerminalFiscalDebug,
+} from '../lib/terminalIdentity';
 
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
@@ -50,9 +62,6 @@ export const Tenants: React.FC = () => {
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
     const [fiscalReadinessByTerminal, setFiscalReadinessByTerminal] = useState<Record<string, TerminalFiscalReadiness>>({});
     const [fiscalReadinessLoadingKey, setFiscalReadinessLoadingKey] = useState<string | null>(null);
-    const [fiscalConfigSubmittingKey, setFiscalConfigSubmittingKey] = useState<string | null>(null);
-    const [fiscalConfigTerminal, setFiscalConfigTerminal] = useState<TenantTerminalSnapshot | null>(null);
-    const [isFiscalConfigModalOpen, setIsFiscalConfigModalOpen] = useState(false);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [updatingStatusTenantId, setUpdatingStatusTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
@@ -91,18 +100,6 @@ export const Tenants: React.FC = () => {
     const [rebuildFormData, setRebuildFormData] = useState({
         reason: '',
         confirmRebuild: false,
-    });
-    const [fiscalFormData, setFiscalFormData] = useState({
-        documentType: '',
-        series: '',
-        prefix: '',
-        rangeFrom: '',
-        rangeTo: '',
-        nextConsecutive: '',
-        expiresAt: '',
-        companyId: '',
-        storeId: '',
-        terminalName: '',
     });
 
     const getErrorMessage = (error: unknown) => {
@@ -387,7 +384,6 @@ export const Tenants: React.FC = () => {
         setLatestPosApkRelease(null);
         closeTakeoverModal();
         closeRebuildModal();
-        closeFiscalConfigModal();
     };
 
     const getTenantSemantics = (tenant: Tenant): TenantSemanticConfig => {
@@ -476,59 +472,9 @@ export const Tenants: React.FC = () => {
         });
     });
 
-    const getTerminalCurrentDeviceId = (terminal: TenantTerminalSnapshot) => (
-        terminal.registry?.authorized_device_id
-        || terminal.registry?.current_device_id
-        || terminal.registry?.device_id
-        || terminal.device_token
-        || ''
-    );
-
     const getTerminalKey = (terminal: TenantTerminalSnapshot) => `${terminal.id}-${terminal.registry?.id || 'catalog'}`;
 
-    const getTerminalAuthorizedDeviceId = (terminal: TenantTerminalSnapshot) => (
-        terminal.registry?.authorized_device_id
-        || terminal.registry?.current_device_id
-        || terminal.registry?.device_id
-        || terminal.device_token
-        || ''
-    );
-
-    const getTerminalLastSeenDeviceId = (terminal: TenantTerminalSnapshot) => (
-        terminal.registry?.current_device_id
-        || terminal.registry?.device_id
-        || terminal.device_token
-        || ''
-    );
-
-    const getAttemptDeviceId = (attempt: TerminalAuthAttempt) => (
-        attempt.requested_device_id
-        || attempt.device_id
-        || attempt.deviceId
-        || ''
-    );
-
     const getAttemptTime = (attempt: TerminalAuthAttempt) => attempt.attempted_at || attempt.created_at || null;
-
-    const isPendingDeviceUnauthorizedAttempt = (attempt: TerminalAuthAttempt) => {
-        const reason = (attempt.reason || '').toUpperCase();
-        const status = (attempt.resolution_status || attempt.status || '').toUpperCase();
-        return reason === 'DEVICE_NOT_AUTHORIZED' && status !== 'RESOLVED' && status !== 'COMPLETED';
-    };
-
-    const getTerminalLastRejectedDeviceId = (terminal: TenantTerminalSnapshot, attempts: TerminalAuthAttempt[] = []) => {
-        const fromRegistry = terminal.registry?.last_rejected_device_id || '';
-        if (fromRegistry) return fromRegistry;
-        const pendingAttempt = attempts.find(isPendingDeviceUnauthorizedAttempt);
-        return pendingAttempt ? getAttemptDeviceId(pendingAttempt) : '';
-    };
-
-    const getTerminalAuthStatus = (terminal: TenantTerminalSnapshot, attempts: TerminalAuthAttempt[] = []) => {
-        const registryStatus = (terminal.registry?.auth_status || '').toUpperCase();
-        if (registryStatus) return registryStatus;
-        if (getTerminalLastRejectedDeviceId(terminal, attempts)) return 'DEVICE_MISMATCH';
-        return 'AUTHORIZED';
-    };
 
     const getAuthStatusLabel = (status: string) => {
         switch (status) {
@@ -557,77 +503,11 @@ export const Tenants: React.FC = () => {
         || null
     );
 
-    const getFiscalStatus = (readiness: TerminalFiscalReadiness | null | undefined) => {
-        const value = readiness?.status || readiness?.fiscalReadiness || readiness?.fiscal_readiness || 'MISSING';
-        return value.toString().toUpperCase();
-    };
-
-    const getFiscalStatusLabel = (status: string) => {
-        if (status === 'READY') return 'READY';
-        if (status === 'DEMO_READY') return 'DEMO READY';
-        if (status === 'ERROR') return 'ERROR';
-        return 'MISSING';
-    };
-
     const getFiscalStatusClasses = (status: string) => {
         if (status === 'READY') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
         if (status === 'DEMO_READY') return 'border-blue-200 bg-blue-50 text-blue-700';
         if (status === 'ERROR') return 'border-red-200 bg-red-50 text-red-700';
         return 'border-amber-200 bg-amber-50 text-amber-800';
-    };
-
-    const getFiscalBoolean = (readiness: TerminalFiscalReadiness | null | undefined, keys: string[]) => {
-        if (!readiness) return null;
-        for (const key of keys) {
-            const value = readiness[key];
-            if (typeof value === 'boolean') return value;
-            if (typeof value === 'string') {
-                const normalized = value.trim().toLowerCase();
-                if (['true', 'yes', 'si', 'ready', 'active'].includes(normalized)) return true;
-                if (['false', 'no', 'missing', 'inactive'].includes(normalized)) return false;
-            }
-        }
-        return null;
-    };
-
-    const getFiscalValue = (readiness: TerminalFiscalReadiness | null | undefined, keys: string[]) => {
-        if (!readiness) return null;
-        for (const key of keys) {
-            const value = readiness[key];
-            if (typeof value === 'string' && value.trim()) return value.trim();
-            if (typeof value === 'number') return String(value);
-        }
-        return null;
-    };
-
-    const formatFiscalItem = (item: string | Record<string, unknown>) => {
-        if (typeof item === 'string') return item;
-        const candidates = [
-            item.name,
-            item.label,
-            item.code,
-            item.documentType,
-            item.document_type,
-            item.series,
-            item.serie,
-            item.prefix,
-        ];
-        const label = candidates.find((value) => typeof value === 'string' && value.trim());
-        if (typeof label === 'string') return label;
-        return JSON.stringify(item);
-    };
-
-    const getFiscalList = (readiness: TerminalFiscalReadiness | null | undefined, keys: string[]) => {
-        if (!readiness) return [];
-        for (const key of keys) {
-            const value = readiness[key];
-            if (Array.isArray(value)) {
-                return value
-                    .map((item) => typeof item === 'string' || (item && typeof item === 'object') ? formatFiscalItem(item as string | Record<string, unknown>) : '')
-                    .filter(Boolean);
-            }
-        }
-        return [];
     };
 
     const getReadinessValue = (readiness: TenantTerminalErpReadiness | null | undefined, keys: string[]) => {
@@ -735,40 +615,12 @@ export const Tenants: React.FC = () => {
         });
     };
 
-    const openFiscalConfigModal = (terminal: TenantTerminalSnapshot) => {
-        const fiscalReadiness = getFiscalReadiness(terminal);
-        setFiscalConfigTerminal(terminal);
-        setFiscalFormData({
-            documentType: getFiscalList(fiscalReadiness, ['documentTypes', 'document_types'])[0] || '',
-            series: getFiscalList(fiscalReadiness, ['series', 'assignedSeries', 'assigned_series'])[0] || '',
-            prefix: getFiscalValue(fiscalReadiness, ['prefix']) || '',
-            rangeFrom: getFiscalValue(fiscalReadiness, ['rangeFrom', 'range_from']) || '',
-            rangeTo: getFiscalValue(fiscalReadiness, ['rangeTo', 'range_to']) || '',
-            nextConsecutive: getFiscalValue(fiscalReadiness, ['nextConsecutive', 'next_consecutive']) || '',
-            expiresAt: getFiscalValue(fiscalReadiness, ['expiresAt', 'expires_at']) || '',
-            companyId: getFiscalValue(fiscalReadiness, ['companyId', 'company_id']) || '',
-            storeId: getFiscalValue(fiscalReadiness, ['storeId', 'store_id']) || '',
-            terminalName: terminal.name || '',
-        });
-        setIsFiscalConfigModalOpen(true);
-    };
-
-    const closeFiscalConfigModal = () => {
-        setIsFiscalConfigModalOpen(false);
-        setFiscalConfigTerminal(null);
-        setFiscalFormData({
-            documentType: '',
-            series: '',
-            prefix: '',
-            rangeFrom: '',
-            rangeTo: '',
-            nextConsecutive: '',
-            expiresAt: '',
-            companyId: '',
-            storeId: '',
-            terminalName: '',
-        });
-    };
+    const getTerminalOperationalDeviceId = (terminal: TenantTerminalSnapshot) => (
+        getTerminalPosReportedDeviceId(terminal)
+        || getTerminalAuthorizedDeviceId(terminal)
+        || terminal.device_token
+        || ''
+    );
 
     const requestErpReadinessForTerminal = async (
         terminal: TenantTerminalSnapshot,
@@ -777,7 +629,7 @@ export const Tenants: React.FC = () => {
         if (!selectedTenantForTerminals) return null;
 
         const terminalId = getTerminalTakeoverId(terminal);
-        const deviceId = options?.deviceId || getTerminalCurrentDeviceId(terminal);
+        const deviceId = options?.deviceId || getTerminalOperationalDeviceId(terminal);
 
         if (!terminalId || !deviceId) {
             if (!options?.silent) {
@@ -862,7 +714,7 @@ export const Tenants: React.FC = () => {
 
         setFiscalReadinessLoadingKey(key);
         try {
-            const readiness = await tenantService.getTerminalFiscalReadiness({
+            const readiness = await tenantService.getTerminalFiscalDebug({
                 tenantId,
                 terminalId,
                 registryId: terminal.registry?.id || null,
@@ -889,101 +741,6 @@ export const Tenants: React.FC = () => {
     const loadFiscalReadinessForTerminals = async (tenantId: string, terminals: TenantTerminalSnapshot[]) => {
         for (const terminal of terminals) {
             void loadTerminalFiscalReadiness(tenantId, terminal);
-        }
-    };
-
-    const handleCreateFiscalDemoConfig = async (terminal: TenantTerminalSnapshot) => {
-        if (!selectedTenantForTerminals) return;
-        const terminalId = getTerminalTakeoverId(terminal);
-        if (!terminalId) {
-            alert('Esta terminal necesita terminal_id para crear configuracion fiscal demo.');
-            return;
-        }
-
-        const confirmed = confirm('Se creara una configuracion fiscal de prueba para QA. No uses rangos demo para produccion. ¿Deseas continuar?');
-        if (!confirmed) return;
-
-        const key = `${getTerminalKey(terminal)}-QA_DEMO`;
-        setFiscalConfigSubmittingKey(key);
-        try {
-            const result = await tenantService.requestTerminalFiscalConfig({
-                tenantId: selectedTenantForTerminals.id,
-                terminalId,
-                registryId: terminal.registry?.id || null,
-                terminalName: terminal.name,
-                mode: 'QA_DEMO',
-            });
-            if (result.readiness || result.fiscal_readiness) {
-                setFiscalReadinessByTerminal((current) => ({
-                    ...current,
-                    [getTerminalKey(terminal)]: result.readiness || result.fiscal_readiness || { status: 'DEMO_READY' },
-                }));
-            }
-            alert(result.message || 'Configuracion fiscal demo creada.');
-            await refreshTerminalModalData();
-        } catch (err: unknown) {
-            console.error('Error creating fiscal demo config:', err);
-            alert(getErrorMessage(err));
-        } finally {
-            setFiscalConfigSubmittingKey(null);
-        }
-    };
-
-    const handleProductionFiscalConfig = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!selectedTenantForTerminals || !fiscalConfigTerminal) return;
-
-        const terminalId = getTerminalTakeoverId(fiscalConfigTerminal);
-        if (!terminalId) {
-            alert('Esta terminal necesita terminal_id para configurar fiscalmente.');
-            return;
-        }
-
-        const requiredValues = [
-            fiscalFormData.documentType,
-            fiscalFormData.series,
-            fiscalFormData.prefix,
-            fiscalFormData.rangeFrom,
-            fiscalFormData.rangeTo,
-            fiscalFormData.nextConsecutive,
-            fiscalFormData.expiresAt,
-            fiscalFormData.companyId,
-            fiscalFormData.storeId,
-            fiscalFormData.terminalName,
-        ];
-        if (requiredValues.some((value) => !value.trim())) {
-            alert('Completa todos los campos productivos antes de guardar.');
-            return;
-        }
-
-        const confirmed = confirm('Los comprobantes fiscales productivos deben coincidir con rangos autorizados oficialmente. ¿Confirmas que estos rangos son correctos?');
-        if (!confirmed) return;
-
-        const key = `${getTerminalKey(fiscalConfigTerminal)}-PRODUCTION`;
-        setFiscalConfigSubmittingKey(key);
-        try {
-            const result = await tenantService.requestTerminalFiscalConfig({
-                tenantId: selectedTenantForTerminals.id,
-                terminalId,
-                registryId: fiscalConfigTerminal.registry?.id || null,
-                terminalName: fiscalConfigTerminal.name,
-                mode: 'PRODUCTION',
-                config: fiscalFormData,
-            });
-            if (result.readiness || result.fiscal_readiness) {
-                setFiscalReadinessByTerminal((current) => ({
-                    ...current,
-                    [getTerminalKey(fiscalConfigTerminal)]: result.readiness || result.fiscal_readiness || { status: 'READY' },
-                }));
-            }
-            alert(result.message || 'Configuracion fiscal productiva guardada.');
-            closeFiscalConfigModal();
-            await refreshTerminalModalData();
-        } catch (err: unknown) {
-            console.error('Error saving production fiscal config:', err);
-            alert(getErrorMessage(err));
-        } finally {
-            setFiscalConfigSubmittingKey(null);
         }
     };
 
@@ -1185,7 +942,7 @@ export const Tenants: React.FC = () => {
 
         const terminalId = getTerminalTakeoverId(rebuildTerminal);
         const reason = rebuildFormData.reason.trim();
-        const currentDeviceId = getTerminalCurrentDeviceId(rebuildTerminal);
+        const currentDeviceId = getTerminalOperationalDeviceId(rebuildTerminal);
 
         if (!terminalId || !reason) {
             alert('Selecciona una terminal y registra el motivo de la reconstruccion.');
@@ -1564,11 +1321,6 @@ export const Tenants: React.FC = () => {
         return getLanIps(terminal)[0] || primaryIp || endpointHost || 'N/D';
     };
 
-    const getRoleLabel = (terminal: TenantTerminalSnapshot) => {
-        if (terminal.registry?.is_primary) return 'Server Master';
-        if (terminal.registry) return 'Cliente con endpoint';
-        return 'Cliente / catálogo';
-    };
     const onlineTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'ONLINE').length;
     const offlineTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'OFFLINE').length;
     const revokedTerminalCount = registryTerminals.filter((terminal) => getRegistryStatusLabel(terminal) === 'REVOCADA').length;
@@ -2028,9 +1780,9 @@ export const Tenants: React.FC = () => {
                                         const authAttempts = authAttemptsByTerminal[terminalKey] || [];
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
                                         const authStatusClasses = getAuthStatusClasses(authStatus);
-                                        const authorizedDeviceId = getTerminalAuthorizedDeviceId(terminal);
-                                        const lastSeenDeviceId = getTerminalLastSeenDeviceId(terminal);
-                                        const lastRejectedDeviceId = getTerminalLastRejectedDeviceId(terminal, authAttempts);
+                                        const identity = buildTerminalIdentitySummary(terminal, authAttempts);
+                                        const authorizedDeviceId = identity.authorizedDeviceId !== 'N/D' ? identity.authorizedDeviceId : '';
+                                        const lastRejectedDeviceId = identity.lastRejectedDeviceId !== 'N/D' ? identity.lastRejectedDeviceId : '';
                                         const lastAuthAttempt = authAttempts[0] || null;
                                         const lastAuthAttemptAt = terminal.registry?.last_auth_attempt_at || (lastAuthAttempt ? getAttemptTime(lastAuthAttempt) : null);
                                         const lastAuthError = terminal.registry?.last_auth_error || lastAuthAttempt?.reason || lastAuthAttempt?.message || '';
@@ -2039,18 +1791,10 @@ export const Tenants: React.FC = () => {
                                         const revokeDeviceId = terminal.registry?.previous_device_id || lastRejectedDeviceId;
                                         const revokeSubmittingKey = revokeDeviceId ? `${terminalKey}-REVOKE-${revokeDeviceId}` : '';
                                         const fiscalReadiness = getFiscalReadiness(terminal);
-                                        const fiscalStatus = getFiscalStatus(fiscalReadiness);
+                                        const fiscalDebug = summarizeTerminalFiscalDebug(fiscalReadiness);
+                                        const fiscalStatus = fiscalDebug.fiscalReadiness;
                                         const fiscalStatusClasses = getFiscalStatusClasses(fiscalStatus);
-                                        const fiscalCanIssue = getFiscalBoolean(fiscalReadiness, ['canIssueFiscalDocuments', 'can_issue_fiscal_documents']);
-                                        const fiscalCanIssueNonFiscal = getFiscalBoolean(fiscalReadiness, ['canIssueNonFiscalSales', 'can_issue_non_fiscal_sales']);
-                                        const fiscalDocumentTypes = getFiscalList(fiscalReadiness, ['documentTypes', 'document_types']);
-                                        const fiscalSeries = getFiscalList(fiscalReadiness, ['series', 'assignedSeries', 'assigned_series']);
-                                        const fiscalRanges = getFiscalList(fiscalReadiness, ['ranges', 'assignedRanges', 'assigned_ranges']);
-                                        const fiscalCurrent = getFiscalValue(fiscalReadiness, ['currentConsecutive', 'current_consecutive']);
-                                        const fiscalNext = getFiscalValue(fiscalReadiness, ['nextConsecutive', 'next_consecutive']);
-                                        const fiscalCheckedAt = fiscalReadiness?.checked_at || terminal.registry?.last_fiscal_readiness_at || null;
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
-                                        const fiscalDemoSubmittingKey = `${terminalKey}-QA_DEMO`;
 
                                         return (
                                             <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
@@ -2083,130 +1827,191 @@ export const Tenants: React.FC = () => {
                                                     </div>
                                                 </div>
 
-                                                <div className="p-5 bg-slate-100/30">
-                                                    <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-4">Dispositivos y Activaciones Registrados</h5>
-                                                    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                                                        <table className="w-full text-left text-sm whitespace-nowrap">
-                                                            <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
-                                                                <tr>
-                                                                    <th className="px-4 py-3 font-bold">Estado</th>
-                                                                    <th className="px-4 py-3 font-bold">Device / Modelo</th>
-                                                                    <th className="px-4 py-3 font-bold">Red / Endpoint</th>
-                                                                    <th className="px-4 py-3 font-bold">Versión APK</th>
-                                                                    <th className="px-4 py-3 font-bold text-right">Último Tick</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody className="divide-y divide-slate-50">
-                                                                {(terminal.registries || []).map((reg, idx) => {
-                                                                    const mockTerminal = { ...terminal, registry: reg };
-                                                                    const rStatusLabel = getRegistryStatusLabel(mockTerminal);
-                                                                    const rVersionKey = getApkVersionKey(mockTerminal);
-                                                                    const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
-                                                                    const prefLanIp = getPreferredLanIp(mockTerminal);
-                                                                    
-                                                                    return (
-                                                                        <tr key={reg.id || idx} className={`hover:bg-slate-50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/20' : ''}`}>
-                                                                            <td className="px-4 py-3 align-top">
-                                                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center justify-center w-min ${getRegistryStatusClassName(rStatusLabel)}`}>
-                                                                                    {rStatusLabel}
-                                                                                </span>
-                                                                            </td>
-                                                                            <td className="px-4 py-3 align-top">
-                                                                                <p className="font-mono font-bold text-slate-700 text-[11px] mb-0.5">{reg.device_id || terminal.device_token || 'N/D'}</p>
-                                                                                <p className="text-[10px] text-slate-500">{reg.hostname || 'N/D'} · T {reg.terminal_id || terminal.terminal_id || 'N/D'}</p>
-                                                                                {reg.is_revoked && reg.authorized_device_id ? (
-                                                                                    <p className="text-[10px] font-bold text-rose-600">Autorizado: {reg.authorized_device_id}</p>
-                                                                                ) : null}
-                                                                            </td>
-                                                                            <td className="px-4 py-3 align-top">
-                                                                                <p className="font-mono text-emerald-700 font-bold text-[11px] mb-0.5">{prefLanIp}</p>
-                                                                                {reg.endpoint_url && <p className="text-[10px] text-slate-400 font-mono" title="Endpoint">{reg.endpoint_url}</p>}
-                                                                            </td>
-                                                                            <td className="px-4 py-3 align-top">
-                                                                                <div className="flex flex-col items-start gap-0.5">
-                                                                                    <span className="font-mono text-slate-700 text-[11px]">v {formatApkVersion(mockTerminal)}</span>
-                                                                                    {rIsOutOfVersion && <span className="text-[10px] text-amber-600 font-bold">Desfasado</span>}
-                                                                                    {rIsOutOfVersion && referenceVersionCandidate ? (
-                                                                                        <span className="text-[10px] font-bold text-slate-500">Última: v {referenceVersionCandidate.label}</span>
-                                                                                    ) : null}
-                                                                                </div>
-                                                                            </td>
-                                                                            <td className="px-4 py-3 align-top text-right">
-                                                                                <p className="text-[10px] text-slate-500 mb-0.5">{formatDateTime(reg.last_seen_at)}</p>
-                                                                                <p className="font-bold text-violet-600 text-[10px]">{getRoleLabel(mockTerminal)}</p>
+                                                <div className="p-5 space-y-5">
+                                                    <div className={`rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
+                                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                                            <div>
+                                                                <p className="text-xs font-bold uppercase tracking-wider">Identidad y autorizacion</p>
+                                                                <p className="mt-1 text-sm font-bold">{getAuthStatusLabel(authStatus)}</p>
+                                                                <p className="mt-1 text-xs opacity-80">
+                                                                    Cloud-Admin muestra autorizacion, heartbeat del POS y device actual reportado por ERP por separado.
+                                                                </p>
+                                                            </div>
+                                                            <div className="flex flex-col gap-2 sm:flex-row">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal)}
+                                                                    disabled={isAuthAttemptsLoading}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                                >
+                                                                    {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                    Actualizar intentos
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handleRotateTerminalCredentials(terminal)}
+                                                                    disabled={!authorizedDeviceId || deviceActionSubmittingKey === rotateSubmittingKey}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 shadow-sm hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                                                >
+                                                                    {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
+                                                                    Rotar credenciales
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        {identity.mismatchWarning ? (
+                                                            <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-3 py-3 text-sm font-semibold text-red-800">
+                                                                {identity.mismatchWarning}
+                                                            </div>
+                                                        ) : null}
+
+                                                        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal ERP UUID</p>
+                                                                <p className="mt-1 font-mono break-all text-xs">{identity.erpTerminalUuid}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal code / POS ID</p>
+                                                                <p className="mt-1 font-mono break-all">{identity.terminalCode}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Nombre local</p>
+                                                                <p className="mt-1 font-bold">{identity.localName}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Estado autorizacion</p>
+                                                                <p className="mt-1 font-bold uppercase">{getAuthStatusLabel(authStatus)}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device autorizado actual</p>
+                                                                <p className="mt-1 font-mono break-all">{identity.authorizedDeviceId}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device actual visto por POS</p>
+                                                                <p className="mt-1 font-mono break-all">{identity.posReportedDeviceId}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device actual en ERP</p>
+                                                                <p className="mt-1 font-mono break-all">{identity.erpCurrentDeviceId}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo device rechazado</p>
+                                                                <p className="mt-1 font-mono break-all">{identity.lastRejectedDeviceId}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Devices historicos</p>
+                                                                <p className="mt-1 font-mono break-words text-xs">
+                                                                    {identity.historicalDeviceIds.length
+                                                                        ? identity.historicalDeviceIds.join(' · ')
+                                                                        : 'N/D'}
+                                                                </p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo error auth</p>
+                                                                <p className="mt-1 font-bold break-words">{lastAuthError || 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo intento</p>
+                                                                <p className="mt-1">{formatDateTime(lastAuthAttemptAt)}</p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Dispositivos registrados y roles</h5>
+                                                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                                                            <table className="w-full text-left text-sm whitespace-nowrap">
+                                                                <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
+                                                                    <tr>
+                                                                        <th className="px-4 py-3 font-bold">Roles</th>
+                                                                        <th className="px-4 py-3 font-bold">Device ID</th>
+                                                                        <th className="px-4 py-3 font-bold">Estado red</th>
+                                                                        <th className="px-4 py-3 font-bold">Red / Endpoint</th>
+                                                                        <th className="px-4 py-3 font-bold">Version APK</th>
+                                                                        <th className="px-4 py-3 font-bold text-right">Ultimo tick</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-slate-50">
+                                                                    {identity.deviceRows.length === 0 ? (
+                                                                        <tr>
+                                                                            <td colSpan={6} className="px-4 py-6 text-center text-slate-500 text-sm">
+                                                                                Sin devices reportados para esta terminal.
                                                                             </td>
                                                                         </tr>
-                                                                    );
-                                                                })}
-                                                            </tbody>
-                                                        </table>
+                                                                    ) : identity.deviceRows.map((deviceRow, deviceIndex) => {
+                                                                        const registry = (terminal.registries || []).find((reg) => reg.id === deviceRow.registryId) || terminal.registry;
+                                                                        const mockTerminal = registry ? { ...terminal, registry } : terminal;
+                                                                        const rStatusLabel = registry ? getRegistryStatusLabel(mockTerminal) : 'N/D';
+                                                                        const rVersionKey = getApkVersionKey(mockTerminal);
+                                                                        const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
+                                                                        const prefLanIp = registry ? getPreferredLanIp(mockTerminal) : 'N/D';
+                                                                        const endpointRole = getRegistryEndpointRole(registry);
+
+                                                                        return (
+                                                                            <tr key={`${deviceRow.deviceId}-${deviceIndex}`} className={`hover:bg-slate-50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/20' : ''}`}>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    <div className="flex flex-wrap gap-1 max-w-xs">
+                                                                                        {deviceRow.roles.map((role) => (
+                                                                                            <span
+                                                                                                key={`${deviceRow.deviceId}-${role}`}
+                                                                                                className={`px-2 py-0.5 rounded border text-[9px] font-bold uppercase ${getDeviceRoleClasses(role)}`}
+                                                                                                title={getDeviceRoleLabel(role)}
+                                                                                            >
+                                                                                                {role}
+                                                                                            </span>
+                                                                                        ))}
+                                                                                        {!deviceRow.roles.includes(endpointRole) ? (
+                                                                                            <span className={`px-2 py-0.5 rounded border text-[9px] font-bold uppercase ${getDeviceRoleClasses(endpointRole)}`}>
+                                                                                                {endpointRole}
+                                                                                            </span>
+                                                                                        ) : null}
+                                                                                    </div>
+                                                                                    <p className="mt-1 text-[10px] text-slate-400">{deviceRow.source}</p>
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    <p className="font-mono font-bold text-slate-700 text-[11px]">{deviceRow.deviceId}</p>
+                                                                                    {registry?.hostname ? <p className="text-[10px] text-slate-500">{registry.hostname}</p> : null}
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    {registry ? (
+                                                                                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${getRegistryStatusClassName(rStatusLabel)}`}>
+                                                                                            {rStatusLabel}
+                                                                                        </span>
+                                                                                    ) : (
+                                                                                        <span className="text-[10px] text-slate-400">Sin heartbeat</span>
+                                                                                    )}
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    <p className="font-mono text-emerald-700 font-bold text-[11px]">{prefLanIp}</p>
+                                                                                    {registry?.endpoint_url ? (
+                                                                                        <p className="text-[10px] text-slate-400 font-mono" title="Endpoint">{registry.endpoint_url}</p>
+                                                                                    ) : null}
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top">
+                                                                                    {registry ? (
+                                                                                        <div className="flex flex-col items-start gap-0.5">
+                                                                                            <span className="font-mono text-slate-700 text-[11px]">v {formatApkVersion(mockTerminal)}</span>
+                                                                                            {rIsOutOfVersion ? <span className="text-[10px] text-amber-600 font-bold">Desfasado</span> : null}
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <span className="text-[10px] text-slate-400">N/D</span>
+                                                                                    )}
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top text-right">
+                                                                                    <p className="text-[10px] text-slate-500">{formatDateTime(deviceRow.lastSeenAt)}</p>
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    })}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
                                                     </div>
                                                 </div>
 
-                                                <div className={`mt-5 rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
-                                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                                                        <div>
-                                                            <p className="text-xs font-bold uppercase tracking-wider">Autorizacion de dispositivo</p>
-                                                            <p className="mt-1 text-sm font-bold">{getAuthStatusLabel(authStatus)}</p>
-                                                            {authStatus === 'DEVICE_MISMATCH' ? (
-                                                                <p className="mt-1 text-sm">
-                                                                    Este POS intenta usar una terminal autorizada para otro equipo. Puedes reautorizarlo si realmente reemplazaste el dispositivo.
-                                                                </p>
-                                                            ) : null}
-                                                        </div>
-                                                        <div className="flex flex-col gap-2 sm:flex-row">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal)}
-                                                                disabled={isAuthAttemptsLoading}
-                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
-                                                            >
-                                                                {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
-                                                                Actualizar intentos
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void handleRotateTerminalCredentials(terminal)}
-                                                                disabled={!authorizedDeviceId || deviceActionSubmittingKey === rotateSubmittingKey}
-                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 shadow-sm hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                                                            >
-                                                                {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
-                                                                Rotar credenciales
-                                                            </button>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
-                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device autorizado</p>
-                                                            <p className="mt-1 font-mono break-all">{authorizedDeviceId || 'N/D'}</p>
-                                                        </div>
-                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo device visto</p>
-                                                            <p className="mt-1 font-mono break-all">{lastSeenDeviceId || 'N/D'}</p>
-                                                        </div>
-                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo rechazado</p>
-                                                            <p className="mt-1 font-mono break-all">{lastRejectedDeviceId || 'N/D'}</p>
-                                                        </div>
-                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo error auth</p>
-                                                            <p className="mt-1 font-bold break-words">{lastAuthError || 'N/D'}</p>
-                                                        </div>
-                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo intento</p>
-                                                            <p className="mt-1">{formatDateTime(lastAuthAttemptAt)}</p>
-                                                        </div>
-                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Token</p>
-                                                            <p className="mt-1 font-bold">
-                                                                {terminal.registry?.device_token_status || 'N/D'}
-                                                                {terminal.registry?.token_preview ? <span className="font-mono"> · {terminal.registry.token_preview}</span> : null}
-                                                            </p>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="mt-4 rounded-xl border border-white/60 bg-white/70 overflow-hidden">
+                                                <div className={`mx-5 rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
+                                                    <p className="text-xs font-bold uppercase tracking-wider">Intentos de conexion rechazados</p>
+                                                    <div className="mt-3 rounded-xl border border-white/60 bg-white/70 overflow-hidden">
                                                         <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/60">
                                                             <p className="text-xs font-bold uppercase tracking-wider">Intentos de conexion rechazados</p>
                                                             {isAuthAttemptsLoading ? <Loader2 size={15} className="animate-spin" /> : null}
@@ -2340,89 +2145,78 @@ export const Tenants: React.FC = () => {
                                                 </div>
 
                                                 {isFiscalEligibleTenant(selectedTenantForTerminals) ? (
-                                                    <div className={`mt-5 rounded-2xl border px-4 py-4 ${fiscalStatusClasses}`}>
+                                                    <div className={`mx-5 mt-5 rounded-2xl border px-4 py-4 ${fiscalStatusClasses}`}>
                                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                             <div>
                                                                 <p className="text-xs font-bold uppercase tracking-wider">Configuracion fiscal</p>
-                                                                <p className="mt-1 text-sm font-bold">{getFiscalStatusLabel(fiscalStatus)}</p>
-                                                                {fiscalStatus === 'MISSING' ? (
-                                                                    <p className="mt-1 text-sm">
-                                                                        Falta configuracion fiscal para esta terminal. El POS puede recibir FISCAL_CONFIG_MISSING al emitir.
+                                                                <p className="mt-1 text-sm font-bold">{fiscalDebug.fiscalReadiness}</p>
+                                                                <p className="mt-1 text-xs opacity-80">
+                                                                    Solo lectura. La configuracion fiscal se mantiene y corrige en ERP.
+                                                                </p>
+                                                                {fiscalDebug.isMissing || fiscalDebug.errorCode === 'FISCAL_CONFIG_MISSING' ? (
+                                                                    <p className="mt-2 text-sm font-semibold">
+                                                                        FISCAL_CONFIG_MISSING: revisa donde busco ERP, que encontro y que falta antes de escalar a soporte.
                                                                     </p>
                                                                 ) : null}
-                                                                {fiscalReadiness?.message ? (
-                                                                    <p className="mt-1 text-sm">{fiscalReadiness.message}</p>
+                                                                {fiscalDebug.message ? (
+                                                                    <p className="mt-1 text-sm">{fiscalDebug.message}</p>
                                                                 ) : null}
                                                             </div>
-                                                            <div className="flex flex-col gap-2 sm:flex-row">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void loadTerminalFiscalReadiness(selectedTenantForTerminals.id, terminal)}
-                                                                    disabled={isFiscalLoading}
-                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
-                                                                >
-                                                                    {isFiscalLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
-                                                                    Refrescar fiscal
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => openFiscalConfigModal(terminal)}
-                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-bold text-amber-800 shadow-sm hover:bg-amber-100 transition-colors"
-                                                                >
-                                                                    Configurar fiscal
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => void handleCreateFiscalDemoConfig(terminal)}
-                                                                    disabled={fiscalConfigSubmittingKey === fiscalDemoSubmittingKey}
-                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-60"
-                                                                >
-                                                                    {fiscalConfigSubmittingKey === fiscalDemoSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : null}
-                                                                    Crear fiscal demo
-                                                                </button>
-                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void loadTerminalFiscalReadiness(selectedTenantForTerminals.id, terminal)}
+                                                                disabled={isFiscalLoading}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                            >
+                                                                {isFiscalLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                Verificar mapping fiscal
+                                                            </button>
                                                         </div>
 
-                                                        <div className="mt-4 rounded-xl border border-amber-200 bg-white/80 px-3 py-2 text-xs font-semibold text-amber-800">
-                                                            Los comprobantes fiscales productivos deben coincidir con rangos autorizados oficialmente.
-                                                        </div>
-
-                                                        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
+                                                        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Fiscal readiness</p>
-                                                                <p className="mt-1 font-bold">{getFiscalStatusLabel(fiscalStatus)}</p>
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">fiscalReadiness</p>
+                                                                <p className="mt-1 font-bold">{fiscalDebug.fiscalReadiness}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Fiscal</p>
-                                                                <p className="mt-1 font-bold">{getCheckLabel(fiscalCanIssue, 'Puede emitir e-CF', 'No puede emitir fiscal')}</p>
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">matchedStrategy</p>
+                                                                <p className="mt-1 font-mono text-xs break-all">{fiscalDebug.matchedStrategy || 'N/D'}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">No fiscal</p>
-                                                                <p className="mt-1 font-bold">{getCheckLabel(fiscalCanIssueNonFiscal, 'Venta no fiscal OK', 'No fiscal bloqueado')}</p>
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">documentSeriesFound</p>
+                                                                <p className="mt-1 font-bold">{getCheckLabel(fiscalDebug.documentSeriesFound, 'Si', 'No')}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Tipos documento</p>
-                                                                <p className="mt-1 break-words">{fiscalDocumentTypes.length ? fiscalDocumentTypes.join(', ') : 'N/D'}</p>
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">fiscalRangesFound</p>
+                                                                <p className="mt-1 font-bold">{getCheckLabel(fiscalDebug.fiscalRangesFound, 'Si', 'No')}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Series asignadas</p>
-                                                                <p className="mt-1 break-words">{fiscalSeries.length ? fiscalSeries.join(', ') : 'N/D'}</p>
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">fiscalSequencesFound</p>
+                                                                <p className="mt-1 font-bold">{getCheckLabel(fiscalDebug.fiscalSequencesFound, 'Si', 'No')}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Rangos asignados</p>
-                                                                <p className="mt-1 break-words">{fiscalRanges.length ? fiscalRanges.join(', ') : 'N/D'}</p>
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">terminalFiscalConfigFound</p>
+                                                                <p className="mt-1 font-bold">{getCheckLabel(fiscalDebug.terminalFiscalConfigFound, 'Si', 'No')}</p>
                                                             </div>
-                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Consecutivo actual</p>
-                                                                <p className="mt-1 font-mono">{fiscalCurrent || 'N/D'}</p>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">missing</p>
+                                                                <p className="mt-1 break-words text-xs">{fiscalDebug.missing.length ? fiscalDebug.missing.join(' · ') : 'N/D'}</p>
                                                             </div>
-                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Siguiente</p>
-                                                                <p className="mt-1 font-mono">{fiscalNext || 'N/D'}</p>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Donde busco (ERP)</p>
+                                                                <p className="mt-1 break-words text-xs">{fiscalDebug.searchedIn.length ? fiscalDebug.searchedIn.join(' → ') : 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Que encontro</p>
+                                                                <p className="mt-1 break-words text-xs">{fiscalDebug.found.length ? fiscalDebug.found.join(' · ') : 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Scopes disponibles (sucursal / company / tenant)</p>
+                                                                <p className="mt-1 break-words text-xs">{fiscalDebug.scopeHints.length ? fiscalDebug.scopeHints.join(' · ') : 'N/D'}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultima validacion</p>
-                                                                <p className="mt-1">{formatDateTime(fiscalCheckedAt)}</p>
+                                                                <p className="mt-1">{formatDateTime(fiscalDebug.checkedAt)}</p>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -2516,7 +2310,7 @@ export const Tenants: React.FC = () => {
                                 </div>
                                 <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
                                     <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Device actual</p>
-                                    <p className="mt-1 font-mono text-slate-700 break-all">{getTerminalCurrentDeviceId(rebuildTerminal) || 'N/D'}</p>
+                                    <p className="mt-1 font-mono text-slate-700 break-all">{getTerminalOperationalDeviceId(rebuildTerminal) || 'N/D'}</p>
                                 </div>
                             </div>
 
@@ -2610,7 +2404,9 @@ export const Tenants: React.FC = () => {
                                     ))}
                                 </select>
                                 <p className="mt-2 text-xs text-slate-500">
-                                    Dispositivo actual: <span className="font-mono">{getTerminalCurrentDeviceId(takeoverTerminal) || 'N/D'}</span>
+                                    Device POS reportado: <span className="font-mono">{getTerminalPosReportedDeviceId(takeoverTerminal) || 'N/D'}</span>
+                                    {' · '}
+                                    Autorizado: <span className="font-mono">{getTerminalAuthorizedDeviceId(takeoverTerminal) || 'N/D'}</span>
                                 </p>
                             </div>
 
@@ -2676,163 +2472,6 @@ export const Tenants: React.FC = () => {
                                 >
                                     {isTakeoverSubmitting ? <Loader2 className="animate-spin" size={18} /> : <RefreshCcw size={18} />}
                                     Ejecutar recuperacion
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {isFiscalConfigModalOpen && selectedTenantForTerminals && fiscalConfigTerminal && (
-                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-[60]">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
-                            <div>
-                                <div className="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-700">
-                                    Configuracion fiscal
-                                </div>
-                                <h3 className="mt-3 font-black text-lg text-slate-800">Configurar fiscalmente la terminal</h3>
-                                <p className="text-sm text-slate-500 mt-1">
-                                    {selectedTenantForTerminals.name} · {fiscalConfigTerminal.name}
-                                </p>
-                            </div>
-                            <button type="button" onClick={closeFiscalConfigModal} className="text-slate-400 hover:text-slate-700 transition-colors">
-                                <X size={20} />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleProductionFiscalConfig} className="p-6 space-y-5">
-                            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                                <p className="font-bold">Importante:</p>
-                                <p className="mt-1">
-                                    Los comprobantes fiscales productivos deben coincidir con rangos autorizados oficialmente. Cloud-Admin no genera rangos productivos inventados.
-                                </p>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Tipo de comprobante <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.documentType}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, documentType: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
-                                        placeholder="B01, B02, E31..."
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Serie <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.series}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, series: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
-                                        placeholder="A, B, E..."
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Prefijo <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.prefix}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, prefix: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
-                                        placeholder="E31"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Rango desde <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.rangeFrom}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, rangeFrom: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 font-mono"
-                                        placeholder="1"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Rango hasta <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.rangeTo}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, rangeTo: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 font-mono"
-                                        placeholder="1000"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Proximo consecutivo <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.nextConsecutive}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, nextConsecutive: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800 font-mono"
-                                        placeholder="1"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Vence <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        type="date"
-                                        value={fiscalFormData.expiresAt}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, expiresAt: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Compañía <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.companyId}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, companyId: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
-                                        placeholder="company_id"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Sucursal <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.storeId}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, storeId: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
-                                        placeholder="store_id"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Terminal / caja <span className="text-red-500">*</span></label>
-                                    <input
-                                        required
-                                        value={fiscalFormData.terminalName}
-                                        onChange={e => setFiscalFormData({ ...fiscalFormData, terminalName: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-800"
-                                        placeholder="Caja 2"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 border-t border-slate-100 pt-5">
-                                <button
-                                    type="button"
-                                    onClick={closeFiscalConfigModal}
-                                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition-colors"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={fiscalConfigSubmittingKey === `${getTerminalKey(fiscalConfigTerminal)}-PRODUCTION`}
-                                    className="px-5 py-3 rounded-xl bg-amber-600 text-white font-bold hover:bg-amber-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-                                >
-                                    {fiscalConfigSubmittingKey === `${getTerminalKey(fiscalConfigTerminal)}-PRODUCTION` ? <Loader2 className="animate-spin" size={18} /> : null}
-                                    Guardar configuracion
                                 </button>
                             </div>
                         </form>

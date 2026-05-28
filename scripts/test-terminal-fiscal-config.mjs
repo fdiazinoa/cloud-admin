@@ -18,8 +18,8 @@ assert.match(migration, /FISCAL_CONFIG_CREATED/, 'audit must include created act
 assert.match(migration, /FISCAL_CONFIG_UPDATED/, 'audit must include updated action');
 
 assert.match(tenantsPage, /Configuracion fiscal/, 'UI must render fiscal configuration section');
-assert.match(tenantsPage, /Crear fiscal demo/, 'UI must expose QA demo creation');
-assert.match(tenantsPage, /Los comprobantes fiscales productivos deben coincidir/, 'UI must warn about official fiscal ranges');
+assert.match(tenantsPage, /Verificar mapping fiscal/, 'UI must expose fiscal debug verification');
 assert.match(tenantsPage, /FISCAL_CONFIG_MISSING/, 'UI must explain missing fiscal config');
+assert.doesNotMatch(tenantsPage, /Crear fiscal demo/, 'UI must not create fiscal config from Cloud-Admin');
 
 console.log('terminal-fiscal-config static checks passed');
