@@ -17,7 +17,11 @@ import type {
     TenantType,
     Terminal,
 } from "../types";
-import { provisionTenant, type ProvisionTenantInput, type SupabaseAdminClient } from "./tenantProvisioning";
+import type { ProvisionTenantInput } from "./tenantProvisioning";
+import {
+    deriveTenantSemanticsFromTenant,
+    type TenantSemanticConfig,
+} from "./tenantProducts";
 
 export interface DashboardStats {
     totalTenants: number;
@@ -336,7 +340,7 @@ export interface TerminalFiscalConfigResult {
     message?: string;
 }
 
-function normalizeOptional(value?: string): string | null {
+function normalizeOptional(value?: string | null): string | null {
     if (!value) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
@@ -353,7 +357,7 @@ function generateTempPassword(): string {
 }
 
 function normalizeTenantSemantics(input: CreateTenantInput): TenantSemanticConfig {
-    const inferred = deriveTenantSemanticsFromTenant(input.type, input.cloudSync, {
+    const inferred = deriveTenantSemanticsFromTenant(input.type, input.cloudSync, undefined, undefined, {
         posVariant: input.posVariant,
         offlineMode: input.offlineMode,
         explicitOffline: input.explicitOffline,

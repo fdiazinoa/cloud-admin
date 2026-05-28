@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2 } from 'lucide-react';
 import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
@@ -364,6 +365,7 @@ export const Tenants: React.FC = () => {
                 getPosApkReleases(),
             ]);
             setTenantTerminals(data);
+            setLatestPosApkRelease(releases.find((release) => release.is_latest) || releases[0] || null);
             void loadAuthAttemptsForTerminals(tenant.id, data);
             if (isFiscalEligibleTenant(tenant)) {
                 void loadFiscalReadinessForTerminals(tenant.id, data);
@@ -382,30 +384,10 @@ export const Tenants: React.FC = () => {
         setTenantTerminals([]);
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
+        setLatestPosApkRelease(null);
         closeTakeoverModal();
         closeRebuildModal();
         closeFiscalConfigModal();
-    };
-
-    const handleToggleTerminalStatus = async (terminalId: string, currentStatus: boolean) => {
-        if (!selectedTenantForTerminals) return;
-
-        if (terminalId.startsWith('orphan-') || !terminalId.includes('-')) {
-            alert('No se puede cambiar el estado de una activación huérfana o sin terminal base.');
-            return;
-        }
-
-        const newStatus = !currentStatus;
-        try {
-            await tenantService.toggleTerminalActiveStatus(terminalId, newStatus);
-            setTenantTerminals(prev => 
-                prev.map(t => t.id === terminalId ? { ...t, is_active: newStatus } : t)
-            );
-        } catch (err: unknown) {
-            const errorMessage = err instanceof Error ? err.message : JSON.stringify(err);
-            console.error('Error toggling terminal status:', err);
-            alert(`Error al cambiar el estado de la terminal: ${errorMessage}`);
-        }
     };
 
     const getTenantSemantics = (tenant: Tenant): TenantSemanticConfig => {
@@ -1118,14 +1100,14 @@ export const Tenants: React.FC = () => {
         }
     };
 
-    const handleTakeoverTerminalChange = (terminalId: string) => {
-        const selectedTerminal = tenantTerminals.find((terminal) => getTerminalTakeoverId(terminal) === terminalId) || null;
-        setTakeoverTerminal(selectedTerminal);
+    const handleTakeoverTerminalChange = (selectionKey: string) => {
+        const selectedOption = getTakeoverOptions().find((option) => option.key === selectionKey) || null;
+        setTakeoverTerminal(selectedOption?.terminal || null);
         setTakeoverFormData((current) => ({
             ...current,
             terminalId: selectedOption?.terminalId || '',
             registryId: selectedOption?.registryId || '',
-            deviceName: selectedOption?.terminal.name || current.deviceName,
+            deviceName: selectedOption?.terminal?.name || current.deviceName,
         }));
     };
 
