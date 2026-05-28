@@ -7,11 +7,36 @@ declare const Deno: {
     serve(handler: (request: Request) => Response | Promise<Response>): void;
 };
 
+interface OutboundAttachment {
+    id?: string;
+    name?: string;
+    mime_type?: string;
+    size_bytes?: number;
+    bucket?: string;
+    path?: string;
+    uploaded_at?: string;
+}
+
 interface ReplyPayload {
     ticket_id?: string;
     message?: string;
     message_id?: string;
+    attachments?: OutboundAttachment[];
 }
+
+interface ResendAttachment {
+    filename: string;
+    content: string;
+    content_type?: string;
+}
+
+const HELPDESK_ATTACHMENTS_BUCKET = 'helpdesk-attachments';
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+]);
 
 interface SupportContact {
     email?: string | null;
@@ -130,6 +155,69 @@ function buildThreadSubject(ticket: SupportTicket) {
     return `${ticketToken} Re: ${cleanSubject}`;
 }
 
+function normalizeOutboundAttachments(value: unknown): OutboundAttachment[] {
+    if (!Array.isArray(value)) return [];
+
+    return value
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+        .map((item) => ({
+            id: typeof item.id === 'string' ? item.id : undefined,
+            name: typeof item.name === 'string' ? item.name : undefined,
+            mime_type: typeof item.mime_type === 'string' ? item.mime_type : undefined,
+            size_bytes: typeof item.size_bytes === 'number' ? item.size_bytes : undefined,
+            bucket: typeof item.bucket === 'string' ? item.bucket : undefined,
+            path: typeof item.path === 'string' ? item.path : undefined,
+            uploaded_at: typeof item.uploaded_at === 'string' ? item.uploaded_at : undefined,
+        }))
+        .filter((attachment) => Boolean(attachment.path));
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+        const chunk = bytes.subarray(index, index + chunkSize);
+        binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+}
+
+async function buildResendAttachments(
+    supabase: ReturnType<typeof createClient>,
+    attachments: OutboundAttachment[],
+): Promise<ResendAttachment[]> {
+    const output: ResendAttachment[] = [];
+
+    for (const attachment of attachments) {
+        const bucket = attachment.bucket || HELPDESK_ATTACHMENTS_BUCKET;
+        const path = attachment.path;
+        if (!path) continue;
+
+        const mimeType = attachment.mime_type && ALLOWED_IMAGE_MIME_TYPES.has(attachment.mime_type)
+            ? attachment.mime_type
+            : 'application/octet-stream';
+
+        const { data, error } = await supabase.storage.from(bucket).download(path);
+        if (error || !data) {
+            console.error('Support reply: unable to download attachment', {
+                bucket,
+                path,
+                error: error?.message,
+            });
+            continue;
+        }
+
+        const bytes = new Uint8Array(await data.arrayBuffer());
+        output.push({
+            filename: attachment.name || path.split('/').filter(Boolean).at(-1) || 'adjunto',
+            content: bytesToBase64(bytes),
+            content_type: mimeType,
+        });
+    }
+
+    return output;
+}
+
 function buildThreadHeaders(ticket: SupportTicket) {
     const messageIds = Array.isArray(ticket.technical_context?.email_thread_message_ids)
         ? ticket.technical_context.email_thread_message_ids.filter((value): value is string => typeof value === 'string')
@@ -184,8 +272,10 @@ Deno.serve(async (request) => {
         const replyText = payload.message?.trim();
         const existingMessageId = payload.message_id?.trim();
 
-        if (!ticketId || (!replyText && !existingMessageId)) {
-            return json({ error: 'ticket_id and message or message_id are required' }, 400);
+        const outboundAttachments = normalizeOutboundAttachments(payload.attachments);
+
+        if (!ticketId || (!replyText && !existingMessageId && outboundAttachments.length === 0)) {
+            return json({ error: 'ticket_id and message, message_id, or attachments are required' }, 400);
         }
 
         const supabase = createClient(
@@ -236,8 +326,9 @@ Deno.serve(async (request) => {
             adminMessage = messageRow as AdminMessage;
         }
 
-        const messageText = adminMessage?.message ?? replyText;
-        if (!messageText?.trim()) {
+        const messageText = (adminMessage?.message ?? replyText)?.trim()
+            || (outboundAttachments.length ? 'Imagen adjunta enviada por soporte.' : '');
+        if (!messageText) {
             return json({ error: 'Reply message is empty' }, 400);
         }
 
@@ -266,21 +357,28 @@ Deno.serve(async (request) => {
             : getEnv('HELPDESK_FROM_EMAIL');
         const replyToAddress = settingsRow.resend_inbound_email ?? getEnv('HELPDESK_INBOUND_EMAIL');
 
+        const resendAttachments = await buildResendAttachments(supabase, outboundAttachments);
         const emailSubject = buildThreadSubject(supportTicket);
+        const resendBody: Record<string, unknown> = {
+            from: fromAddress,
+            to: [recipientEmail],
+            subject: emailSubject,
+            text: messageText,
+            reply_to: [replyToAddress],
+            headers: buildThreadHeaders(supportTicket),
+        };
+
+        if (resendAttachments.length) {
+            resendBody.attachments = resendAttachments;
+        }
+
         const resendResponse = await fetch('https://api.resend.com/emails', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${resendApiKey}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                from: fromAddress,
-                to: [recipientEmail],
-                subject: emailSubject,
-                text: messageText,
-                reply_to: [replyToAddress],
-                headers: buildThreadHeaders(supportTicket),
-            }),
+            body: JSON.stringify(resendBody),
         });
 
         if (!resendResponse.ok) {
@@ -297,6 +395,7 @@ Deno.serve(async (request) => {
             delivery_status: 'sent',
             notified_client: true,
             notify_client: true,
+            files: outboundAttachments,
             notification: {
                 play_sound: true,
                 sound: 'support-reply',

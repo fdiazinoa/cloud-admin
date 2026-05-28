@@ -24,6 +24,15 @@ import {
 import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
 
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
+const HELPDESK_ATTACHMENTS_BUCKET = 'helpdesk-attachments';
+const MAX_REPLY_ATTACHMENTS = 4;
+const MAX_REPLY_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const ALLOWED_REPLY_IMAGE_TYPES = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+]);
 
 type Sentiment = 'frustrated' | 'neutral' | 'positive';
 type ImprovementPriority = 'Baja' | 'Media' | 'Alta' | 'Critica';
@@ -104,6 +113,12 @@ interface MessageAttachment {
     path?: string;
     uploaded_at?: string;
     signed_url?: string | null;
+}
+
+interface PendingReplyAttachment {
+    id: string;
+    file: File;
+    previewUrl: string;
 }
 
 interface ContactFormState {
@@ -384,22 +399,50 @@ function recommendImprovementImpact(ticket: Ticket, requestText: string, module:
     return 'Ayuda a documentar una necesidad funcional del cliente para evaluar prioridad, alcance e impacto antes de planificar desarrollo.';
 }
 
-function normalizeMessageAttachments(value: unknown): MessageAttachment[] {
-    if (!Array.isArray(value)) return [];
+function mapAttachmentRecord(item: Record<string, unknown>): MessageAttachment {
+    return {
+        id: typeof item.id === 'string' ? item.id : undefined,
+        name: typeof item.name === 'string' ? item.name : undefined,
+        mime_type: typeof item.mime_type === 'string' ? item.mime_type : undefined,
+        size_bytes: typeof item.size_bytes === 'number' ? item.size_bytes : undefined,
+        bucket: typeof item.bucket === 'string' ? item.bucket : undefined,
+        path: typeof item.path === 'string' ? item.path : undefined,
+        uploaded_at: typeof item.uploaded_at === 'string' ? item.uploaded_at : undefined,
+        signed_url: typeof item.signed_url === 'string' ? item.signed_url : null,
+    };
+}
 
-    return value
+function normalizeMessageAttachments(value: unknown): MessageAttachment[] {
+    if (Array.isArray(value)) {
+        return value
+            .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+            .map((item) => mapAttachmentRecord(item))
+            .filter((attachment) => Boolean(attachment.name || attachment.path || attachment.signed_url));
+    }
+
+    if (!value || typeof value !== 'object') return [];
+
+    const envelope = value as Record<string, unknown>;
+    const embedded = Array.isArray(envelope.files)
+        ? envelope.files
+        : Array.isArray(envelope.attachments)
+            ? envelope.attachments
+            : [];
+
+    return embedded
         .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
-        .map((item) => ({
-            id: typeof item.id === 'string' ? item.id : undefined,
-            name: typeof item.name === 'string' ? item.name : undefined,
-            mime_type: typeof item.mime_type === 'string' ? item.mime_type : undefined,
-            size_bytes: typeof item.size_bytes === 'number' ? item.size_bytes : undefined,
-            bucket: typeof item.bucket === 'string' ? item.bucket : undefined,
-            path: typeof item.path === 'string' ? item.path : undefined,
-            uploaded_at: typeof item.uploaded_at === 'string' ? item.uploaded_at : undefined,
-            signed_url: typeof item.signed_url === 'string' ? item.signed_url : null,
-        }))
+        .map((item) => mapAttachmentRecord(item))
         .filter((attachment) => Boolean(attachment.name || attachment.path || attachment.signed_url));
+}
+
+function sanitizeAttachmentFileName(fileName: string) {
+    const cleaned = fileName.trim().replace(/[^\w.\-() ]+/g, '_');
+    return cleaned || 'imagen.png';
+}
+
+function buildOutboundAttachmentPath(ticketId: string, fileName: string) {
+    const extension = fileName.includes('.') ? fileName.split('.').pop() : 'png';
+    return `tickets/${ticketId}/outbound/${crypto.randomUUID()}.${extension}`;
 }
 
 function formatAttachmentSize(sizeBytes?: number) {
@@ -500,6 +543,8 @@ const SupportCommandCenter: React.FC = () => {
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
     const [replyText, setReplyText] = useState('');
+    const [pendingReplyAttachments, setPendingReplyAttachments] = useState<PendingReplyAttachment[]>([]);
+    const [replyAttachmentError, setReplyAttachmentError] = useState<string | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
     const [filterStatus, setFilterStatus] = useState('Todos');
     const [filterSource, setFilterSource] = useState('Todos');
@@ -518,6 +563,8 @@ const SupportCommandCenter: React.FC = () => {
     const [lastMessageByTicketId, setLastMessageByTicketId] = useState<Record<string, TicketMessagePreview>>({});
     const messagesPaneRef = useRef<HTMLDivElement>(null);
     const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
+    const replyFileInputRef = useRef<HTMLInputElement>(null);
+    const pendingReplyAttachmentsRef = useRef<PendingReplyAttachment[]>([]);
 
     const selectedTicketId = selectedTicket?.id;
 
@@ -536,6 +583,29 @@ const SupportCommandCenter: React.FC = () => {
         textarea.style.height = `${nextHeight}px`;
         textarea.style.overflowY = textarea.scrollHeight > REPLY_TEXTAREA_MAX_HEIGHT ? 'auto' : 'hidden';
     }, [replyText, selectedTicketId]);
+
+    useEffect(() => {
+        pendingReplyAttachmentsRef.current = pendingReplyAttachments;
+    }, [pendingReplyAttachments]);
+
+    useEffect(() => {
+        return () => {
+            pendingReplyAttachmentsRef.current.forEach((attachment) => {
+                URL.revokeObjectURL(attachment.previewUrl);
+            });
+        };
+    }, []);
+
+    useEffect(() => {
+        pendingReplyAttachmentsRef.current.forEach((attachment) => {
+            URL.revokeObjectURL(attachment.previewUrl);
+        });
+        setPendingReplyAttachments([]);
+        setReplyAttachmentError(null);
+        if (replyFileInputRef.current) {
+            replyFileInputRef.current.value = '';
+        }
+    }, [selectedTicketId]);
 
     useEffect(() => {
         let mounted = true;
@@ -731,16 +801,117 @@ const SupportCommandCenter: React.FC = () => {
         });
     }, [filterSource, filterStatus, quickFilter, tickets]);
 
-    const handleSendReply = async () => {
-        if (!replyText.trim() || !selectedTicket || isSendingReply) return;
+    const clearPendingReplyAttachments = () => {
+        pendingReplyAttachments.forEach((attachment) => {
+            URL.revokeObjectURL(attachment.previewUrl);
+        });
+        setPendingReplyAttachments([]);
+        setReplyAttachmentError(null);
+        if (replyFileInputRef.current) {
+            replyFileInputRef.current.value = '';
+        }
+    };
 
+    const handleReplyAttachmentSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const selectedFiles = Array.from(event.target.files ?? []);
+        event.target.value = '';
+
+        if (!selectedFiles.length) return;
+
+        setReplyAttachmentError(null);
+        const availableSlots = MAX_REPLY_ATTACHMENTS - pendingReplyAttachments.length;
+        if (availableSlots <= 0) {
+            setReplyAttachmentError(`Solo puedes adjuntar hasta ${MAX_REPLY_ATTACHMENTS} imagenes por respuesta.`);
+            return;
+        }
+
+        const accepted: PendingReplyAttachment[] = [];
+        const rejected: string[] = [];
+
+        for (const file of selectedFiles.slice(0, availableSlots)) {
+            if (!ALLOWED_REPLY_IMAGE_TYPES.has(file.type)) {
+                rejected.push(`${file.name}: formato no permitido`);
+                continue;
+            }
+            if (file.size > MAX_REPLY_ATTACHMENT_BYTES) {
+                rejected.push(`${file.name}: supera 5 MB`);
+                continue;
+            }
+
+            accepted.push({
+                id: crypto.randomUUID(),
+                file,
+                previewUrl: URL.createObjectURL(file),
+            });
+        }
+
+        if (rejected.length) {
+            setReplyAttachmentError(rejected.join(' · '));
+        }
+
+        if (accepted.length) {
+            setPendingReplyAttachments((current) => [...current, ...accepted]);
+        }
+    };
+
+    const removePendingReplyAttachment = (attachmentId: string) => {
+        setPendingReplyAttachments((current) => {
+            const target = current.find((attachment) => attachment.id === attachmentId);
+            if (target) URL.revokeObjectURL(target.previewUrl);
+            return current.filter((attachment) => attachment.id !== attachmentId);
+        });
+    };
+
+    const uploadPendingReplyAttachments = async (ticketId: string) => {
+        const uploaded: MessageAttachment[] = [];
+
+        for (const pending of pendingReplyAttachments) {
+            const safeName = sanitizeAttachmentFileName(pending.file.name);
+            const path = buildOutboundAttachmentPath(ticketId, safeName);
+            const { error } = await supabaseAdmin.storage
+                .from(HELPDESK_ATTACHMENTS_BUCKET)
+                .upload(path, pending.file, {
+                    contentType: pending.file.type,
+                    upsert: false,
+                });
+
+            if (error) {
+                throw new Error(`No se pudo subir ${safeName}: ${error.message}`);
+            }
+
+            uploaded.push({
+                id: pending.id,
+                name: safeName,
+                mime_type: pending.file.type,
+                size_bytes: pending.file.size,
+                bucket: HELPDESK_ATTACHMENTS_BUCKET,
+                path,
+                uploaded_at: new Date().toISOString(),
+            });
+        }
+
+        return uploaded;
+    };
+
+    const handleSendReply = async () => {
         const text = replyText.trim();
+        const hasAttachments = pendingReplyAttachments.length > 0;
+        if ((!text && !hasAttachments) || !selectedTicket || isSendingReply) return;
+
         const recipientEmail = getTicketRecipientEmail(selectedTicket);
+        const messageText = text || 'Imagen adjunta enviada por soporte.';
+        const savedReplyText = replyText;
+        const savedAttachments = pendingReplyAttachments;
 
         setReplyText('');
         setIsSendingReply(true);
+        setReplyAttachmentError(null);
 
         try {
+            const uploadedAttachments = hasAttachments
+                ? await uploadPendingReplyAttachments(selectedTicket.id)
+                : [];
+
             if (recipientEmail) {
                 const response = await fetch(`${supabaseProjectUrl}/functions/v1/send-support-reply`, {
                     method: 'POST',
@@ -750,27 +921,33 @@ const SupportCommandCenter: React.FC = () => {
                     },
                     body: JSON.stringify({
                         ticket_id: selectedTicket.id,
-                        message: text,
+                        message: messageText,
+                        attachments: uploadedAttachments,
                     }),
                 });
 
                 if (!response.ok) {
                     const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
                     console.error('Admin: error notifying support reply', payload ?? response.statusText);
-                    setReplyText(text);
+                    setReplyText(savedReplyText);
+                    setPendingReplyAttachments(savedAttachments);
+                    setReplyAttachmentError(payload?.detail || payload?.error || 'No se pudo enviar la respuesta con adjuntos.');
+                    return;
                 }
 
+                clearPendingReplyAttachments();
                 return;
             }
 
             const { error } = await supabaseAdmin.from('ticket_messages').insert({
                 ticket_id: selectedTicket.id,
-                message: text,
+                message: messageText,
                 sender_type: 'Admin',
                 attachments: {
                     channel: 'realtime',
                     notify_client: true,
                     delivery_status: 'inserted',
+                    files: uploadedAttachments,
                     notification: {
                         play_sound: true,
                         sound: 'support-reply',
@@ -780,11 +957,18 @@ const SupportCommandCenter: React.FC = () => {
 
             if (error) {
                 console.error('Admin: error sending support reply', error);
-                setReplyText(text);
+                setReplyText(savedReplyText);
+                setPendingReplyAttachments(savedAttachments);
+                setReplyAttachmentError(error.message);
+                return;
             }
+
+            clearPendingReplyAttachments();
         } catch (error) {
             console.error('Admin: unexpected error sending support reply', error);
-            setReplyText(text);
+            setReplyText(savedReplyText);
+            setPendingReplyAttachments(savedAttachments);
+            setReplyAttachmentError(error instanceof Error ? error.message : 'Error inesperado al enviar adjuntos.');
         } finally {
             setIsSendingReply(false);
         }
@@ -1499,6 +1683,44 @@ const SupportCommandCenter: React.FC = () => {
                                     </div>
                                 ) : null}
 
+                                <input
+                                    ref={replyFileInputRef}
+                                    type="file"
+                                    accept="image/png,image/jpeg,image/webp,image/gif"
+                                    multiple
+                                    className="hidden"
+                                    onChange={handleReplyAttachmentSelection}
+                                />
+
+                                {pendingReplyAttachments.length ? (
+                                    <div className="mb-3 flex flex-wrap gap-2">
+                                        {pendingReplyAttachments.map((attachment) => (
+                                            <div
+                                                key={attachment.id}
+                                                className="group relative h-20 w-20 overflow-hidden rounded-xl border border-slate-200 bg-slate-100"
+                                            >
+                                                <img
+                                                    src={attachment.previewUrl}
+                                                    alt={attachment.file.name}
+                                                    className="h-full w-full object-cover"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removePendingReplyAttachment(attachment.id)}
+                                                    className="absolute right-1 top-1 rounded-full bg-slate-900/75 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                                                    aria-label="Quitar adjunto"
+                                                >
+                                                    <X size={12} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : null}
+
+                                {replyAttachmentError ? (
+                                    <p className="mb-3 text-xs font-medium text-red-600">{replyAttachmentError}</p>
+                                ) : null}
+
                                 <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
                                     <textarea
                                         ref={replyTextareaRef}
@@ -1509,19 +1731,31 @@ const SupportCommandCenter: React.FC = () => {
                                         className="max-h-[240px] min-h-[44px] w-full resize-none overflow-hidden border-0 px-3 py-2.5 text-sm leading-5 outline-none focus:ring-0"
                                     />
                                     <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-2 py-2">
-                                        <button
-                                            type="button"
-                                            onClick={generateDraft}
-                                            disabled={isGeneratingDraft}
-                                            className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                            <Wand2 size={14} />
-                                            {isGeneratingDraft ? 'Generando...' : 'Borrador IA'}
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => replyFileInputRef.current?.click()}
+                                                disabled={isSendingReply || pendingReplyAttachments.length >= MAX_REPLY_ATTACHMENTS}
+                                                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                                title="Adjuntar imagen"
+                                            >
+                                                <Paperclip size={14} />
+                                                Adjuntar
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={generateDraft}
+                                                disabled={isGeneratingDraft}
+                                                className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                                <Wand2 size={14} />
+                                                {isGeneratingDraft ? 'Generando...' : 'Borrador IA'}
+                                            </button>
+                                        </div>
                                         <button
                                             type="button"
                                             onClick={handleSendReply}
-                                            disabled={isSendingReply}
+                                            disabled={isSendingReply || (!replyText.trim() && pendingReplyAttachments.length === 0)}
                                             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                                         >
                                             {isSendingReply ? 'Enviando...' : getTicketRecipientEmail(selectedTicket) ? 'Enviar y notificar' : 'Enviar'}
