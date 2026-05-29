@@ -5,6 +5,7 @@ export type TerminalDeviceRole =
     | 'HISTORICAL'
     | 'REVOKED'
     | 'REJECTED_RECENT'
+    | 'LICENSE_EXCEEDED'
     | 'SERVER_MASTER'
     | 'CLIENT_ENDPOINT';
 
@@ -194,6 +195,7 @@ export function getDeviceRoleLabel(role: TerminalDeviceRole): string {
         case 'REJECTED_RECENT': return 'Rechazado reciente';
         case 'SERVER_MASTER': return 'Server master';
         case 'CLIENT_ENDPOINT': return 'Cliente endpoint';
+        case 'LICENSE_EXCEEDED': return 'Sin licencia';
         default: return role;
     }
 }
@@ -205,6 +207,7 @@ export function getDeviceRoleClasses(role: TerminalDeviceRole): string {
         case 'REVOKED': return 'border-slate-300 bg-slate-100 text-slate-700';
         case 'SERVER_MASTER': return 'border-violet-200 bg-violet-50 text-violet-700';
         case 'CLIENT_ENDPOINT': return 'border-blue-200 bg-blue-50 text-blue-700';
+        case 'LICENSE_EXCEEDED': return 'border-red-300 bg-red-50 text-red-800';
         default: return 'border-amber-200 bg-amber-50 text-amber-800';
     }
 }
@@ -235,7 +238,10 @@ export function buildDeviceIdentityRows(
         else roles.push('CLIENT_ENDPOINT');
 
         const normalized = normalizeDeviceId(deviceId);
-        if (authorizedDeviceId && normalizeDeviceId(authorizedDeviceId) === normalized) {
+        const registryAuthStatus = (registry.auth_status || '').toUpperCase();
+        if (registryAuthStatus === 'LICENSE_EXCEEDED') {
+            roles.push('LICENSE_EXCEEDED');
+        } else if (authorizedDeviceId && normalizeDeviceId(authorizedDeviceId) === normalized) {
             roles.push('AUTHORIZED_CURRENT');
         } else if (registry.is_revoked) {
             roles.push('REVOKED');
