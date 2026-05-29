@@ -123,6 +123,20 @@ Eso actualiza `register_tenant_server_endpoint`, `resolve_tenant_license` y agre
 
 El POS debe leer `device_license_allowed` / `license_block_reason` de `resolve_tenant_license(..., p_device_id)` o `auth_status = LICENSE_EXCEEDED` en registry.
 
+## Validacion de licencia en activacion POS (Cloud Admin API)
+
+Para bloquear el wizard de instalacion cuando no hay cupo, aplica tambien:
+
+`supabase/migrations/202605291500_terminal_activation_license_validation.sql`
+
+Eso agrega `landlord.validate_terminal_activation_license` y el fallback REST `public.check_terminal_license_availability`.
+
+Despliega Cloud Admin (Vercel gamma) con el route:
+
+`POST /api/activation/validate-terminal-license`
+
+El APK CLIC-POS (v1.0.703+) llama ese endpoint con el JWT del login de activacion. Si responde 404/501, intenta RPC Supabase y luego ERP en modo estricto.
+
 ## Orden sugerido de migraciones relacionadas (referencia)
 
 Si gamma está muy atrás, revisa también en `supabase/migrations/`:
@@ -134,6 +148,7 @@ Si gamma está muy atrás, revisa también en `supabase/migrations/`:
 | `202605271015_terminal_device_authorization.sql` | **`authorized_device_id`**, `auth_status`, `terminal_device_audit` |
 | `202605291200_pos_terminal_license_enforcement.sql` | Limite `max_pos_terminals`, `LICENSE_EXCEEDED`, RPC enforce |
 | `202605291400_pos_license_count_by_device.sql` | Corrige conteo: 1 licencia = 1 equipo (`device_id`) |
+| `202605291500_terminal_activation_license_validation.sql` | RPC activacion POS + fallback `check_terminal_license_availability` |
 | `20260525101500_tenant_pos_erp_semantics.sql` | Semántica tenant (`lifecycle_status`, `backup_enabled`, etc.) |
 
 `supabase db push` aplica las pendientes en orden de timestamp del nombre del archivo.
