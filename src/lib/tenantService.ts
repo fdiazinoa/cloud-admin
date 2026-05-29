@@ -1223,6 +1223,85 @@ export async function getTerminalAuthAttempts(
     return Array.isArray(payload?.attempts) ? payload.attempts : [];
 }
 
+type RegistryAuthSyncPayload = {
+    device_id?: string;
+    current_device_id?: string;
+    authorized_device_id?: string;
+    auth_status?: string;
+    last_auth_error?: string | null;
+    last_auth_attempt_at?: string;
+    requires_pos_reauth?: boolean;
+    updated_at: string;
+};
+
+const REGISTRY_AUTH_SYNC_OPTIONAL_KEYS = new Set<keyof RegistryAuthSyncPayload>([
+    "device_id",
+    "current_device_id",
+    "authorized_device_id",
+    "auth_status",
+    "last_auth_error",
+    "last_auth_attempt_at",
+    "requires_pos_reauth",
+]);
+
+function parseMissingRegistryColumn(error: unknown): keyof RegistryAuthSyncPayload | null {
+    const haystack = getSupabaseErrorHaystack(error);
+    if (!haystack) return null;
+
+    const quotedMatch = haystack.match(/Could not find the '([^']+)' column/i)
+        || haystack.match(/'([a-z][a-z0-9_]*)'\s+column/i)
+        || haystack.match(/column\s+"([a-z][a-z0-9_]*)"/i)
+        || haystack.match(/column\s+'([a-z][a-z0-9_]*)'/i)
+        || haystack.match(/column\s+tenant_server_registry\.([a-z][a-z0-9_]*)\s+does not exist/i);
+
+    if (quotedMatch?.[1]) {
+        const column = quotedMatch[1] as keyof RegistryAuthSyncPayload;
+        if (REGISTRY_AUTH_SYNC_OPTIONAL_KEYS.has(column)) return column;
+    }
+
+    const lowerHaystack = haystack.toLowerCase();
+    for (const column of REGISTRY_AUTH_SYNC_OPTIONAL_KEYS) {
+        if (lowerHaystack.includes(column)) return column;
+    }
+
+    return null;
+}
+
+async function updateRegistryAuthSyncWithFallback(
+    registryId: string,
+    tenantId: string,
+    payload: RegistryAuthSyncPayload,
+): Promise<{ droppedColumns: string[] }> {
+    const nextPayload: Partial<RegistryAuthSyncPayload> = { ...payload };
+    const droppedColumns: string[] = [];
+    const maxAttempts = Math.max(5, Object.keys(nextPayload).length + 3);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (Object.keys(nextPayload).length === 0) {
+            throw new Error("Registry update failed: no compatible columns remain for this database.");
+        }
+
+        const { error } = await supabaseAdmin
+            .from("tenant_server_registry")
+            .update(nextPayload)
+            .eq("id", registryId)
+            .eq("tenant_id", tenantId);
+
+        if (!error) return { droppedColumns };
+
+        const missingColumn = parseMissingRegistryColumn(error);
+        if (missingColumn && missingColumn in nextPayload) {
+            droppedColumns.push(missingColumn);
+            delete nextPayload[missingColumn];
+            continue;
+        }
+
+        throw error;
+    }
+
+    throw new Error("Registry update failed after retrying without optional columns.");
+}
+
 export async function syncTerminalAuthorizedDevice(input: {
     tenantId: string;
     terminalId: string;
@@ -1247,7 +1326,7 @@ export async function syncTerminalAuthorizedDevice(input: {
 
     const { data: registry, error: registryError } = await supabaseAdmin
         .from("tenant_server_registry")
-        .select("id, tenant_id, device_id, current_device_id, authorized_device_id")
+        .select("id, tenant_id, device_id, current_device_id")
         .eq("tenant_id", input.tenantId)
         .eq("id", input.registryId)
         .maybeSingle();
@@ -1260,7 +1339,8 @@ export async function syncTerminalAuthorizedDevice(input: {
         throw new Error("El device solicitado no coincide con el registro online de la terminal.");
     }
 
-    if (registry.authorized_device_id?.trim() === deviceId) {
+    const currentDeviceId = registry.current_device_id?.trim() || "";
+    if (registry.device_id?.trim() === deviceId && currentDeviceId === deviceId) {
         return {
             status: "success",
             success: true,
@@ -1271,28 +1351,28 @@ export async function syncTerminalAuthorizedDevice(input: {
     }
 
     const completedAt = new Date().toISOString();
-    const { error: updateError } = await supabaseAdmin
-        .from("tenant_server_registry")
-        .update({
-            authorized_device_id: deviceId,
-            current_device_id: deviceId,
-            auth_status: "AUTHORIZED",
-            last_auth_error: null,
-            last_auth_attempt_at: completedAt,
-            requires_pos_reauth: false,
-            updated_at: completedAt,
-        })
-        .eq("id", registry.id)
-        .eq("tenant_id", input.tenantId);
+    const { droppedColumns } = await updateRegistryAuthSyncWithFallback(registry.id, input.tenantId, {
+        device_id: deviceId,
+        current_device_id: deviceId,
+        authorized_device_id: deviceId,
+        auth_status: "AUTHORIZED",
+        last_auth_error: null,
+        last_auth_attempt_at: completedAt,
+        requires_pos_reauth: false,
+        updated_at: completedAt,
+    });
 
-    if (updateError) throw updateError;
+    const missingAuthColumns = droppedColumns.includes("authorized_device_id")
+        || droppedColumns.includes("auth_status");
 
     return {
         status: "success",
         success: true,
         action: "authorized_device_synced",
         authorized_device_id: deviceId,
-        message: "Device autorizado persistido en Cloud-Admin. El POS puede reintentar conexion.",
+        message: missingAuthColumns
+            ? "Device sincronizado en columnas legacy (device_id/current_device_id). Aplica la migracion 202605271015_terminal_device_authorization en Supabase para persistir authorized_device_id."
+            : "Device autorizado persistido en Cloud-Admin. El POS puede reintentar conexion.",
     };
 }
 
