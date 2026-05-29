@@ -1423,17 +1423,17 @@ export const Tenants: React.FC = () => {
     const clientTerminalCount = registryTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
     const publishedEndpointCount = registryTerminals.filter((terminal) => Boolean(terminal.registry)).length;
     const terminalLicenseLimit = selectedTenantForTerminals?.max_pos_terminals;
-    const activeLicensedTerminalIds = new Set(
+    const activeLicensedDeviceIds = new Set(
         registryTerminals
             .filter((terminal) => {
                 if (getRegistryStatusLabel(terminal) !== 'ONLINE') return false;
                 if ((terminal.registry?.auth_status || '').toUpperCase() === 'LICENSE_EXCEEDED') return false;
-                return Boolean(terminal.registry?.terminal_id || terminal.terminal_id);
+                return Boolean(terminal.registry?.device_id?.trim());
             })
-            .map((terminal) => (terminal.registry?.terminal_id || terminal.terminal_id || '').trim())
+            .map((terminal) => terminal.registry?.device_id?.trim() || '')
             .filter(Boolean),
     );
-    const activeLicensedTerminalCount = activeLicensedTerminalIds.size;
+    const activeLicensedTerminalCount = activeLicensedDeviceIds.size;
     const isTerminalLicenseOverLimit = typeof terminalLicenseLimit === 'number' && activeLicensedTerminalCount > terminalLicenseLimit;
     const licenseExceededDeviceCount = registryTerminals.filter(
         (terminal) => (terminal.registry?.auth_status || '').toUpperCase() === 'LICENSE_EXCEEDED',
@@ -1802,7 +1802,7 @@ export const Tenants: React.FC = () => {
                                         <p className="mt-1 text-sm text-red-700">
                                             Este tenant tiene contratada{typeof terminalLicenseLimit === 'number' && terminalLicenseLimit === 1 ? '' : 's'}
                                             {' '}
-                                            {terminalLicenseLimit ?? 1} terminal(es) POS, pero hay {activeLicensedTerminalCount} activa(s)
+                                            {terminalLicenseLimit ?? 1} equipo(s) POS contratado(s), pero hay {activeLicensedTerminalCount} Android/caja(s) online
                                             {licenseExceededDeviceCount > 0
                                                 ? ` y ${licenseExceededDeviceCount} equipo(s) marcado(s) sin licencia.`
                                                 : '.'}
