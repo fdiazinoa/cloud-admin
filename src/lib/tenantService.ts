@@ -1223,11 +1223,95 @@ export async function getTerminalAuthAttempts(
     return Array.isArray(payload?.attempts) ? payload.attempts : [];
 }
 
+export async function syncTerminalAuthorizedDevice(input: {
+    tenantId: string;
+    terminalId: string;
+    registryId: string;
+    deviceId: string;
+}): Promise<TerminalDeviceActionResult> {
+    const deviceId = input.deviceId.trim();
+    const { data: tenant, error: tenantError } = await supabaseAdmin
+        .from("tenants")
+        .select("id, status, contracted_product")
+        .eq("id", input.tenantId)
+        .maybeSingle();
+
+    if (tenantError) throw tenantError;
+    if (!tenant) throw new Error("Tenant no encontrado.");
+    if (tenant.status !== "ACTIVE") {
+        throw new Error("No se puede sincronizar si el tenant no esta activo.");
+    }
+    if (tenant.contracted_product !== "POS_ONLY") {
+        throw new Error("Sincronizar device autorizado solo aplica a tenants POS_ONLY.");
+    }
+
+    const { data: registry, error: registryError } = await supabaseAdmin
+        .from("tenant_server_registry")
+        .select("id, tenant_id, device_id, current_device_id, authorized_device_id")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", input.registryId)
+        .maybeSingle();
+
+    if (registryError) throw registryError;
+    if (!registry) throw new Error("No hay registro de servidor para sincronizar.");
+
+    const registryDeviceId = registry.device_id?.trim() || registry.current_device_id?.trim() || "";
+    if (!registryDeviceId || registryDeviceId !== deviceId) {
+        throw new Error("El device solicitado no coincide con el registro online de la terminal.");
+    }
+
+    if (registry.authorized_device_id?.trim() === deviceId) {
+        return {
+            status: "success",
+            success: true,
+            action: "authorized_device_already_synced",
+            authorized_device_id: deviceId,
+            message: "El device autorizado ya estaba persistido en Cloud-Admin.",
+        };
+    }
+
+    const completedAt = new Date().toISOString();
+    const { error: updateError } = await supabaseAdmin
+        .from("tenant_server_registry")
+        .update({
+            authorized_device_id: deviceId,
+            current_device_id: deviceId,
+            auth_status: "AUTHORIZED",
+            last_auth_error: null,
+            last_auth_attempt_at: completedAt,
+            requires_pos_reauth: false,
+            updated_at: completedAt,
+        })
+        .eq("id", registry.id)
+        .eq("tenant_id", input.tenantId);
+
+    if (updateError) throw updateError;
+
+    return {
+        status: "success",
+        success: true,
+        action: "authorized_device_synced",
+        authorized_device_id: deviceId,
+        message: "Device autorizado persistido en Cloud-Admin. El POS puede reintentar conexion.",
+    };
+}
+
 export async function requestTerminalDeviceAction(
     input: RequestTerminalDeviceActionInput,
 ): Promise<TerminalDeviceActionResult> {
-    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-device-authorization`;
-    const response = await fetch(endpoint, {
+    if (input.action === "SYNC_AUTHORIZED_DEVICE") {
+        if (!input.registryId) {
+            throw new Error("registry_id requerido para sincronizar device autorizado.");
+        }
+        return syncTerminalAuthorizedDevice({
+            tenantId: input.tenantId,
+            terminalId: input.terminalId,
+            registryId: input.registryId,
+            deviceId: input.deviceId,
+        });
+    }
+
+    const response = await fetch("/api/terminal-device-action", {
         method: "POST",
         headers: {
             Authorization: `Bearer ${supabaseServiceRoleKey}`,
@@ -1675,6 +1759,7 @@ export const tenantService = {
     requestTerminalErpReadiness,
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
+    syncTerminalAuthorizedDevice,
     releasePosOnlyProvisioningBlock,
     getTerminalFiscalDebug,
     getTerminalFiscalReadiness,
