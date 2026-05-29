@@ -20,6 +20,7 @@ type LicenseRpcResult = {
     code?: string | null;
     used_seats?: number;
     max_seats?: number;
+    license_unit?: string | null;
 };
 
 type TenantRecord = {
@@ -165,6 +166,7 @@ function mapLicenseResponse(result: LicenseRpcResult) {
         code: result.code ?? null,
         used_seats: result.used_seats ?? null,
         max_seats: result.max_seats ?? null,
+        license_unit: result.license_unit ?? null,
     };
 }
 
