@@ -103,9 +103,13 @@ type TenantUpdatePayload = {
     password?: string;
 };
 
-const OPTIONAL_TENANT_UPDATE_COLUMNS: Array<keyof TenantUpdatePayload> = [
+const TENANT_UPDATE_PAYLOAD_KEYS = new Set<keyof TenantUpdatePayload>([
+    "name",
     "legal_name",
+    "tax_id",
     "phone",
+    "type",
+    "cloud_sync",
     "max_pos_terminals",
     "max_erp_users",
     "contracted_product",
@@ -125,33 +129,128 @@ const OPTIONAL_TENANT_UPDATE_COLUMNS: Array<keyof TenantUpdatePayload> = [
     "provisioning_status",
     "email",
     "password",
+]);
+
+const REQUIRED_TENANT_UPDATE_COLUMNS = new Set<keyof TenantUpdatePayload>([
+    "name",
+    "type",
+    "cloud_sync",
+]);
+
+const TENANT_CORE_UPDATE_COLUMNS: Array<keyof TenantUpdatePayload> = [
+    "name",
+    "legal_name",
+    "tax_id",
+    "phone",
+    "type",
+    "cloud_sync",
+    "max_pos_terminals",
+    "max_erp_users",
 ];
 
+const TENANT_SEMANTIC_UPDATE_COLUMNS: Array<keyof TenantUpdatePayload> = [
+    "contracted_product",
+    "pos_variant",
+    "offline_mode",
+    "explicit_offline",
+    "cloud_disabled_reason",
+    "pos_runtime",
+    "cloud_channel",
+    "data_master",
+    "cloud_sync_enabled",
+    "erp_core_enabled",
+    "erp_ui_enabled",
+    "customer_erp_access",
+    "backup_enabled",
+    "lifecycle_status",
+    "provisioning_status",
+];
+
+function getSupabaseErrorHaystack(error: unknown): string {
+    if (!error || typeof error !== "object") return "";
+
+    const record = error as Record<string, unknown>;
+    return [
+        record.message,
+        record.details,
+        record.hint,
+        record.error,
+    ]
+        .filter((value): value is string => typeof value === "string")
+        .join(" ");
+}
+
 function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | null {
-    if (!error || typeof error !== "object") return null;
+    const haystack = getSupabaseErrorHaystack(error);
+    if (!haystack) return null;
 
-    const message = "message" in error && typeof error.message === "string" ? error.message : "";
-    const details = "details" in error && typeof error.details === "string" ? error.details : "";
-    const haystack = `${message} ${details}`;
-
-    const quotedMatch = haystack.match(/'([a-z][a-z0-9_]*)'\s+column/i)
+    const quotedMatch = haystack.match(/Could not find the '([^']+)' column/i)
+        || haystack.match(/'([a-z][a-z0-9_]*)'\s+column/i)
         || haystack.match(/column\s+"([a-z][a-z0-9_]*)"/i)
         || haystack.match(/column\s+'([a-z][a-z0-9_]*)'/i);
+
     if (quotedMatch?.[1]) {
         const column = quotedMatch[1] as keyof TenantUpdatePayload;
-        if (OPTIONAL_TENANT_UPDATE_COLUMNS.includes(column)) {
+        if (TENANT_UPDATE_PAYLOAD_KEYS.has(column) && !REQUIRED_TENANT_UPDATE_COLUMNS.has(column)) {
             return column;
         }
     }
 
     const lowerHaystack = haystack.toLowerCase();
-    for (const column of OPTIONAL_TENANT_UPDATE_COLUMNS) {
+    for (const column of TENANT_UPDATE_PAYLOAD_KEYS) {
+        if (REQUIRED_TENANT_UPDATE_COLUMNS.has(column)) continue;
         if (lowerHaystack.includes(column)) {
             return column;
         }
     }
 
     return null;
+}
+
+function pickTenantUpdateFields(
+    payload: TenantUpdatePayload,
+    keys: Array<keyof TenantUpdatePayload>,
+): Partial<TenantUpdatePayload> {
+    const picked: Partial<TenantUpdatePayload> = {};
+
+    for (const key of keys) {
+        if (key in payload && payload[key] !== undefined) {
+            (picked as Record<string, unknown>)[key] = payload[key];
+        }
+    }
+
+    return picked;
+}
+
+async function updateTenantPayloadWithFallback(
+    id: string,
+    payload: Partial<TenantUpdatePayload>,
+): Promise<void> {
+    const nextPayload: Partial<TenantUpdatePayload> = { ...payload };
+    const maxAttempts = Math.max(5, Object.keys(nextPayload).length + 3);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (Object.keys(nextPayload).length === 0) return;
+
+        const { error } = await supabaseAdmin
+            .from("tenants")
+            .update(nextPayload)
+            .eq("id", id);
+
+        if (!error) return;
+
+        const missingColumn = parseMissingTenantColumn(error);
+        if (missingColumn && missingColumn in nextPayload) {
+            delete nextPayload[missingColumn];
+            continue;
+        }
+
+        throw error;
+    }
+
+    if (Object.keys(nextPayload).length === 0) return;
+
+    throw new Error("Tenant update failed after retrying without optional columns.");
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -746,27 +845,23 @@ export async function updateTenant(
     id: string,
     payload: TenantUpdatePayload,
 ): Promise<void> {
-    const nextPayload: Partial<TenantUpdatePayload> = { ...payload };
+    const corePayload = pickTenantUpdateFields(payload, TENANT_CORE_UPDATE_COLUMNS);
+    const semanticPayload = pickTenantUpdateFields(payload, TENANT_SEMANTIC_UPDATE_COLUMNS);
 
-    const maxAttempts = Math.max(3, OPTIONAL_TENANT_UPDATE_COLUMNS.length + 1);
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        const { error } = await supabaseAdmin
-            .from("tenants")
-            .update(nextPayload)
-            .eq("id", id);
-
-        if (!error) return;
-
-        const missingColumn = parseMissingTenantColumn(error);
-        if (missingColumn && missingColumn in nextPayload) {
-            delete nextPayload[missingColumn];
-            continue;
-        }
-
-        throw error;
+    if (Object.keys(corePayload).length > 0) {
+        await updateTenantPayloadWithFallback(id, corePayload);
     }
 
-    throw new Error("Tenant update failed after retrying without optional columns.");
+    if (Object.keys(semanticPayload).length === 0) return;
+
+    try {
+        await updateTenantPayloadWithFallback(id, semanticPayload);
+    } catch (error) {
+        console.warn(
+            "Tenant semantic fields were not persisted because the database schema is missing columns:",
+            getSupabaseErrorHaystack(error) || error,
+        );
+    }
 }
 
 async function findTenantAuthUserId(tenant: Tenant): Promise<string | null> {
