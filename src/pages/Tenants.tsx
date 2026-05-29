@@ -25,6 +25,7 @@ import {
     getRegistryEndpointRole,
     getTerminalAuthStatus,
     getTerminalAuthorizedDeviceId,
+    getTerminalPersistedAuthorizedDeviceId,
     getTerminalPosReportedDeviceId,
     isPendingDeviceUnauthorizedAttempt,
     summarizeTerminalFiscalDebug,
@@ -790,6 +791,74 @@ export const Tenants: React.FC = () => {
             alert(getErrorMessage(err));
         } finally {
             setDeviceActionSubmittingKey(null);
+        }
+    };
+
+    const handleSyncAuthorizedDevice = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        const deviceId = terminal.registry?.device_id?.trim() || getTerminalAuthorizedDeviceId(terminal);
+        if (!terminalId || !deviceId) {
+            alert('Esta terminal necesita terminal_id y device_id en el registro para sincronizar autorizacion.');
+            return;
+        }
+
+        const confirmed = confirm(
+            `Se persistira ${deviceId} como device autorizado en Cloud-Admin para ${terminal.name}. `
+            + 'El POS puede reintentar conexion sin rotar credenciales. ¿Deseas continuar?',
+        );
+        if (!confirmed) return;
+
+        const key = `${getTerminalKey(terminal)}-SYNC-AUTH`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                deviceId,
+                action: 'SYNC_AUTHORIZED_DEVICE',
+                reason: 'REGISTRY_DEVICE_SYNC',
+            });
+            alert(result.message || 'Device autorizado sincronizado en Cloud-Admin.');
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error syncing authorized device:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
+    const handleReleasePosOnlyProvisioningBlock = async () => {
+        if (!selectedTenantForTerminals) return;
+        if (selectedTenantForTerminals.contracted_product !== 'POS_ONLY') {
+            alert('Esta accion solo aplica a tenants POS_ONLY.');
+            return;
+        }
+        if (selectedTenantForTerminals.lifecycle_status !== 'BLOCKED') {
+            alert('El tenant no tiene lifecycle BLOCKED.');
+            return;
+        }
+
+        const confirmed = confirm(
+            'Se quitara lifecycle BLOCKED dejado por un readiness ERP fallido. '
+            + 'El POS deberia dejar de mostrar acceso suspendido si dependia de ese campo. ¿Deseas continuar?',
+        );
+        if (!confirmed) return;
+
+        try {
+            await tenantService.releasePosOnlyProvisioningBlock(selectedTenantForTerminals.id);
+            alert('Bloqueo de aprovisionamiento liberado para POS_ONLY.');
+            const data = await tenantService.getTenants();
+            setTenants(data || []);
+            const refreshed = (data || []).find((row) => row.id === selectedTenantForTerminals.id);
+            if (refreshed) setSelectedTenantForTerminals(refreshed);
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error releasing POS_ONLY provisioning block:', err);
+            alert(getErrorMessage(err));
         }
     };
 
@@ -1788,6 +1857,14 @@ export const Tenants: React.FC = () => {
                                         const lastAuthError = terminal.registry?.last_auth_error || lastAuthAttempt?.reason || lastAuthAttempt?.message || '';
                                         const isAuthAttemptsLoading = authAttemptsLoadingKey === terminalKey;
                                         const rotateSubmittingKey = `${terminalKey}-ROTATE`;
+                                        const syncAuthSubmittingKey = `${terminalKey}-SYNC-AUTH`;
+                                        const persistedAuthorizedDeviceId = getTerminalPersistedAuthorizedDeviceId(terminal);
+                                        const needsAuthorizedDeviceSync = Boolean(
+                                            terminal.registry?.device_id?.trim()
+                                            && !persistedAuthorizedDeviceId,
+                                        );
+                                        const posOnlyProvisioningBlocked = selectedTenantForTerminals.contracted_product === 'POS_ONLY'
+                                            && selectedTenantForTerminals.lifecycle_status === 'BLOCKED';
                                         const revokeDeviceId = terminal.registry?.previous_device_id || lastRejectedDeviceId;
                                         const revokeSubmittingKey = revokeDeviceId ? `${terminalKey}-REVOKE-${revokeDeviceId}` : '';
                                         const fiscalReadiness = getFiscalReadiness(terminal);
@@ -1837,7 +1914,28 @@ export const Tenants: React.FC = () => {
                                                                     Cloud-Admin muestra autorizacion, heartbeat del POS y device actual reportado por ERP por separado.
                                                                 </p>
                                                             </div>
-                                                            <div className="flex flex-col gap-2 sm:flex-row">
+                                                            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                                                                {posOnlyProvisioningBlocked ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleReleasePosOnlyProvisioningBlock()}
+                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-900 shadow-sm hover:bg-amber-100 transition-colors"
+                                                                    >
+                                                                        <ShieldCheck size={16} />
+                                                                        Quitar bloqueo POS
+                                                                    </button>
+                                                                ) : null}
+                                                                {needsAuthorizedDeviceSync ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleSyncAuthorizedDevice(terminal)}
+                                                                        disabled={deviceActionSubmittingKey === syncAuthSubmittingKey}
+                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-900 shadow-sm hover:bg-emerald-100 transition-colors disabled:opacity-60"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === syncAuthSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                                                                        Persistir device autorizado
+                                                                    </button>
+                                                                ) : null}
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => void loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal)}

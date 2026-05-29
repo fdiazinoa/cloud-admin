@@ -453,8 +453,14 @@ Deno.serve(async (request) => {
                 ? 'ERP_ACTIVE_REQUIRED'
                 : 'CLOUD_STAGING_REQUIRED';
         } else if (status.toLowerCase() === 'error') {
-            tenantStatusPatch.provisioning_status = 'BLOCKED';
-            tenantStatusPatch.lifecycle_status = 'BLOCKED';
+            if (contractedProduct === 'POS_ERP') {
+                tenantStatusPatch.provisioning_status = 'BLOCKED';
+                tenantStatusPatch.lifecycle_status = 'BLOCKED';
+            } else {
+                // POS_ONLY: fallo de readiness ERP no debe bloquear cajas ya operando offline/staging.
+                tenantStatusPatch.provisioning_status = 'CLOUD_STAGING_REQUIRED';
+                tenantStatusPatch.lifecycle_status = 'CLOUD_READY';
+            }
         }
 
         if (Object.keys(tenantStatusPatch).length > 0) {

@@ -116,12 +116,26 @@ function readField(readiness: TerminalFiscalReadiness | null | undefined, keys: 
     return null;
 }
 
-export function getTerminalAuthorizedDeviceId(terminal: TenantTerminalSnapshot): string {
+export function getTerminalPersistedAuthorizedDeviceId(terminal: TenantTerminalSnapshot): string {
     return terminal.registry?.authorized_device_id?.trim() || '';
 }
 
+/** Effective device Cloud-Admin / ERP usan para autorizar (incluye fallback de registry). */
+export function getTerminalAuthorizedDeviceId(terminal: TenantTerminalSnapshot): string {
+    const registry = terminal.registry;
+    if (!registry) return '';
+    return getTerminalPersistedAuthorizedDeviceId(terminal)
+        || registry.current_device_id?.trim()
+        || registry.device_id?.trim()
+        || '';
+}
+
 export function getTerminalPosReportedDeviceId(terminal: TenantTerminalSnapshot): string {
-    return terminal.registry?.current_device_id?.trim() || '';
+    const registry = terminal.registry;
+    if (!registry) return '';
+    return registry.current_device_id?.trim()
+        || registry.device_id?.trim()
+        || '';
 }
 
 export function getErpCurrentDeviceId(terminal: TenantTerminalSnapshot): string {

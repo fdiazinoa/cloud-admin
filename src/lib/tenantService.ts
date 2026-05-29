@@ -438,7 +438,7 @@ export interface TerminalErpReadinessResult {
     message?: string;
 }
 
-export type TerminalDeviceAction = "TAKEOVER" | "ROTATE_TOKEN" | "REVOKE_DEVICE";
+export type TerminalDeviceAction = "TAKEOVER" | "ROTATE_TOKEN" | "REVOKE_DEVICE" | "SYNC_AUTHORIZED_DEVICE";
 
 export interface RequestTerminalDeviceActionInput {
     tenantId: string;
@@ -1256,6 +1256,19 @@ export async function requestTerminalDeviceAction(
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
 }
 
+/** Quita lifecycle BLOCKED dejado por readiness ERP fallido en tenants POS_ONLY. */
+export async function releasePosOnlyProvisioningBlock(tenantId: string): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("tenants")
+        .update({
+            lifecycle_status: "CLOUD_READY",
+            provisioning_status: "CLOUD_STAGING_REQUIRED",
+        })
+        .eq("id", tenantId);
+
+    if (error) throw error;
+}
+
 export async function getTerminalFiscalDebug(
     input: RequestTerminalFiscalReadinessInput,
 ): Promise<TerminalFiscalReadiness> {
@@ -1662,6 +1675,7 @@ export const tenantService = {
     requestTerminalErpReadiness,
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
+    releasePosOnlyProvisioningBlock,
     getTerminalFiscalDebug,
     getTerminalFiscalReadiness,
     requestTerminalFiscalConfig,
