@@ -116,7 +116,8 @@ WHERE id = '<TENANT_UUID>'
 
 Para bloquear cajas que excedan `max_pos_terminals`, aplica tambien:
 
-`supabase/migrations/202605291200_pos_terminal_license_enforcement.sql`
+`supabase/migrations/202605291200_pos_terminal_license_enforcement.sql`  
+`supabase/migrations/202605291400_pos_license_count_by_device.sql` (cuenta por **device_id**, no por terminal_id compartido)
 
 Eso actualiza `register_tenant_server_endpoint`, `resolve_tenant_license` y agrega `enforce_tenant_pos_license_limits`.
 
@@ -132,6 +133,7 @@ Si gamma está muy atrás, revisa también en `supabase/migrations/`:
 | `20260524234158_pos_erp_readiness_audit.sql` | `erp_readiness` en registry |
 | `202605271015_terminal_device_authorization.sql` | **`authorized_device_id`**, `auth_status`, `terminal_device_audit` |
 | `202605291200_pos_terminal_license_enforcement.sql` | Limite `max_pos_terminals`, `LICENSE_EXCEEDED`, RPC enforce |
+| `202605291400_pos_license_count_by_device.sql` | Corrige conteo: 1 licencia = 1 equipo (`device_id`) |
 | `20260525101500_tenant_pos_erp_semantics.sql` | Semántica tenant (`lifecycle_status`, `backup_enabled`, etc.) |
 
 `supabase db push` aplica las pendientes en orden de timestamp del nombre del archivo.
