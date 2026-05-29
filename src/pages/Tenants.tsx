@@ -1423,14 +1423,25 @@ export const Tenants: React.FC = () => {
     const clientTerminalCount = registryTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
     const publishedEndpointCount = registryTerminals.filter((terminal) => Boolean(terminal.registry)).length;
     const terminalLicenseLimit = selectedTenantForTerminals?.max_pos_terminals;
+    const usesTerminalSlotLicensing = selectedTenantForTerminals?.contracted_product === 'POS_ONLY'
+        || selectedTenantForTerminals?.type === 'pos_only';
     const activeLicensedDeviceIds = new Set(
         registryTerminals
             .filter((terminal) => {
                 if (getRegistryStatusLabel(terminal) !== 'ONLINE') return false;
-                if ((terminal.registry?.auth_status || '').toUpperCase() === 'LICENSE_EXCEEDED') return false;
+                const authStatus = (terminal.registry?.auth_status || '').toUpperCase();
+                if (authStatus === 'LICENSE_EXCEEDED') return false;
+                if (authStatus && authStatus !== 'AUTHORIZED') return false;
+                if (usesTerminalSlotLicensing) {
+                    return Boolean(terminal.id?.trim() || terminal.registry?.terminal_id?.trim());
+                }
                 return Boolean(terminal.registry?.device_id?.trim());
             })
-            .map((terminal) => terminal.registry?.device_id?.trim() || '')
+            .map((terminal) => (
+                usesTerminalSlotLicensing
+                    ? (terminal.id?.trim() || terminal.registry?.terminal_id?.trim() || '')
+                    : (terminal.registry?.device_id?.trim() || '')
+            ))
             .filter(Boolean),
     );
     const activeLicensedTerminalCount = activeLicensedDeviceIds.size;

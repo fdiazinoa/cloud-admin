@@ -137,6 +137,30 @@ Despliega Cloud Admin (Vercel gamma) con el route:
 
 El APK CLIC-POS (v1.0.703+) llama ese endpoint con el JWT del login de activacion. Si responde 404/501, intenta RPC Supabase y luego ERP en modo estricto.
 
+Para **POS_ONLY**, aplica tambien:
+
+`supabase/migrations/202605291600_pos_only_terminal_slot_licensing.sql`
+
+- 1 licencia = 1 terminal/caja (`terminal_id`), no 1 licencia por cada `device_id` historico.
+- Nombres de caja unicos por tenant (`Caja 1`, `Caja 2`, ...); duplicados rechazados en `register_tenant_server_endpoint`.
+- Reinstalar la misma caja con otro equipo no consume licencias extra si conserva el mismo `terminal_id`.
+
+Limpieza opcional si un tenant acumulo muchos `device_id` sobre la misma caja:
+
+```sql
+-- Ver cupos reales (POS_ONLY cuenta terminal_id, no device_id)
+SELECT * FROM landlord.count_tenant_pos_license_seats('<TENANT_UUID>');
+
+-- Marcar equipos historicos offline salvo los activos de cada caja
+UPDATE landlord.tenant_server_registry AS registry
+SET status = 'OFFLINE', updated_at = timezone('utc', now())
+WHERE tenant_id = '<TENANT_UUID>'
+  AND status = 'ONLINE'
+  AND device_id NOT IN ('DEV-....'); -- conservar solo el device vivo por caja
+
+SELECT landlord.enforce_tenant_pos_license_limits('<TENANT_UUID>');
+```
+
 ## Orden sugerido de migraciones relacionadas (referencia)
 
 Si gamma está muy atrás, revisa también en `supabase/migrations/`:
@@ -149,6 +173,7 @@ Si gamma está muy atrás, revisa también en `supabase/migrations/`:
 | `202605291200_pos_terminal_license_enforcement.sql` | Limite `max_pos_terminals`, `LICENSE_EXCEEDED`, RPC enforce |
 | `202605291400_pos_license_count_by_device.sql` | Corrige conteo: 1 licencia = 1 equipo (`device_id`) |
 | `202605291500_terminal_activation_license_validation.sql` | RPC activacion POS + fallback `check_terminal_license_availability` |
+| `202605291600_pos_only_terminal_slot_licensing.sql` | POS_ONLY: licencia por caja/terminal_id + nombre unico de caja |
 | `20260525101500_tenant_pos_erp_semantics.sql` | Semántica tenant (`lifecycle_status`, `backup_enabled`, etc.) |
 
 `supabase db push` aplica las pendientes en orden de timestamp del nombre del archivo.
