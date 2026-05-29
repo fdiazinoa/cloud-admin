@@ -7,7 +7,7 @@ declare const Deno: {
     serve(handler: (request: Request) => Response | Promise<Response>): void;
 };
 
-type DeviceAction = 'TAKEOVER' | 'ROTATE_TOKEN' | 'REVOKE_DEVICE';
+type DeviceAction = 'TAKEOVER' | 'ROTATE_TOKEN' | 'REVOKE_DEVICE' | 'SYNC_AUTHORIZED_DEVICE';
 
 interface DeviceActionRequest {
     tenant_id?: string;
@@ -260,7 +260,7 @@ Deno.serve(async (request) => {
             }, 400);
         }
 
-        if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE'].includes(action)) {
+        if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE'].includes(action)) {
             return json({ error: 'INVALID_ACTION', message: 'Accion de autorizacion no soportada.' }, 400);
         }
 
@@ -303,23 +303,91 @@ Deno.serve(async (request) => {
             return json({ error: 'TERMINAL_DISABLED', message: 'No se permite takeover si la terminal esta desactivada.' }, 400);
         }
 
-        const authorizedDeviceId = registry?.authorized_device_id
-            || registry?.current_device_id
-            || registry?.device_id
-            || publicTerminal?.device_token
+        const persistedAuthorizedDeviceId = registry?.authorized_device_id?.trim() || null;
+        const effectiveAuthorizedDeviceId = persistedAuthorizedDeviceId
+            || registry?.current_device_id?.trim()
+            || registry?.device_id?.trim()
+            || publicTerminal?.device_token?.trim()
             || null;
         const previousDeviceId = action === 'TAKEOVER'
-            ? authorizedDeviceId
-            : registry?.previous_device_id || authorizedDeviceId;
+            ? effectiveAuthorizedDeviceId
+            : registry?.previous_device_id || effectiveAuthorizedDeviceId;
 
-        if (action === 'TAKEOVER' && authorizedDeviceId === deviceId) {
+        if (action === 'SYNC_AUTHORIZED_DEVICE') {
+            if (tenant.contracted_product !== 'POS_ONLY') {
+                return json({
+                    error: 'INVALID_ACTION',
+                    message: 'Sincronizar device autorizado solo aplica a tenants POS_ONLY.',
+                }, 400);
+            }
+            if (!registry?.id) {
+                return json({ error: 'REGISTRY_NOT_FOUND', message: 'No hay registro de servidor para sincronizar.' }, 404);
+            }
+            const registryDeviceId = registry.device_id?.trim() || registry.current_device_id?.trim() || null;
+            if (!registryDeviceId || registryDeviceId !== deviceId) {
+                return json({
+                    error: 'DEVICE_MISMATCH',
+                    message: 'El device solicitado no coincide con el registro online de la terminal.',
+                }, 409);
+            }
+            if (persistedAuthorizedDeviceId === deviceId) {
+                return json({
+                    status: 'success',
+                    success: true,
+                    action: 'authorized_device_already_synced',
+                    authorized_device_id: deviceId,
+                    message: 'El device autorizado ya estaba persistido en Cloud-Admin.',
+                });
+            }
+
+            const completedAt = new Date().toISOString();
+            const { error: syncError } = await supabase
+                .from('tenant_server_registry')
+                .update({
+                    authorized_device_id: deviceId,
+                    current_device_id: deviceId,
+                    auth_status: 'AUTHORIZED',
+                    last_auth_error: null,
+                    last_auth_attempt_at: completedAt,
+                    requires_pos_reauth: false,
+                    updated_at: completedAt,
+                })
+                .eq('id', registry.id);
+            if (syncError) throw syncError;
+
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalName || registry.terminal_name || publicTerminal?.name || null,
+                old_device_id: persistedAuthorizedDeviceId,
+                new_device_id: deviceId,
+                action: 'SYNC_AUTHORIZED_DEVICE',
+                performed_by: performedBy,
+                reason,
+                result: 'SUCCESS',
+                metadata: {
+                    registry_id: registry.id,
+                    local_registry_only: true,
+                },
+            });
+
+            return json({
+                status: 'success',
+                success: true,
+                action: 'authorized_device_synced',
+                authorized_device_id: deviceId,
+                message: 'Device autorizado persistido en Cloud-Admin. El POS puede reintentar conexion.',
+            });
+        }
+
+        if (action === 'TAKEOVER' && persistedAuthorizedDeviceId === deviceId) {
             return json({
                 error: 'SAME_DEVICE_ID',
                 message: 'Este equipo ya es el device autorizado para la terminal.',
             }, 400);
         }
 
-        if (action === 'ROTATE_TOKEN' && authorizedDeviceId && authorizedDeviceId !== deviceId) {
+        if (action === 'ROTATE_TOKEN' && effectiveAuthorizedDeviceId && effectiveAuthorizedDeviceId !== deviceId) {
             return json({
                 error: 'DEVICE_NOT_AUTHORIZED',
                 message: 'Solo puedes rotar credenciales del device autorizado actual.',
@@ -331,7 +399,7 @@ Deno.serve(async (request) => {
             terminal_id: terminalId,
             terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
             old_device_id: previousDeviceId,
-            new_device_id: action === 'REVOKE_DEVICE' ? authorizedDeviceId : deviceId,
+            new_device_id: action === 'REVOKE_DEVICE' ? effectiveAuthorizedDeviceId : deviceId,
             action,
             performed_by: performedBy,
             reason,
@@ -364,7 +432,7 @@ Deno.serve(async (request) => {
                 terminal_id: terminalId,
                 terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
                 old_device_id: deviceId,
-                new_device_id: authorizedDeviceId,
+                new_device_id: effectiveAuthorizedDeviceId,
                 action,
                 performed_by: performedBy,
                 reason,
@@ -380,7 +448,7 @@ Deno.serve(async (request) => {
                 success: true,
                 action: 'device_revoked',
                 revoked_device_id: deviceId,
-                authorized_device_id: authorizedDeviceId,
+                authorized_device_id: effectiveAuthorizedDeviceId,
                 message: 'Equipo anterior marcado como revocado en Cloud-Admin.',
             });
         }
@@ -446,7 +514,7 @@ Deno.serve(async (request) => {
                     : null;
         const tokenPreview = getTokenPreview(sanitizedPayload);
         const completedAt = new Date().toISOString();
-        const newAuthorizedDeviceId = action === 'ROTATE_TOKEN' ? authorizedDeviceId || deviceId : deviceId;
+        const newAuthorizedDeviceId = action === 'ROTATE_TOKEN' ? effectiveAuthorizedDeviceId || deviceId : deviceId;
 
         if (registry?.id) {
             const registryUpdate: Record<string, unknown> = {
