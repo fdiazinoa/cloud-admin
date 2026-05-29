@@ -112,6 +112,16 @@ WHERE id = '<TENANT_UUID>'
   AND lifecycle_status = 'BLOCKED';
 ```
 
+## Licencias POS (limite de terminales)
+
+Para bloquear cajas que excedan `max_pos_terminals`, aplica tambien:
+
+`supabase/migrations/202605291200_pos_terminal_license_enforcement.sql`
+
+Eso actualiza `register_tenant_server_endpoint`, `resolve_tenant_license` y agrega `enforce_tenant_pos_license_limits`.
+
+El POS debe leer `device_license_allowed` / `license_block_reason` de `resolve_tenant_license(..., p_device_id)` o `auth_status = LICENSE_EXCEEDED` en registry.
+
 ## Orden sugerido de migraciones relacionadas (referencia)
 
 Si gamma está muy atrás, revisa también en `supabase/migrations/`:
@@ -121,6 +131,7 @@ Si gamma está muy atrás, revisa también en `supabase/migrations/`:
 | `202605241430_terminal_takeover_audit.sql` | `current_device_id`, `requires_pos_reauth`, auditoría takeover |
 | `20260524234158_pos_erp_readiness_audit.sql` | `erp_readiness` en registry |
 | `202605271015_terminal_device_authorization.sql` | **`authorized_device_id`**, `auth_status`, `terminal_device_audit` |
+| `202605291200_pos_terminal_license_enforcement.sql` | Limite `max_pos_terminals`, `LICENSE_EXCEEDED`, RPC enforce |
 | `20260525101500_tenant_pos_erp_semantics.sql` | Semántica tenant (`lifecycle_status`, `backup_enabled`, etc.) |
 
 `supabase db push` aplica las pendientes en orden de timestamp del nombre del archivo.

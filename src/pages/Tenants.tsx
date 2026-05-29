@@ -358,6 +358,12 @@ export const Tenants: React.FC = () => {
         setIsTerminalModalLoading(true);
 
         try {
+            try {
+                await tenantService.enforceTenantPosLicenseLimits(tenant.id);
+            } catch (enforceErr) {
+                console.warn('POS license enforcement skipped or failed:', enforceErr);
+            }
+
             const [data, releases] = await Promise.all([
                 tenantService.getTenantTerminalOverview(tenant.id),
                 getPosApkReleases(),
@@ -486,13 +492,16 @@ export const Tenants: React.FC = () => {
             case 'OLD_DEVICE_REVOKED': return 'Equipo revocado';
             case 'TOKEN_ROTATION_REQUIRED': return 'Rotacion requerida';
             case 'ERP_AUTH_ERROR': return 'Error auth ERP';
+            case 'LICENSE_EXCEEDED': return 'Sin licencia POS';
             default: return status || 'N/D';
         }
     };
 
     const getAuthStatusClasses = (status: string) => {
         if (status === 'AUTHORIZED' || status === 'TAKEOVER_COMPLETED') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-        if (status === 'DEVICE_MISMATCH' || status === 'ERP_AUTH_ERROR') return 'border-red-200 bg-red-50 text-red-700';
+        if (status === 'DEVICE_MISMATCH' || status === 'ERP_AUTH_ERROR' || status === 'LICENSE_EXCEEDED') {
+            return 'border-red-200 bg-red-50 text-red-700';
+        }
         if (status === 'TAKEOVER_PENDING' || status === 'TOKEN_ROTATION_REQUIRED') return 'border-amber-200 bg-amber-50 text-amber-700';
         if (status === 'OLD_DEVICE_REVOKED') return 'border-slate-200 bg-slate-100 text-slate-700';
         return 'border-slate-200 bg-slate-50 text-slate-600';
@@ -698,8 +707,25 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const handleEnforcePosLicenseLimits = async () => {
+        if (!selectedTenantForTerminals) return;
+        try {
+            await tenantService.enforceTenantPosLicenseLimits(selectedTenantForTerminals.id);
+            await refreshTerminalModalData();
+            alert('Limite de licencias POS aplicado. Los equipos excedentes quedaron marcados como sin licencia.');
+        } catch (err: unknown) {
+            console.error('Error enforcing POS license limits:', err);
+            alert(getErrorMessage(err));
+        }
+    };
+
     const refreshTerminalModalData = async () => {
         if (!selectedTenantForTerminals) return;
+        try {
+            await tenantService.enforceTenantPosLicenseLimits(selectedTenantForTerminals.id);
+        } catch (enforceErr) {
+            console.warn('POS license enforcement skipped or failed:', enforceErr);
+        }
         const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
         setTenantTerminals(data);
         void loadAuthAttemptsForTerminals(selectedTenantForTerminals.id, data);
@@ -1397,8 +1423,21 @@ export const Tenants: React.FC = () => {
     const clientTerminalCount = registryTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
     const publishedEndpointCount = registryTerminals.filter((terminal) => Boolean(terminal.registry)).length;
     const terminalLicenseLimit = selectedTenantForTerminals?.max_pos_terminals;
-    const activeLicensedTerminalCount = masterTerminalCount > 0 ? masterTerminalCount : onlineTerminalCount;
+    const activeLicensedTerminalIds = new Set(
+        registryTerminals
+            .filter((terminal) => {
+                if (getRegistryStatusLabel(terminal) !== 'ONLINE') return false;
+                if ((terminal.registry?.auth_status || '').toUpperCase() === 'LICENSE_EXCEEDED') return false;
+                return Boolean(terminal.registry?.terminal_id || terminal.terminal_id);
+            })
+            .map((terminal) => (terminal.registry?.terminal_id || terminal.terminal_id || '').trim())
+            .filter(Boolean),
+    );
+    const activeLicensedTerminalCount = activeLicensedTerminalIds.size;
     const isTerminalLicenseOverLimit = typeof terminalLicenseLimit === 'number' && activeLicensedTerminalCount > terminalLicenseLimit;
+    const licenseExceededDeviceCount = registryTerminals.filter(
+        (terminal) => (terminal.registry?.auth_status || '').toUpperCase() === 'LICENSE_EXCEEDED',
+    ).length;
     const erpReadyTerminalCount = registryTerminals.filter((terminal) => getErpReadinessStatus(terminal) === 'ready').length;
     return (
         <div className="space-y-6">
@@ -1756,6 +1795,30 @@ export const Tenants: React.FC = () => {
                         </div>
 
                         <div className="p-6 overflow-y-auto space-y-6">
+                            {(isTerminalLicenseOverLimit || licenseExceededDeviceCount > 0) ? (
+                                <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                    <div>
+                                        <p className="text-sm font-black text-red-800">Limite de terminales POS excedido</p>
+                                        <p className="mt-1 text-sm text-red-700">
+                                            Este tenant tiene contratada{typeof terminalLicenseLimit === 'number' && terminalLicenseLimit === 1 ? '' : 's'}
+                                            {' '}
+                                            {terminalLicenseLimit ?? 1} terminal(es) POS, pero hay {activeLicensedTerminalCount} activa(s)
+                                            {licenseExceededDeviceCount > 0
+                                                ? ` y ${licenseExceededDeviceCount} equipo(s) marcado(s) sin licencia.`
+                                                : '.'}
+                                            {' '}El POS adicional debe recibir bloqueo hasta contratar mas licencias.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleEnforcePosLicenseLimits()}
+                                        className="inline-flex items-center justify-center rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-bold text-red-800 shadow-sm hover:bg-red-100 transition-colors"
+                                    >
+                                        Aplicar limite de licencias
+                                    </button>
+                                </div>
+                            ) : null}
+
                             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                                 <div className={`rounded-2xl border px-4 py-4 ${isTerminalLicenseOverLimit ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-slate-50'}`}>
                                     <p className={`text-xs font-bold uppercase tracking-wider ${isTerminalLicenseOverLimit ? 'text-red-700' : 'text-slate-500'}`}>Licencia POS</p>

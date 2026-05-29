@@ -1420,6 +1420,15 @@ export async function requestTerminalDeviceAction(
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
 }
 
+export async function enforceTenantPosLicenseLimits(tenantId: string): Promise<Record<string, unknown>> {
+    const { data, error } = await supabaseAdmin.rpc("enforce_tenant_pos_license_limits", {
+        p_tenant_id: tenantId,
+    });
+
+    if (error) throw error;
+    return (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
+}
+
 /** Quita lifecycle BLOCKED dejado por readiness ERP fallido en tenants POS_ONLY. */
 export async function releasePosOnlyProvisioningBlock(tenantId: string): Promise<void> {
     const { error } = await supabaseAdmin
@@ -1840,6 +1849,7 @@ export const tenantService = {
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
     syncTerminalAuthorizedDevice,
+    enforceTenantPosLicenseLimits,
     releasePosOnlyProvisioningBlock,
     getTerminalFiscalDebug,
     getTerminalFiscalReadiness,
