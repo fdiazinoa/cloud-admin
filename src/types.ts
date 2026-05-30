@@ -193,6 +193,19 @@ export interface TerminalAuthAttempt {
     metadata?: Record<string, unknown> | null;
 }
 
+export interface TerminalPairingCodeResult {
+    status: string;
+    success?: boolean;
+    pairingCode?: string | null;
+    pairing_code?: string | null;
+    code?: string | null;
+    expiresAt?: string | null;
+    expires_at?: string | null;
+    ttlSeconds?: number | null;
+    ttl_seconds?: number | null;
+    message?: string;
+}
+
 export type TerminalFiscalStatus = 'MISSING' | 'READY' | 'DEMO_READY' | 'ERROR';
 
 export interface TerminalFiscalReadiness {
