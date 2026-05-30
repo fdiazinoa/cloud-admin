@@ -1431,15 +1431,47 @@ export async function requestTerminalDeviceAction(
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
 }
 
+export type TenantPosLicenseSeats = {
+    usedSeats: number;
+    maxSeats: number;
+    licenseUnit: "terminal_id" | "device_id" | string;
+};
+
+export async function getTenantPosLicenseSeats(tenantId: string): Promise<TenantPosLicenseSeats> {
+    const { data, error } = await supabaseAdmin.rpc("count_tenant_pos_license_seats", {
+        p_tenant_id: tenantId,
+    });
+
+    if (error) throw error;
+
+    const row = Array.isArray(data) ? data[0] : data;
+    const record = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
+
+    return {
+        usedSeats: Number(record.used_seats ?? 0),
+        maxSeats: Number(record.max_seats ?? 1),
+        licenseUnit: typeof record.license_unit === "string" ? record.license_unit : "device_id",
+    };
+}
+
 export async function releaseTerminalLicenseSlot(input: {
     tenantId: string;
     registryId: string;
     deviceId: string;
 }): Promise<{ message: string }> {
     const deviceId = input.deviceId.trim();
+    const { data: tenant, error: tenantError } = await supabaseAdmin
+        .from("tenants")
+        .select("id, contracted_product, type")
+        .eq("id", input.tenantId)
+        .maybeSingle();
+
+    if (tenantError) throw tenantError;
+    if (!tenant) throw new Error("Tenant no encontrado.");
+
     const { data: registry, error: registryError } = await supabaseAdmin
         .from("tenant_server_registry")
-        .select("id, tenant_id, device_id, terminal_id, status, is_revoked, auth_status")
+        .select("id, tenant_id, device_id, terminal_id, terminal_name, status, is_revoked, auth_status")
         .eq("tenant_id", input.tenantId)
         .eq("id", input.registryId)
         .maybeSingle();
@@ -1450,22 +1482,65 @@ export async function releaseTerminalLicenseSlot(input: {
         throw new Error("El device_id no coincide con el registro seleccionado.");
     }
 
+    const usesTerminalSlots = tenant.contracted_product === "POS_ONLY" || tenant.type === "pos_only";
+    const terminalId = registry.terminal_id?.trim() || "";
+    const terminalName = registry.terminal_name?.trim() || terminalId || "caja";
+    const releasedAt = new Date().toISOString();
+
+    const releasePayload = {
+        status: "OFFLINE",
+        is_revoked: true,
+        auth_status: "OLD_DEVICE_REVOKED",
+        revocation_reason: "MANUAL_RELEASE_LICENSE_SLOT",
+        requires_pos_reauth: false,
+        authorized_device_id: null,
+        current_device_id: null,
+        last_auth_error: null,
+        is_primary: false,
+        updated_at: releasedAt,
+    } as Record<string, unknown>;
+
+    if (usesTerminalSlots && terminalId) {
+        const { data: slotRows, error: slotError } = await supabaseAdmin
+            .from("tenant_server_registry")
+            .select("id, status, is_revoked, auth_status")
+            .eq("tenant_id", input.tenantId)
+            .eq("terminal_id", terminalId);
+
+        if (slotError) throw slotError;
+
+        let releasedCount = 0;
+        for (const row of slotRows || []) {
+            const alreadyReleased = row.status === "OFFLINE"
+                || row.is_revoked === true
+                || row.auth_status === "OLD_DEVICE_REVOKED";
+            if (alreadyReleased) continue;
+
+            await updateRegistryWithFallback(row.id, input.tenantId, releasePayload);
+            releasedCount += 1;
+        }
+
+        try {
+            await enforceTenantPosLicenseLimits(input.tenantId);
+        } catch (enforceError) {
+            console.warn("POS license re-balance after release failed", enforceError);
+        }
+
+        const seats = await getTenantPosLicenseSeats(input.tenantId);
+
+        return {
+            message: releasedCount > 0
+                ? `Cupo de ${terminalName} liberado (${releasedCount} equipo(s)). Cupo usado ahora: ${seats.usedSeats}/${seats.maxSeats}. Active el nuevo Android en la misma caja o con otro nombre unico.`
+                : `La caja ${terminalName} ya estaba liberada. Cupo usado: ${seats.usedSeats}/${seats.maxSeats}.`,
+        };
+    }
+
     const alreadyReleased = registry.status === "OFFLINE"
         || registry.is_revoked === true
         || registry.auth_status === "OLD_DEVICE_REVOKED";
 
     if (!alreadyReleased) {
-        const releasedAt = new Date().toISOString();
-        await updateRegistryWithFallback(registry.id, input.tenantId, {
-            status: "OFFLINE",
-            is_revoked: true,
-            auth_status: "OLD_DEVICE_REVOKED",
-            revocation_reason: "MANUAL_RELEASE_LICENSE_SLOT",
-            requires_pos_reauth: true,
-            authorized_device_id: null,
-            last_auth_error: "Cupo de licencia liberado desde Cloud-Admin. Instala o activa el nuevo equipo.",
-            updated_at: releasedAt,
-        });
+        await updateRegistryWithFallback(registry.id, input.tenantId, releasePayload);
     }
 
     try {
@@ -1474,10 +1549,12 @@ export async function releaseTerminalLicenseSlot(input: {
         console.warn("POS license re-balance after release failed", enforceError);
     }
 
+    const seats = await getTenantPosLicenseSeats(input.tenantId);
+
     return {
         message: alreadyReleased
-            ? "Este equipo ya estaba liberado del cupo de licencia."
-            : `Cupo liberado para ${deviceId}. Un nuevo Android puede activarse si hay licencias disponibles. Evita que este equipo siga enviando heartbeat con el mismo device_id.`,
+            ? `Este equipo ya estaba liberado. Cupo usado: ${seats.usedSeats}/${seats.maxSeats}.`
+            : `Cupo liberado para ${deviceId}. Cupo usado: ${seats.usedSeats}/${seats.maxSeats}.`,
     };
 }
 
@@ -1911,6 +1988,7 @@ export const tenantService = {
     requestTerminalDeviceAction,
     syncTerminalAuthorizedDevice,
     enforceTenantPosLicenseLimits,
+    getTenantPosLicenseSeats,
     releaseTerminalLicenseSlot,
     releasePosOnlyProvisioningBlock,
     getTerminalFiscalDebug,
