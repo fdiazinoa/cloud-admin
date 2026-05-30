@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2, Unlink } from 'lucide-react';
 import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
@@ -916,6 +916,38 @@ export const Tenants: React.FC = () => {
             await refreshTerminalModalData();
         } catch (err: unknown) {
             console.error('Error rotating terminal credentials:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
+    const handleReleaseTerminalLicenseSlot = async (
+        terminal: TenantTerminalSnapshot,
+        registryId: string,
+        deviceId: string,
+    ) => {
+        if (!selectedTenantForTerminals) return;
+
+        const confirmed = confirm(
+            `Se liberara el cupo de licencia usado por ${deviceId} (${terminal.name}). `
+            + 'Ese registro quedara OFFLINE/revocado y otro Android con un device_id nuevo podra tomar la licencia. '
+            + 'Si este tablet sigue abierto con el mismo device_id, puede volver a ocupar el cupo. ¿Deseas continuar?',
+        );
+        if (!confirmed) return;
+
+        const key = `${getTerminalKey(terminal)}-RELEASE-${deviceId}`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.releaseTerminalLicenseSlot({
+                tenantId: selectedTenantForTerminals.id,
+                registryId,
+                deviceId,
+            });
+            alert(result.message);
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error releasing terminal license slot:', err);
             alert(getErrorMessage(err));
         } finally {
             setDeviceActionSubmittingKey(null);
@@ -2101,12 +2133,13 @@ export const Tenants: React.FC = () => {
                                                                         <th className="px-4 py-3 font-bold">Red / Endpoint</th>
                                                                         <th className="px-4 py-3 font-bold">Version APK</th>
                                                                         <th className="px-4 py-3 font-bold text-right">Ultimo tick</th>
+                                                                        <th className="px-4 py-3 font-bold text-right">Acciones</th>
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody className="divide-y divide-slate-50">
                                                                     {identity.deviceRows.length === 0 ? (
                                                                         <tr>
-                                                                            <td colSpan={6} className="px-4 py-6 text-center text-slate-500 text-sm">
+                                                                            <td colSpan={7} className="px-4 py-6 text-center text-slate-500 text-sm">
                                                                                 Sin devices reportados para esta terminal.
                                                                             </td>
                                                                         </tr>
@@ -2118,6 +2151,15 @@ export const Tenants: React.FC = () => {
                                                                         const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
                                                                         const prefLanIp = registry ? getPreferredLanIp(mockTerminal) : 'N/D';
                                                                         const endpointRole = getRegistryEndpointRole(registry);
+                                                                        const canReleaseLicenseSlot = Boolean(
+                                                                            registry?.id
+                                                                            && rStatusLabel === 'ONLINE'
+                                                                            && !registry.is_revoked
+                                                                            && registry.auth_status !== 'OLD_DEVICE_REVOKED',
+                                                                        );
+                                                                        const releaseSubmittingKey = registry?.id
+                                                                            ? `${terminalKey}-RELEASE-${deviceRow.deviceId}`
+                                                                            : '';
 
                                                                         return (
                                                                             <tr key={`${deviceRow.deviceId}-${deviceIndex}`} className={`hover:bg-slate-50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/20' : ''}`}>
@@ -2171,6 +2213,28 @@ export const Tenants: React.FC = () => {
                                                                                 </td>
                                                                                 <td className="px-4 py-3 align-top text-right">
                                                                                     <p className="text-[10px] text-slate-500">{formatDateTime(deviceRow.lastSeenAt)}</p>
+                                                                                </td>
+                                                                                <td className="px-4 py-3 align-top text-right">
+                                                                                    {canReleaseLicenseSlot && registry?.id ? (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => void handleReleaseTerminalLicenseSlot(
+                                                                                                terminal,
+                                                                                                registry.id,
+                                                                                                deviceRow.deviceId,
+                                                                                            )}
+                                                                                            disabled={deviceActionSubmittingKey === releaseSubmittingKey}
+                                                                                            title="Libera el cupo de licencia para otro Android o device_id nuevo"
+                                                                                            className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] font-bold uppercase text-amber-900 hover:bg-amber-100 transition-colors disabled:opacity-60"
+                                                                                        >
+                                                                                            {deviceActionSubmittingKey === releaseSubmittingKey
+                                                                                                ? <Loader2 size={12} className="animate-spin" />
+                                                                                                : <Unlink size={12} />}
+                                                                                            Liberar cupo
+                                                                                        </button>
+                                                                                    ) : (
+                                                                                        <span className="text-[10px] text-slate-400">—</span>
+                                                                                    )}
                                                                                 </td>
                                                                             </tr>
                                                                         );
