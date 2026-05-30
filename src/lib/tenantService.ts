@@ -1234,7 +1234,7 @@ type RegistryAuthSyncPayload = {
     updated_at: string;
 };
 
-const REGISTRY_AUTH_SYNC_OPTIONAL_KEYS = new Set<keyof RegistryAuthSyncPayload>([
+const REGISTRY_OPTIONAL_UPDATE_KEYS = new Set([
     "device_id",
     "current_device_id",
     "authorized_device_id",
@@ -1242,9 +1242,12 @@ const REGISTRY_AUTH_SYNC_OPTIONAL_KEYS = new Set<keyof RegistryAuthSyncPayload>(
     "last_auth_error",
     "last_auth_attempt_at",
     "requires_pos_reauth",
+    "status",
+    "is_revoked",
+    "revocation_reason",
 ]);
 
-function parseMissingRegistryColumn(error: unknown): keyof RegistryAuthSyncPayload | null {
+function parseMissingRegistryColumn(error: unknown): string | null {
     const haystack = getSupabaseErrorHaystack(error);
     if (!haystack) return null;
 
@@ -1255,24 +1258,24 @@ function parseMissingRegistryColumn(error: unknown): keyof RegistryAuthSyncPaylo
         || haystack.match(/column\s+tenant_server_registry\.([a-z][a-z0-9_]*)\s+does not exist/i);
 
     if (quotedMatch?.[1]) {
-        const column = quotedMatch[1] as keyof RegistryAuthSyncPayload;
-        if (REGISTRY_AUTH_SYNC_OPTIONAL_KEYS.has(column)) return column;
+        const column = quotedMatch[1];
+        if (REGISTRY_OPTIONAL_UPDATE_KEYS.has(column)) return column;
     }
 
     const lowerHaystack = haystack.toLowerCase();
-    for (const column of REGISTRY_AUTH_SYNC_OPTIONAL_KEYS) {
+    for (const column of REGISTRY_OPTIONAL_UPDATE_KEYS) {
         if (lowerHaystack.includes(column)) return column;
     }
 
     return null;
 }
 
-async function updateRegistryAuthSyncWithFallback(
+async function updateRegistryWithFallback(
     registryId: string,
     tenantId: string,
-    payload: RegistryAuthSyncPayload,
+    payload: Record<string, unknown>,
 ): Promise<{ droppedColumns: string[] }> {
-    const nextPayload: Partial<RegistryAuthSyncPayload> = { ...payload };
+    const nextPayload: Record<string, unknown> = { ...payload };
     const droppedColumns: string[] = [];
     const maxAttempts = Math.max(5, Object.keys(nextPayload).length + 3);
 
@@ -1300,6 +1303,14 @@ async function updateRegistryAuthSyncWithFallback(
     }
 
     throw new Error("Registry update failed after retrying without optional columns.");
+}
+
+async function updateRegistryAuthSyncWithFallback(
+    registryId: string,
+    tenantId: string,
+    payload: RegistryAuthSyncPayload,
+): Promise<{ droppedColumns: string[] }> {
+    return updateRegistryWithFallback(registryId, tenantId, payload as Record<string, unknown>);
 }
 
 export async function syncTerminalAuthorizedDevice(input: {
@@ -1418,6 +1429,56 @@ export async function requestTerminalDeviceAction(
     }
 
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
+}
+
+export async function releaseTerminalLicenseSlot(input: {
+    tenantId: string;
+    registryId: string;
+    deviceId: string;
+}): Promise<{ message: string }> {
+    const deviceId = input.deviceId.trim();
+    const { data: registry, error: registryError } = await supabaseAdmin
+        .from("tenant_server_registry")
+        .select("id, tenant_id, device_id, terminal_id, status, is_revoked, auth_status")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", input.registryId)
+        .maybeSingle();
+
+    if (registryError) throw registryError;
+    if (!registry) throw new Error("Registro de terminal no encontrado.");
+    if (registry.device_id?.trim() !== deviceId) {
+        throw new Error("El device_id no coincide con el registro seleccionado.");
+    }
+
+    const alreadyReleased = registry.status === "OFFLINE"
+        || registry.is_revoked === true
+        || registry.auth_status === "OLD_DEVICE_REVOKED";
+
+    if (!alreadyReleased) {
+        const releasedAt = new Date().toISOString();
+        await updateRegistryWithFallback(registry.id, input.tenantId, {
+            status: "OFFLINE",
+            is_revoked: true,
+            auth_status: "OLD_DEVICE_REVOKED",
+            revocation_reason: "MANUAL_RELEASE_LICENSE_SLOT",
+            requires_pos_reauth: true,
+            authorized_device_id: null,
+            last_auth_error: "Cupo de licencia liberado desde Cloud-Admin. Instala o activa el nuevo equipo.",
+            updated_at: releasedAt,
+        });
+    }
+
+    try {
+        await enforceTenantPosLicenseLimits(input.tenantId);
+    } catch (enforceError) {
+        console.warn("POS license re-balance after release failed", enforceError);
+    }
+
+    return {
+        message: alreadyReleased
+            ? "Este equipo ya estaba liberado del cupo de licencia."
+            : `Cupo liberado para ${deviceId}. Un nuevo Android puede activarse si hay licencias disponibles. Evita que este equipo siga enviando heartbeat con el mismo device_id.`,
+    };
 }
 
 export async function enforceTenantPosLicenseLimits(tenantId: string): Promise<Record<string, unknown>> {
@@ -1850,6 +1911,7 @@ export const tenantService = {
     requestTerminalDeviceAction,
     syncTerminalAuthorizedDevice,
     enforceTenantPosLicenseLimits,
+    releaseTerminalLicenseSlot,
     releasePosOnlyProvisioningBlock,
     getTerminalFiscalDebug,
     getTerminalFiscalReadiness,
