@@ -1469,6 +1469,13 @@ export async function releaseTerminalLicenseSlot(input: {
     if (tenantError) throw tenantError;
     if (!tenant) throw new Error("Tenant no encontrado.");
 
+    const usesErpCatalog = tenant.contracted_product === "POS_ERP";
+    if (usesErpCatalog) {
+        throw new Error(
+            "POS+ERP controla licencias al crear terminales en el ERP. Elimine la terminal en el ERP para liberar cupo.",
+        );
+    }
+
     const { data: registry, error: registryError } = await supabaseAdmin
         .from("tenant_server_registry")
         .select("id, tenant_id, device_id, terminal_id, terminal_name, status, is_revoked, auth_status")

@@ -1469,7 +1469,11 @@ export const Tenants: React.FC = () => {
     const publishedEndpointCount = registryTerminals.filter((terminal) => Boolean(terminal.registry)).length;
     const terminalLicenseLimit = posLicenseSeats?.maxSeats ?? selectedTenantForTerminals?.max_pos_terminals;
     const activeLicensedTerminalCount = posLicenseSeats?.usedSeats ?? 0;
-    const licenseCountUnit = posLicenseSeats?.licenseUnit === 'terminal_id' ? 'cajas' : 'equipos';
+    const licenseCountUnit = posLicenseSeats?.licenseUnit === 'erp_terminal'
+        ? 'terminales ERP'
+        : posLicenseSeats?.licenseUnit === 'terminal_id'
+            ? 'cajas'
+            : 'equipos';
     const isTerminalLicenseOverLimit = typeof terminalLicenseLimit === 'number' && activeLicensedTerminalCount > terminalLicenseLimit;
     const hasFreeLicenseSlot = typeof terminalLicenseLimit === 'number' && activeLicensedTerminalCount < terminalLicenseLimit;
     const licenseExceededDeviceCount = registryTerminals.filter(
@@ -1876,6 +1880,10 @@ export const Tenants: React.FC = () => {
                                         <p className="mt-1 text-[10px] text-slate-500">
                                             POS_ONLY: 1 licencia = 1 caja (nombre unico). Liberar cupo libera toda la caja.
                                         </p>
+                                    ) : selectedTenantForTerminals?.contracted_product === 'POS_ERP' ? (
+                                        <p className="mt-1 text-[10px] text-slate-500">
+                                            POS+ERP: el limite se controla al crear terminales en el ERP. Vincular cajas POS no consume licencias adicionales.
+                                        </p>
                                     ) : null}
                                 </div>
                                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
@@ -2152,12 +2160,13 @@ export const Tenants: React.FC = () => {
                                                                         const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
                                                                         const prefLanIp = registry ? getPreferredLanIp(mockTerminal) : 'N/D';
                                                                         const endpointRole = getRegistryEndpointRole(registry);
-                                                                        const canReleaseLicenseSlot = Boolean(
-                                                                            registry?.id
-                                                                            && rStatusLabel === 'ONLINE'
-                                                                            && !registry.is_revoked
-                                                                            && registry.auth_status !== 'OLD_DEVICE_REVOKED',
-                                                                        );
+                                        const canReleaseLicenseSlot = Boolean(
+                                            selectedTenantForTerminals?.contracted_product !== 'POS_ERP'
+                                            && registry?.id
+                                            && rStatusLabel === 'ONLINE'
+                                            && !registry.is_revoked
+                                            && registry.auth_status !== 'OLD_DEVICE_REVOKED',
+                                        );
                                                                         const releaseSubmittingKey = registry?.id
                                                                             ? `${terminalKey}-RELEASE-${deviceRow.deviceId}`
                                                                             : '';
