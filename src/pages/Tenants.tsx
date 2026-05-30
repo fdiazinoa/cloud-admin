@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2, Unlink } from 'lucide-react';
-import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
+import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TerminalPairingCodeResult, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService, type TenantPosLicenseSeats } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import { getPosApkReleases, type PosApkRelease } from '../lib/posApkReleases';
@@ -61,6 +61,7 @@ export const Tenants: React.FC = () => {
     const [authAttemptsByTerminal, setAuthAttemptsByTerminal] = useState<Record<string, TerminalAuthAttempt[]>>({});
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
+    const [pairingCodesByAttempt, setPairingCodesByAttempt] = useState<Record<string, TerminalPairingCodeResult>>({});
     const [posLicenseSeats, setPosLicenseSeats] = useState<TenantPosLicenseSeats | null>(null);
     const [fiscalReadinessByTerminal, setFiscalReadinessByTerminal] = useState<Record<string, TerminalFiscalReadiness>>({});
     const [fiscalReadinessLoadingKey, setFiscalReadinessLoadingKey] = useState<string | null>(null);
@@ -486,7 +487,19 @@ export const Tenants: React.FC = () => {
 
     const getTerminalKey = (terminal: TenantTerminalSnapshot) => `${terminal.id}-${terminal.registry?.id || 'catalog'}`;
 
+    const getPairingAttemptKey = (terminal: TenantTerminalSnapshot, deviceId: string) => (
+        `${getTerminalKey(terminal)}-${deviceId || 'unknown'}`
+    );
+
     const getAttemptTime = (attempt: TerminalAuthAttempt) => attempt.attempted_at || attempt.created_at || null;
+
+    const getPairingCodeValue = (result: TerminalPairingCodeResult | null | undefined) => (
+        result?.pairingCode || result?.pairing_code || result?.code || ''
+    );
+
+    const getPairingExpiresAt = (result: TerminalPairingCodeResult | null | undefined) => (
+        result?.expiresAt || result?.expires_at || null
+    );
 
     const getAuthStatusLabel = (status: string) => {
         switch (status) {
@@ -780,6 +793,56 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const handleGeneratePairingCode = async (terminal: TenantTerminalSnapshot, attempt: TerminalAuthAttempt) => {
+        if (!selectedTenantForTerminals) return;
+
+        const requestedDeviceId = getAttemptDeviceId(attempt);
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId || !requestedDeviceId) {
+            alert('El intento rechazado no tiene terminal o device_id suficiente para generar codigo.');
+            return;
+        }
+
+        const confirmed = confirm(
+            `Se generara un codigo temporal para que ${requestedDeviceId} pueda tomar control de ${terminal.name} / ${terminalId}. `
+            + 'El codigo debe escribirse en el POS y vencera en pocos minutos.',
+        );
+        if (!confirmed) return;
+
+        const key = `${getTerminalKey(terminal)}-PAIRING-${requestedDeviceId}`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                deviceId: requestedDeviceId,
+                action: 'GENERATE_PAIRING_CODE',
+                reason: 'DEVICE_REINSTALL_OR_REPLACEMENT',
+                ttlSeconds: 600,
+            }) as TerminalPairingCodeResult;
+
+            const pairingCode = getPairingCodeValue(result);
+            if (!pairingCode) {
+                alert(result.message || 'El ERP no devolvio un codigo de vinculacion.');
+                return;
+            }
+
+            setPairingCodesByAttempt((current) => ({
+                ...current,
+                [getPairingAttemptKey(terminal, requestedDeviceId)]: result,
+            }));
+            alert(result.message || `Codigo de vinculacion generado: ${pairingCode}`);
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error generating terminal pairing code:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
     const handleReauthorizeAttempt = async (terminal: TenantTerminalSnapshot, attempt: TerminalAuthAttempt) => {
         if (!selectedTenantForTerminals) return;
 
@@ -798,8 +861,10 @@ export const Tenants: React.FC = () => {
         );
         if (!confirmed) return;
 
+        const savedPairing = pairingCodesByAttempt[getPairingAttemptKey(terminal, requestedDeviceId)];
+        const savedPairingCode = getPairingCodeValue(savedPairing);
         const pairingCode = attempt.pairing_required
-            ? prompt('Codigo de vinculacion')
+            ? savedPairingCode || prompt('Codigo de vinculacion')
             : null;
         if (attempt.pairing_required && !pairingCode?.trim()) {
             alert('El codigo de vinculacion es requerido para reautorizar este equipo.');
@@ -2287,29 +2352,67 @@ export const Tenants: React.FC = () => {
                                                                             const attemptStatus = attempt.resolution_status || attempt.status || 'PENDING';
                                                                             const canReauthorize = isPendingDeviceUnauthorizedAttempt(attempt);
                                                                             const reauthorizeKey = `${terminalKey}-TAKEOVER-${requestedDeviceId}`;
+                                                                            const pairingKey = `${terminalKey}-PAIRING-${requestedDeviceId}`;
+                                                                            const generatedPairing = pairingCodesByAttempt[getPairingAttemptKey(terminal, requestedDeviceId)];
+                                                                            const generatedPairingCode = getPairingCodeValue(generatedPairing);
+                                                                            const generatedPairingExpiresAt = getPairingExpiresAt(generatedPairing);
                                                                             return (
-                                                                                <tr key={attempt.id || `${requestedDeviceId}-${attemptIndex}`}>
-                                                                                    <td className="px-3 py-2 font-mono font-bold">{requestedDeviceId || 'N/D'}</td>
-                                                                                    <td className="px-3 py-2 font-mono">{attempt.authorized_device_id || authorizedDeviceId || 'N/D'}</td>
-                                                                                    <td className="px-3 py-2">{attempt.reason || attempt.message || 'N/D'}</td>
-                                                                                    <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(getAttemptTime(attempt))}</td>
-                                                                                    <td className="px-3 py-2 font-bold uppercase">{attemptStatus}</td>
-                                                                                    <td className="px-3 py-2 text-right">
-                                                                                        {canReauthorize ? (
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                onClick={() => void handleReauthorizeAttempt(terminal, attempt)}
-                                                                                                disabled={deviceActionSubmittingKey === reauthorizeKey}
-                                                                                                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-60"
-                                                                                            >
-                                                                                                {deviceActionSubmittingKey === reauthorizeKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
-                                                                                                Reautorizar
-                                                                                            </button>
-                                                                                        ) : (
-                                                                                            <span className="text-slate-400">Sin accion</span>
-                                                                                        )}
-                                                                                    </td>
-                                                                                </tr>
+                                                                                <React.Fragment key={attempt.id || `${requestedDeviceId}-${attemptIndex}`}>
+                                                                                    <tr>
+                                                                                        <td className="px-3 py-2 font-mono font-bold">{requestedDeviceId || 'N/D'}</td>
+                                                                                        <td className="px-3 py-2 font-mono">{attempt.authorized_device_id || authorizedDeviceId || 'N/D'}</td>
+                                                                                        <td className="px-3 py-2">{attempt.reason || attempt.message || 'N/D'}</td>
+                                                                                        <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(getAttemptTime(attempt))}</td>
+                                                                                        <td className="px-3 py-2 font-bold uppercase">{attemptStatus}</td>
+                                                                                        <td className="px-3 py-2 text-right">
+                                                                                            {canReauthorize ? (
+                                                                                                <div className="flex flex-col items-end gap-1.5 sm:flex-row sm:justify-end">
+                                                                                                    {attempt.pairing_required ? (
+                                                                                                        <button
+                                                                                                            type="button"
+                                                                                                            onClick={() => void handleGeneratePairingCode(terminal, attempt)}
+                                                                                                            disabled={deviceActionSubmittingKey === pairingKey}
+                                                                                                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-700 disabled:opacity-60"
+                                                                                                        >
+                                                                                                            {deviceActionSubmittingKey === pairingKey ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />}
+                                                                                                            Generar codigo
+                                                                                                        </button>
+                                                                                                    ) : null}
+                                                                                                    <button
+                                                                                                        type="button"
+                                                                                                        onClick={() => void handleReauthorizeAttempt(terminal, attempt)}
+                                                                                                        disabled={deviceActionSubmittingKey === reauthorizeKey}
+                                                                                                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-60"
+                                                                                                    >
+                                                                                                        {deviceActionSubmittingKey === reauthorizeKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
+                                                                                                        Reautorizar
+                                                                                                    </button>
+                                                                                                </div>
+                                                                                            ) : (
+                                                                                                <span className="text-slate-400">Sin accion</span>
+                                                                                            )}
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                    {generatedPairingCode ? (
+                                                                                        <tr>
+                                                                                            <td colSpan={6} className="px-3 pb-3">
+                                                                                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                                                                                                    <p className="text-[11px] font-bold uppercase tracking-wider">Codigo de vinculacion para escribir en el POS</p>
+                                                                                                    <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                                                                        <p className="font-mono text-lg font-black tracking-widest">{generatedPairingCode}</p>
+                                                                                                        <p className="text-xs font-semibold">
+                                                                                                            {generatedPairingExpiresAt
+                                                                                                                ? `Vence: ${formatDateTime(generatedPairingExpiresAt)}`
+                                                                                                                : generatedPairing.ttlSeconds || generatedPairing.ttl_seconds
+                                                                                                                    ? `Vence en ${generatedPairing.ttlSeconds || generatedPairing.ttl_seconds} segundos`
+                                                                                                                    : 'Usalo antes de que expire.'}
+                                                                                                        </p>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </td>
+                                                                                        </tr>
+                                                                                    ) : null}
+                                                                                </React.Fragment>
                                                                             );
                                                                         })}
                                                                     </tbody>
