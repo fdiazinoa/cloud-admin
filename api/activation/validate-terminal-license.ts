@@ -11,6 +11,7 @@ type ApiRequest = IncomingMessage & {
 type ValidatePayload = {
     tenantId?: unknown;
     deviceId?: unknown;
+    terminalId?: unknown;
     email?: unknown;
 };
 
@@ -206,6 +207,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
 
         const tenantId = payload.tenantId.trim();
         const deviceId = isNonEmptyString(payload.deviceId) ? payload.deviceId.trim() : null;
+        const terminalId = isNonEmptyString(payload.terminalId) ? payload.terminalId.trim() : null;
         const bodyEmail = isNonEmptyString(payload.email) ? normalizeEmail(payload.email) : null;
 
         const rateLimitKey = createHash("sha256")
@@ -272,6 +274,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             {
                 p_tenant_id: tenantId,
                 p_device_id: deviceId,
+                p_terminal_id: terminalId,
             },
         );
 

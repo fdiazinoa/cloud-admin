@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2, Unlink } from 'lucide-react';
 import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
-import { tenantService } from '../lib/tenantService';
+import { tenantService, type TenantPosLicenseSeats } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import { getPosApkReleases, type PosApkRelease } from '../lib/posApkReleases';
 import {
@@ -61,6 +61,7 @@ export const Tenants: React.FC = () => {
     const [authAttemptsByTerminal, setAuthAttemptsByTerminal] = useState<Record<string, TerminalAuthAttempt[]>>({});
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
+    const [posLicenseSeats, setPosLicenseSeats] = useState<TenantPosLicenseSeats | null>(null);
     const [fiscalReadinessByTerminal, setFiscalReadinessByTerminal] = useState<Record<string, TerminalFiscalReadiness>>({});
     const [fiscalReadinessLoadingKey, setFiscalReadinessLoadingKey] = useState<string | null>(null);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
@@ -354,6 +355,7 @@ export const Tenants: React.FC = () => {
         setTenantTerminals([]);
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
+        setPosLicenseSeats(null);
         setIsTerminalModalOpen(true);
         setIsTerminalModalLoading(true);
 
@@ -364,11 +366,13 @@ export const Tenants: React.FC = () => {
                 console.warn('POS license enforcement skipped or failed:', enforceErr);
             }
 
-            const [data, releases] = await Promise.all([
+            const [data, releases, seats] = await Promise.all([
                 tenantService.getTenantTerminalOverview(tenant.id),
                 getPosApkReleases(),
+                tenantService.getTenantPosLicenseSeats(tenant.id).catch(() => null),
             ]);
             setTenantTerminals(data);
+            setPosLicenseSeats(seats);
             setLatestPosApkRelease(releases.find((release) => release.is_latest) || releases[0] || null);
             void loadAuthAttemptsForTerminals(tenant.id, data);
             if (isFiscalEligibleTenant(tenant)) {
@@ -389,6 +393,7 @@ export const Tenants: React.FC = () => {
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
         setLatestPosApkRelease(null);
+        setPosLicenseSeats(null);
         closeTakeoverModal();
         closeRebuildModal();
     };
@@ -726,8 +731,12 @@ export const Tenants: React.FC = () => {
         } catch (enforceErr) {
             console.warn('POS license enforcement skipped or failed:', enforceErr);
         }
-        const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+        const [data, seats] = await Promise.all([
+            tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id),
+            tenantService.getTenantPosLicenseSeats(selectedTenantForTerminals.id).catch(() => null),
+        ]);
         setTenantTerminals(data);
+        setPosLicenseSeats(seats);
         void loadAuthAttemptsForTerminals(selectedTenantForTerminals.id, data);
         if (isFiscalEligibleTenant(selectedTenantForTerminals)) {
             void loadFiscalReadinessForTerminals(selectedTenantForTerminals.id, data);
@@ -929,10 +938,14 @@ export const Tenants: React.FC = () => {
     ) => {
         if (!selectedTenantForTerminals) return;
 
+        const isPosOnlySlots = selectedTenantForTerminals.contracted_product === 'POS_ONLY';
         const confirmed = confirm(
-            `Se liberara el cupo de licencia usado por ${deviceId} (${terminal.name}). `
-            + 'Ese registro quedara OFFLINE/revocado y otro Android con un device_id nuevo podra tomar la licencia. '
-            + 'Si este tablet sigue abierto con el mismo device_id, puede volver a ocupar el cupo. ¿Deseas continuar?',
+            isPosOnlySlots
+                ? `Se liberara la caja completa "${terminal.name}" (todos los equipos de esa caja). `
+                    + 'En POS_ONLY cada licencia es una caja distinta (Caja 1, Caja 2, ...). '
+                    + 'Luego active el nuevo Android reutilizando el mismo nombre de caja o creando otra caja libre. ¿Deseas continuar?'
+                : `Se liberara el cupo de licencia usado por ${deviceId} (${terminal.name}). `
+                    + 'Ese registro quedara OFFLINE/revocado y otro Android con un device_id nuevo podra tomar la licencia. ¿Deseas continuar?',
         );
         if (!confirmed) return;
 
@@ -1454,30 +1467,11 @@ export const Tenants: React.FC = () => {
     const masterTerminalCount = registryTerminals.filter((terminal) => terminal.registry?.is_primary && getRegistryStatusLabel(terminal) === 'ONLINE').length;
     const clientTerminalCount = registryTerminals.filter((terminal) => !terminal.registry?.is_primary).length;
     const publishedEndpointCount = registryTerminals.filter((terminal) => Boolean(terminal.registry)).length;
-    const terminalLicenseLimit = selectedTenantForTerminals?.max_pos_terminals;
-    const usesTerminalSlotLicensing = selectedTenantForTerminals?.contracted_product === 'POS_ONLY'
-        || selectedTenantForTerminals?.type === 'pos_only';
-    const activeLicensedDeviceIds = new Set(
-        registryTerminals
-            .filter((terminal) => {
-                if (getRegistryStatusLabel(terminal) !== 'ONLINE') return false;
-                const authStatus = (terminal.registry?.auth_status || '').toUpperCase();
-                if (authStatus === 'LICENSE_EXCEEDED') return false;
-                if (authStatus && authStatus !== 'AUTHORIZED') return false;
-                if (usesTerminalSlotLicensing) {
-                    return Boolean(terminal.id?.trim() || terminal.registry?.terminal_id?.trim());
-                }
-                return Boolean(terminal.registry?.device_id?.trim());
-            })
-            .map((terminal) => (
-                usesTerminalSlotLicensing
-                    ? (terminal.id?.trim() || terminal.registry?.terminal_id?.trim() || '')
-                    : (terminal.registry?.device_id?.trim() || '')
-            ))
-            .filter(Boolean),
-    );
-    const activeLicensedTerminalCount = activeLicensedDeviceIds.size;
+    const terminalLicenseLimit = posLicenseSeats?.maxSeats ?? selectedTenantForTerminals?.max_pos_terminals;
+    const activeLicensedTerminalCount = posLicenseSeats?.usedSeats ?? 0;
+    const licenseCountUnit = posLicenseSeats?.licenseUnit === 'terminal_id' ? 'cajas' : 'equipos';
     const isTerminalLicenseOverLimit = typeof terminalLicenseLimit === 'number' && activeLicensedTerminalCount > terminalLicenseLimit;
+    const hasFreeLicenseSlot = typeof terminalLicenseLimit === 'number' && activeLicensedTerminalCount < terminalLicenseLimit;
     const licenseExceededDeviceCount = registryTerminals.filter(
         (terminal) => (terminal.registry?.auth_status || '').toUpperCase() === 'LICENSE_EXCEEDED',
     ).length;
@@ -1849,7 +1843,9 @@ export const Tenants: React.FC = () => {
                                             {licenseExceededDeviceCount > 0
                                                 ? ` y ${licenseExceededDeviceCount} equipo(s) marcado(s) sin licencia.`
                                                 : '.'}
-                                            {' '}El POS adicional debe recibir bloqueo hasta contratar mas licencias.
+                                            {hasFreeLicenseSlot
+                                                ? ' Hay cupo libre para activar otro equipo/caja.'
+                                                : ' Libere una caja completa con Liberar cupo antes de activar otra.'}
                                         </p>
                                     </div>
                                     <button
@@ -1874,8 +1870,13 @@ export const Tenants: React.FC = () => {
                                         )}
                                     </p>
                                     <p className="mt-2 text-[11px] font-semibold text-slate-500">
-                                        {tenantTerminals.length} grupo(s) listados · {publishedEndpointCount} registro(s)
+                                        {tenantTerminals.length} grupo(s) · {publishedEndpointCount} registro(s) · cuenta {licenseCountUnit} autorizadas
                                     </p>
+                                    {selectedTenantForTerminals?.contracted_product === 'POS_ONLY' ? (
+                                        <p className="mt-1 text-[10px] text-slate-500">
+                                            POS_ONLY: 1 licencia = 1 caja (nombre unico). Liberar cupo libera toda la caja.
+                                        </p>
+                                    ) : null}
                                 </div>
                                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4">
                                     <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Endpoints Online</p>
@@ -2224,7 +2225,9 @@ export const Tenants: React.FC = () => {
                                                                                                 deviceRow.deviceId,
                                                                                             )}
                                                                                             disabled={deviceActionSubmittingKey === releaseSubmittingKey}
-                                                                                            title="Libera el cupo de licencia para otro Android o device_id nuevo"
+                                                                                            title={selectedTenantForTerminals?.contracted_product === 'POS_ONLY'
+                                                                                ? 'Libera toda la caja (terminal) para reactivar otro Android'
+                                                                                : 'Libera el cupo de licencia para otro Android'}
                                                                                             className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] font-bold uppercase text-amber-900 hover:bg-amber-100 transition-colors disabled:opacity-60"
                                                                                         >
                                                                                             {deviceActionSubmittingKey === releaseSubmittingKey

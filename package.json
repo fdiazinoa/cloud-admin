@@ -11,6 +11,7 @@
     "test:tenant-semantics": "node scripts/test-tenant-semantics.mjs",
     "test:terminal-device-auth": "node scripts/test-terminal-device-auth.mjs",
     "test:terminal-activation-license": "node scripts/test-terminal-activation-license.mjs",
+    "cleanup:tenant-pos-registry": "node scripts/cleanup-tenant-pos-registry.mjs",
     "test:terminal-fiscal-config": "node scripts/test-terminal-fiscal-config.mjs",
     "check:supabase-keys": "node scripts/check-supabase-keys.mjs",
     "verify:supabase-security": "node scripts/verify-supabase-security.mjs"
