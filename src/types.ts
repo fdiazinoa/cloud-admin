@@ -219,6 +219,8 @@ export interface TerminalPairingCodeResult {
     expires_at?: string | null;
     ttlSeconds?: number | null;
     ttl_seconds?: number | null;
+    cleared_registry_count?: number | null;
+    cleared_device_ids?: string[] | null;
     message?: string;
 }
 

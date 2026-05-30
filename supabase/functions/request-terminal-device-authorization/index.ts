@@ -7,7 +7,13 @@ declare const Deno: {
     serve(handler: (request: Request) => Response | Promise<Response>): void;
 };
 
-type DeviceAction = 'TAKEOVER' | 'ROTATE_TOKEN' | 'REVOKE_DEVICE' | 'SYNC_AUTHORIZED_DEVICE' | 'GENERATE_PAIRING_CODE';
+type DeviceAction =
+    | 'TAKEOVER'
+    | 'ROTATE_TOKEN'
+    | 'REVOKE_DEVICE'
+    | 'SYNC_AUTHORIZED_DEVICE'
+    | 'GENERATE_PAIRING_CODE'
+    | 'CLEAR_TERMINAL_DEVICES';
 
 interface DeviceActionRequest {
     tenant_id?: string;
@@ -40,6 +46,7 @@ interface RegistryRecord {
     current_device_id?: string | null;
     authorized_device_id?: string | null;
     previous_device_id?: string | null;
+    last_rejected_device_id?: string | null;
 }
 
 interface PublicTerminalRecord {
@@ -305,14 +312,14 @@ Deno.serve(async (request) => {
             || request.headers.get('x-actor-source')
             || 'cloud-admin';
 
-        if (!tenantId || !terminalId || !deviceId || !action) {
+        if (!tenantId || !terminalId || !action || (!deviceId && action !== 'CLEAR_TERMINAL_DEVICES')) {
             return json({
                 error: 'VALIDATION_ERROR',
-                message: 'Selecciona tenant, terminal, device_id y accion.',
+                message: 'Selecciona tenant, terminal, accion y device_id cuando aplique.',
             }, 400);
         }
 
-        if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE', 'GENERATE_PAIRING_CODE'].includes(action)) {
+        if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE', 'GENERATE_PAIRING_CODE', 'CLEAR_TERMINAL_DEVICES'].includes(action)) {
             return json({ error: 'INVALID_ACTION', message: 'Accion de autorizacion no soportada.' }, 400);
         }
 
@@ -349,6 +356,81 @@ Deno.serve(async (request) => {
 
         if (!registry && !publicTerminal) {
             return json({ error: 'TERMINAL_NOT_FOUND', message: 'Terminal no encontrada para este tenant.' }, 404);
+        }
+
+        if (action === 'CLEAR_TERMINAL_DEVICES') {
+            const { data: registryRows, error: registryRowsError } = await supabase
+                .from('tenant_server_registry')
+                .select('id,device_id,current_device_id,authorized_device_id,previous_device_id,last_rejected_device_id,terminal_name,status,auth_status')
+                .eq('tenant_id', tenantId)
+                .eq('terminal_id', terminalId);
+            if (registryRowsError) throw registryRowsError;
+
+            const rows = Array.isArray(registryRows) ? registryRows as RegistryRecord[] : [];
+            const clearedDeviceIds = Array.from(new Set(
+                rows
+                    .flatMap((row) => [
+                        row.device_id,
+                        row.current_device_id,
+                        row.authorized_device_id,
+                        row.previous_device_id,
+                        row.last_rejected_device_id,
+                    ])
+                    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
+            ));
+
+            const { error: deleteError, count } = await supabase
+                .from('tenant_server_registry')
+                .delete({ count: 'exact' })
+                .eq('tenant_id', tenantId)
+                .eq('terminal_id', terminalId);
+            if (deleteError) throw deleteError;
+
+            if (publicTerminal?.id) {
+                const { error: terminalUpdateError } = await supabase
+                    .schema('public')
+                    .from('terminals')
+                    .update({ device_token: null })
+                    .eq('tenant_id', tenantId)
+                    .eq('id', terminalId);
+                if (terminalUpdateError) throw terminalUpdateError;
+            }
+
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                old_device_id: clearedDeviceIds.join(', ') || null,
+                new_device_id: null,
+                action: 'CLEAR_TERMINAL_DEVICES',
+                performed_by: performedBy,
+                reason,
+                result: 'SUCCESS',
+                metadata: {
+                    registry_ids: rows.map((row) => row.id).filter(Boolean),
+                    cleared_registry_count: count || 0,
+                    cleared_device_ids: clearedDeviceIds,
+                    public_terminal_device_token_cleared: Boolean(publicTerminal?.device_token),
+                    preserved: [
+                        'public.terminals row',
+                        'sales',
+                        'items',
+                        'customers',
+                        'taxes',
+                        'fiscal config',
+                        'document sequences',
+                    ],
+                },
+            });
+
+            return json({
+                status: 'success',
+                success: true,
+                action: 'terminal_devices_cleared',
+                cleared_registry_count: count || 0,
+                cleared_device_ids: clearedDeviceIds,
+                message: 'Devices de la terminal limpiados. La terminal conserva su configuracion y puede vincularse nuevamente.',
+            });
         }
 
         if (publicTerminal && publicTerminal.is_active === false) {

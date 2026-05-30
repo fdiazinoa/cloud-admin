@@ -440,14 +440,20 @@ export interface TerminalErpReadinessResult {
     message?: string;
 }
 
-export type TerminalDeviceAction = "TAKEOVER" | "ROTATE_TOKEN" | "REVOKE_DEVICE" | "SYNC_AUTHORIZED_DEVICE" | "GENERATE_PAIRING_CODE";
+export type TerminalDeviceAction =
+    | "TAKEOVER"
+    | "ROTATE_TOKEN"
+    | "REVOKE_DEVICE"
+    | "SYNC_AUTHORIZED_DEVICE"
+    | "GENERATE_PAIRING_CODE"
+    | "CLEAR_TERMINAL_DEVICES";
 
 export interface RequestTerminalDeviceActionInput {
     tenantId: string;
     terminalId: string;
     registryId?: string | null;
     terminalName?: string | null;
-    deviceId: string;
+    deviceId?: string | null;
     action: TerminalDeviceAction;
     reason: string;
     pairingCode?: string | null;
@@ -465,6 +471,8 @@ export interface TerminalDeviceActionResult {
     deviceTokenIssued?: boolean;
     deviceTokenStatus?: string | null;
     tokenPreview?: string | null;
+    cleared_registry_count?: number | null;
+    cleared_device_ids?: string[] | null;
     message?: string;
 }
 
@@ -1397,6 +1405,9 @@ export async function requestTerminalDeviceAction(
         if (!input.registryId) {
             throw new Error("registry_id requerido para sincronizar device autorizado.");
         }
+        if (!input.deviceId) {
+            throw new Error("device_id requerido para sincronizar device autorizado.");
+        }
         return syncTerminalAuthorizedDevice({
             tenantId: input.tenantId,
             terminalId: input.terminalId,
@@ -1417,7 +1428,7 @@ export async function requestTerminalDeviceAction(
             terminal_id: input.terminalId,
             registry_id: input.registryId || null,
             terminal_name: input.terminalName || null,
-            device_id: input.deviceId,
+            device_id: input.deviceId || null,
             action: input.action,
             reason: input.reason,
             pairing_code: input.pairingCode || null,
