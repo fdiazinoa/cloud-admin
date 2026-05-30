@@ -22,6 +22,7 @@ import {
     deriveTenantSemanticsFromTenant,
     type TenantSemanticConfig,
 } from "./tenantProducts";
+import { buildTenantAuthMetadataPayload } from "./tenantAuthMetadata";
 
 export interface DashboardStats {
     totalTenants: number;
@@ -753,8 +754,9 @@ export async function createTenant({
 
     const tenantId = data as string;
 
-    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-        user_metadata: {
+    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(
+        authUserId,
+        buildTenantAuthMetadataPayload(tenantId, {
             name,
             full_name: name,
             slug,
@@ -781,9 +783,8 @@ export async function createTenant({
             captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
             serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
             is_new_user: true,
-            tenant_id: tenantId,
-        },
-    });
+        }),
+    );
 
     if (metadataError) {
         console.error("Failed to sync tenant metadata into Supabase Auth", metadataError);

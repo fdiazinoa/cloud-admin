@@ -327,6 +327,9 @@ async function provisionTenant(
             is_new_user: true,
             tenant_id: tenantId,
         },
+        app_metadata: {
+            tenant_id: tenantId,
+        },
     });
 
     if (metadataError) {
