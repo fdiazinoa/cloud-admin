@@ -9,6 +9,7 @@ import type {
     TenantType,
 } from "../types";
 import { deriveTenantSemanticsFromTenant, type TenantSemanticConfig } from "./tenantProducts";
+import { buildTenantAuthMetadataPayload } from "./tenantAuthMetadata";
 
 type QueryResponse<T> = Promise<{ data: T | null; error: unknown | null }>;
 type MutationResponse = Promise<{ error: unknown | null }>;
@@ -357,8 +358,9 @@ export async function provisionTenant(
 
     const tenantId = data as string;
 
-    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-        user_metadata: {
+    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(
+        authUserId,
+        buildTenantAuthMetadataPayload(tenantId, {
             name,
             full_name: name,
             slug,
@@ -385,9 +387,8 @@ export async function provisionTenant(
             captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
             serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
             is_new_user: true,
-            tenant_id: tenantId,
-        },
-    });
+        }),
+    );
 
     if (metadataError) {
         console.error("Failed to sync tenant metadata into Supabase Auth", metadataError);

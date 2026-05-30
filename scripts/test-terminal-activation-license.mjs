@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 const activationMigration = readFileSync('supabase/migrations/202605291500_terminal_activation_license_validation.sql', 'utf8');
 const terminalSlotMigration = readFileSync('supabase/migrations/202605291600_pos_only_terminal_slot_licensing.sql', 'utf8');
 const posErpMigration = readFileSync('supabase/migrations/202605301530_pos_erp_terminal_catalog_licensing.sql', 'utf8');
+const tenantResolver = readFileSync('api/lib/resolve-landlord-tenant.ts', 'utf8');
+const tenantAuthMetadata = readFileSync('src/lib/tenantAuthMetadata.ts', 'utf8');
 const endpoint = readFileSync('api/activation/validate-terminal-license.ts', 'utf8');
 const tenantsPage = readFileSync('src/pages/Tenants.tsx', 'utf8');
 
@@ -30,6 +32,12 @@ assert.match(
     'check_terminal_license_availability must delegate to activation validation, not ERP creation',
 );
 
-assert.match(tenantsPage, /erp_terminal/, 'Tenants UI must label POS_ERP license counts');
+assert.match(tenantResolver, /resolveLandlordTenantForActivation/, 'tenant resolver must resolve landlord tenant for activation');
+assert.match(tenantResolver, /syncLandlordTenantAuthMetadata/, 'tenant resolver must repair auth metadata tenant_id mismatches');
+assert.match(tenantResolver, /erp_tenants/, 'tenant resolver must map erp tenant ids to landlord tenants');
+assert.match(tenantAuthMetadata, /app_metadata/, 'tenant auth metadata helper must sync app_metadata tenant_id');
+
+assert.match(endpoint, /resolveLandlordTenantForActivation/, 'endpoint must resolve landlord tenant before license validation');
+assert.match(endpoint, /effectiveTenantId/, 'endpoint must validate license against resolved landlord tenant');
 
 console.log('terminal-activation-license static checks passed');

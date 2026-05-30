@@ -1,6 +1,7 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
-import { createClient, type User } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { createHash } from "node:crypto";
+import { resolveLandlordTenantForActivation } from "../lib/resolve-landlord-tenant.js";
 
 type ApiRequest = IncomingMessage & {
     body?: unknown;
@@ -22,11 +23,6 @@ type LicenseRpcResult = {
     used_seats?: number;
     max_seats?: number;
     license_unit?: string | null;
-};
-
-type TenantRecord = {
-    id: string;
-    email: string;
 };
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -134,30 +130,6 @@ function checkRateLimit(key: string) {
     return true;
 }
 
-function getUserTenantId(user: User) {
-    const metadata = user.user_metadata as Record<string, unknown> | undefined;
-    const appMetadata = user.app_metadata as Record<string, unknown> | undefined;
-    const tenantId = metadata?.tenant_id ?? appMetadata?.tenant_id;
-    return typeof tenantId === "string" && tenantId.trim().length > 0 ? tenantId.trim() : null;
-}
-
-function userBelongsToTenant(
-    user: User,
-    tenantId: string,
-    tenantEmail: string,
-    bodyEmail?: string | null,
-) {
-    const metaTenantId = getUserTenantId(user);
-    if (metaTenantId === tenantId) return true;
-
-    const userEmail = isNonEmptyString(user.email) ? normalizeEmail(user.email) : null;
-    if (userEmail && userEmail === normalizeEmail(tenantEmail)) return true;
-
-    if (bodyEmail && userEmail && userEmail === normalizeEmail(bodyEmail)) return true;
-
-    return false;
-}
-
 function mapLicenseResponse(result: LicenseRpcResult) {
     const allowed = result.allowed === true;
     return {
@@ -225,12 +197,15 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         const supabaseUrl = getEnv("SUPABASE_URL", "VITE_SUPABASE_URL");
         const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
 
-        const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+        const supabaseLandlord = createClient(supabaseUrl, serviceRoleKey, {
             auth: { autoRefreshToken: false, persistSession: false },
             db: { schema: "landlord" },
         });
+        const supabaseService = createClient(supabaseUrl, serviceRoleKey, {
+            auth: { autoRefreshToken: false, persistSession: false },
+        });
 
-        const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(bearerToken);
+        const { data: authData, error: authError } = await supabaseService.auth.getUser(bearerToken);
         if (authError || !authData.user) {
             sendJson(response, 401, {
                 error: "UNAUTHORIZED",
@@ -239,16 +214,22 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             return;
         }
 
-        const { data: tenantData, error: tenantError } = await supabaseAdmin
-            .from("tenants")
-            .select("id,email")
-            .eq("id", tenantId)
-            .maybeSingle();
+        const resolved = await resolveLandlordTenantForActivation(
+            supabaseLandlord,
+            supabaseService,
+            {
+                requestedTenantId: tenantId,
+                user: authData.user,
+                bodyEmail,
+            },
+        );
 
-        if (tenantError) throw tenantError;
-
-        const tenant = tenantData as TenantRecord | null;
-        if (!tenant) {
+        if (!resolved.tenant || !resolved.effectiveTenantId) {
+            console.warn("[validate-terminal-license] tenant resolution failed", {
+                requestedTenantId: tenantId,
+                userId: authData.user.id,
+                reason: resolved.mismatchReason,
+            });
             sendJson(response, 403, {
                 error: "FORBIDDEN",
                 message: "Tenant no encontrado o no autorizado.",
@@ -256,23 +237,12 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             return;
         }
 
-        if (!userBelongsToTenant(authData.user, tenantId, tenant.email, bodyEmail)) {
-            console.warn("[validate-terminal-license] forbidden tenant access", {
-                tenantId,
-                deviceId,
-                userId: authData.user.id,
-            });
-            sendJson(response, 403, {
-                error: "FORBIDDEN",
-                message: "El token no corresponde al tenant solicitado.",
-            });
-            return;
-        }
+        const effectiveTenantId = resolved.effectiveTenantId;
 
-        const { data: licenseData, error: licenseError } = await supabaseAdmin.rpc(
+        const { data: licenseData, error: licenseError } = await supabaseService.rpc(
             "validate_terminal_activation_license",
             {
-                p_tenant_id: tenantId,
+                p_tenant_id: effectiveTenantId,
                 p_device_id: deviceId,
                 p_terminal_id: terminalId,
             },
@@ -296,7 +266,9 @@ export default async function handler(request: ApiRequest, response: ServerRespo
 
         if (!responseBody.allowed) {
             console.warn("[validate-terminal-license] blocked", {
-                tenantId,
+                tenantId: effectiveTenantId,
+                requestedTenantId: tenantId,
+                metadataRepaired: resolved.metadataRepaired,
                 deviceId,
                 code: responseBody.code,
                 used_seats: responseBody.used_seats,
