@@ -12,6 +12,7 @@ import type {
     TerminalAuthAttempt,
     TerminalFiscalProductionConfig,
     TerminalFiscalReadiness,
+    TerminalPairingCodeResult,
     TenantTerminalRegistryEntry,
     TenantTerminalSnapshot,
     TenantType,
@@ -439,7 +440,7 @@ export interface TerminalErpReadinessResult {
     message?: string;
 }
 
-export type TerminalDeviceAction = "TAKEOVER" | "ROTATE_TOKEN" | "REVOKE_DEVICE" | "SYNC_AUTHORIZED_DEVICE";
+export type TerminalDeviceAction = "TAKEOVER" | "ROTATE_TOKEN" | "REVOKE_DEVICE" | "SYNC_AUTHORIZED_DEVICE" | "GENERATE_PAIRING_CODE";
 
 export interface RequestTerminalDeviceActionInput {
     tenantId: string;
@@ -450,6 +451,7 @@ export interface RequestTerminalDeviceActionInput {
     action: TerminalDeviceAction;
     reason: string;
     pairingCode?: string | null;
+    ttlSeconds?: number | null;
 }
 
 export interface TerminalDeviceActionResult {
@@ -1390,7 +1392,7 @@ export async function syncTerminalAuthorizedDevice(input: {
 
 export async function requestTerminalDeviceAction(
     input: RequestTerminalDeviceActionInput,
-): Promise<TerminalDeviceActionResult> {
+): Promise<TerminalDeviceActionResult | TerminalPairingCodeResult> {
     if (input.action === "SYNC_AUTHORIZED_DEVICE") {
         if (!input.registryId) {
             throw new Error("registry_id requerido para sincronizar device autorizado.");
@@ -1419,6 +1421,7 @@ export async function requestTerminalDeviceAction(
             action: input.action,
             reason: input.reason,
             pairing_code: input.pairingCode || null,
+            ttl_seconds: input.ttlSeconds || null,
             confirm_action: true,
         }),
     });
@@ -1429,7 +1432,7 @@ export async function requestTerminalDeviceAction(
         throw new Error(payload?.message || payload?.error || "No se pudo ejecutar la accion de autorizacion.");
     }
 
-    return (payload || { status: "success" }) as TerminalDeviceActionResult;
+    return (payload || { status: "success" }) as TerminalDeviceActionResult | TerminalPairingCodeResult;
 }
 
 export type TenantPosLicenseSeats = {

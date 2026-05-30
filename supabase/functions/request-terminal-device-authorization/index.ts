@@ -7,7 +7,7 @@ declare const Deno: {
     serve(handler: (request: Request) => Response | Promise<Response>): void;
 };
 
-type DeviceAction = 'TAKEOVER' | 'ROTATE_TOKEN' | 'REVOKE_DEVICE' | 'SYNC_AUTHORIZED_DEVICE';
+type DeviceAction = 'TAKEOVER' | 'ROTATE_TOKEN' | 'REVOKE_DEVICE' | 'SYNC_AUTHORIZED_DEVICE' | 'GENERATE_PAIRING_CODE';
 
 interface DeviceActionRequest {
     tenant_id?: string;
@@ -18,6 +18,7 @@ interface DeviceActionRequest {
     action?: DeviceAction;
     reason?: string;
     pairing_code?: string | null;
+    ttl_seconds?: number | null;
     confirm_action?: boolean;
 }
 
@@ -64,6 +65,9 @@ const tokenKeys = new Set([
     'auth_token',
     'access_token',
     'refresh_token',
+    'pairingCode',
+    'pairing_code',
+    'code',
 ]);
 
 function json(body: unknown, status = 200) {
@@ -115,6 +119,51 @@ function getTokenPreview(payload: unknown): string | null {
     ];
     for (const candidate of candidates) {
         if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    }
+    return null;
+}
+
+function getPairingCode(payload: unknown): string | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const record = payload as Record<string, unknown>;
+    const candidates = [
+        record.pairingCode,
+        record.pairing_code,
+        record.code,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    }
+    return null;
+}
+
+function getExpiresAt(payload: unknown): string | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const record = payload as Record<string, unknown>;
+    const candidates = [
+        record.expiresAt,
+        record.expires_at,
+        record.expires,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    }
+    return null;
+}
+
+function getTtlSeconds(payload: unknown): number | null {
+    if (!payload || typeof payload !== 'object') return null;
+    const record = payload as Record<string, unknown>;
+    const candidates = [
+        record.ttlSeconds,
+        record.ttl_seconds,
+        record.ttl,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
+        if (typeof candidate === 'string' && candidate.trim() && Number.isFinite(Number(candidate))) {
+            return Number(candidate);
+        }
     }
     return null;
 }
@@ -248,6 +297,9 @@ Deno.serve(async (request) => {
         const action = body.action;
         const reason = body.reason?.trim() || 'DEVICE_REINSTALL_OR_REPLACEMENT';
         const pairingCode = body.pairing_code?.trim() || null;
+        const ttlSeconds = typeof body.ttl_seconds === 'number' && Number.isFinite(body.ttl_seconds)
+            ? Math.max(60, Math.min(Math.trunc(body.ttl_seconds), 1800))
+            : 600;
         const performedBy = request.headers.get('x-actor-email')
             || request.headers.get('x-actor-user-id')
             || request.headers.get('x-actor-source')
@@ -260,7 +312,7 @@ Deno.serve(async (request) => {
             }, 400);
         }
 
-        if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE'].includes(action)) {
+        if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE', 'GENERATE_PAIRING_CODE'].includes(action)) {
             return json({ error: 'INVALID_ACTION', message: 'Accion de autorizacion no soportada.' }, 400);
         }
 
@@ -410,6 +462,129 @@ Deno.serve(async (request) => {
                 pairing_code_provided: Boolean(pairingCode),
             },
         });
+
+        if (action === 'GENERATE_PAIRING_CODE') {
+            const erpApiUrl = getEnv('ERP_API_URL', 'CLOUD_ADMIN_ERP_API_URL');
+            const erpServiceToken = getEnv('ERP_TAKEOVER_SERVICE_TOKEN', 'ERP_SERVICE_TOKEN', 'CLOUD_ADMIN_ERP_SERVICE_TOKEN');
+            const erpResponse = await fetch(`${erpApiUrl.replace(/\/$/, '')}/api/sync/terminals/${encodeURIComponent(terminalId)}/pairing-code`, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${erpServiceToken}`,
+                    'Content-Type': 'application/json',
+                    'X-Tenant-Id': tenantId,
+                    'X-Cloud-Admin-Tenant-Id': tenantId,
+                },
+                body: JSON.stringify({
+                    deviceId,
+                    reason,
+                    performedBy,
+                    ttlSeconds,
+                }),
+            });
+
+            const erpPayload = await erpResponse.json().catch(async () => ({
+                message: await erpResponse.text().catch(() => ''),
+            }));
+            const erpErrorCode = getErrorCode(erpPayload);
+
+            if (!erpResponse.ok) {
+                await insertDeviceAudit(supabase, {
+                    tenant_id: tenantId,
+                    terminal_id: terminalId,
+                    terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                    old_device_id: effectiveAuthorizedDeviceId,
+                    new_device_id: deviceId,
+                    action,
+                    performed_by: performedBy,
+                    reason,
+                    result: 'FAILED',
+                    erp_response_status: erpResponse.status,
+                    erp_error_code: erpErrorCode,
+                    metadata: {
+                        erp_payload: sanitizePayload(erpPayload),
+                    },
+                });
+
+                return json({
+                    error: erpErrorCode || 'PAIRING_CODE_REQUEST_FAILED',
+                    message: getErrorMessage(erpResponse.status, erpPayload),
+                }, erpResponse.status);
+            }
+
+            const pairingCodeFromErp = getPairingCode(erpPayload);
+            if (!pairingCodeFromErp) {
+                await insertDeviceAudit(supabase, {
+                    tenant_id: tenantId,
+                    terminal_id: terminalId,
+                    terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                    old_device_id: effectiveAuthorizedDeviceId,
+                    new_device_id: deviceId,
+                    action,
+                    performed_by: performedBy,
+                    reason,
+                    result: 'FAILED',
+                    erp_response_status: erpResponse.status,
+                    erp_error_code: 'PAIRING_CODE_MISSING',
+                    metadata: {
+                        erp_payload: sanitizePayload(erpPayload),
+                    },
+                });
+
+                return json({
+                    error: 'PAIRING_CODE_MISSING',
+                    message: 'El ERP no devolvio un codigo de vinculacion.',
+                }, 502);
+            }
+
+            const expiresAt = getExpiresAt(erpPayload);
+            const responseTtlSeconds = getTtlSeconds(erpPayload) || ttlSeconds;
+            const requestedAt = new Date().toISOString();
+
+            if (registry?.id) {
+                const { error: updateError } = await supabase
+                    .from('tenant_server_registry')
+                    .update({
+                        last_rejected_device_id: deviceId,
+                        auth_status: 'TAKEOVER_PENDING',
+                        last_auth_error: null,
+                        last_auth_attempt_at: requestedAt,
+                        updated_at: requestedAt,
+                    })
+                    .eq('id', registry.id);
+                if (updateError) {
+                    console.error('Failed to persist pairing code request metadata', updateError);
+                }
+            }
+
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                old_device_id: effectiveAuthorizedDeviceId,
+                new_device_id: deviceId,
+                action,
+                performed_by: performedBy,
+                reason,
+                result: 'SUCCESS',
+                erp_response_status: erpResponse.status,
+                metadata: {
+                    pairing_code_issued: true,
+                    expires_at: expiresAt,
+                    ttl_seconds: responseTtlSeconds,
+                    erp_payload: sanitizePayload(erpPayload),
+                },
+            });
+
+            return json({
+                status: 'success',
+                success: true,
+                action: 'pairing_code_generated',
+                pairingCode: pairingCodeFromErp,
+                expiresAt,
+                ttlSeconds: responseTtlSeconds,
+                message: 'Codigo de vinculacion generado. Escribelo en el POS para confirmar el traspaso.',
+            });
+        }
 
         if (action === 'REVOKE_DEVICE') {
             const revokedAt = new Date().toISOString();
