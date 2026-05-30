@@ -1062,6 +1062,42 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const handleClearTerminalDevices = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) {
+            alert('Esta terminal necesita terminal_id para limpiar devices.');
+            return;
+        }
+
+        const confirmation = prompt(
+            `Esta accion eliminara solo los devices/vinculaciones de ${terminal.name} (${terminalId}). `
+            + 'No borra ventas, maestros, secuencias ni configuracion fiscal. Escribe LIMPIAR para confirmar.',
+        );
+        if (confirmation !== 'LIMPIAR') return;
+
+        const key = `${getTerminalKey(terminal)}-CLEAR-DEVICES`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                action: 'CLEAR_TERMINAL_DEVICES',
+                reason: 'LAB_DEVICE_BINDING_RESET',
+            });
+            const cleared = result.cleared_registry_count ?? 0;
+            alert(result.message || `Devices limpiados. Registros eliminados: ${cleared}.`);
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error clearing terminal devices:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
     const handleTakeoverTerminalChange = (selectionKey: string) => {
         const selectedOption = getTakeoverOptions().find((option) => option.key === selectionKey) || null;
         setTakeoverTerminal(selectedOption?.terminal || null);
@@ -2047,6 +2083,7 @@ export const Tenants: React.FC = () => {
                                             && selectedTenantForTerminals.lifecycle_status === 'BLOCKED';
                                         const revokeDeviceId = terminal.registry?.previous_device_id || lastRejectedDeviceId;
                                         const revokeSubmittingKey = revokeDeviceId ? `${terminalKey}-REVOKE-${revokeDeviceId}` : '';
+                                        const clearDevicesSubmittingKey = `${terminalKey}-CLEAR-DEVICES`;
                                         const fiscalReadiness = getFiscalReadiness(terminal);
                                         const fiscalDebug = summarizeTerminalFiscalDebug(fiscalReadiness);
                                         const fiscalStatus = fiscalDebug.fiscalReadiness;
@@ -2196,7 +2233,21 @@ export const Tenants: React.FC = () => {
                                                     </div>
 
                                                     <div>
-                                                        <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Dispositivos registrados y roles</h5>
+                                                        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                            <div>
+                                                                <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dispositivos registrados y roles</h5>
+                                                                <p className="mt-1 text-xs text-slate-500">Limpia solo vinculaciones de prueba; no borra ventas, maestros, fiscal ni secuencias.</p>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleClearTerminalDevices(terminal)}
+                                                                disabled={deviceActionSubmittingKey === clearDevicesSubmittingKey}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-red-700 shadow-sm hover:bg-red-50 transition-colors disabled:opacity-60"
+                                                            >
+                                                                {deviceActionSubmittingKey === clearDevicesSubmittingKey ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                                                                Limpiar devices
+                                                            </button>
+                                                        </div>
                                                         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                                                             <table className="w-full text-left text-sm whitespace-nowrap">
                                                                 <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
