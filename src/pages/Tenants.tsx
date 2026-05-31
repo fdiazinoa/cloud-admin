@@ -16,6 +16,8 @@ import {
     type TenantProductSelection
 } from '../lib/tenantProducts';
 
+type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'fiscal' | 'attempts';
+
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -33,6 +35,7 @@ export const Tenants: React.FC = () => {
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
+    const [terminalTabs, setTerminalTabs] = useState<Record<string, TerminalTabKey>>({});
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
     const [takeoverTerminal, setTakeoverTerminal] = useState<TenantTerminalSnapshot | null>(null);
@@ -1813,6 +1816,14 @@ export const Tenants: React.FC = () => {
                                         const fiscalCheckedAt = fiscalReadiness?.checked_at || terminal.registry?.last_fiscal_readiness_at || null;
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
                                         const fiscalDemoSubmittingKey = `${terminalKey}-QA_DEMO`;
+                                        const activeTerminalTab = terminalTabs[terminalKey] || 'summary';
+                                        const terminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
+                                            { key: 'summary', label: 'Resumen' },
+                                            { key: 'devices', label: 'Dispositivos' },
+                                            { key: 'erp', label: 'Preparacion ERP' },
+                                            ...(isFiscalEligibleTenant(selectedTenantForTerminals) ? [{ key: 'fiscal' as TerminalTabKey, label: 'Fiscal' }] : []),
+                                            { key: 'attempts', label: 'Intentos', count: authAttempts.length },
+                                        ];
 
                                         return (
                                             <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
@@ -1852,6 +1863,39 @@ export const Tenants: React.FC = () => {
                                                     </div>
                                                 </div>
 
+                                                <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-1">
+                                                    <div className="flex min-w-max gap-1">
+                                                        {terminalTabOptions.map((tab) => {
+                                                            const isActive = activeTerminalTab === tab.key;
+                                                            return (
+                                                                <button
+                                                                    key={tab.key}
+                                                                    type="button"
+                                                                    onClick={() => setTerminalTabs((current) => ({
+                                                                        ...current,
+                                                                        [terminalKey]: tab.key,
+                                                                    }))}
+                                                                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-colors ${
+                                                                        isActive
+                                                                            ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-100'
+                                                                            : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
+                                                                    }`}
+                                                                >
+                                                                    {tab.label}
+                                                                    {typeof tab.count === 'number' && tab.count > 0 ? (
+                                                                        <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                                                                            isActive ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
+                                                                        }`}>
+                                                                            {tab.count}
+                                                                        </span>
+                                                                    ) : null}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+
+                                                {activeTerminalTab === 'summary' ? (
                                                 <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                                                     <div className="rounded-2xl bg-slate-50 px-4 py-3 border border-slate-100">
                                                         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Device Token</p>
@@ -1922,7 +1966,9 @@ export const Tenants: React.FC = () => {
                                                         <p className="mt-1 text-slate-700">{formatDateTime(terminal.created_at)}</p>
                                                     </div>
                                                 </div>
+                                                ) : null}
 
+                                                {activeTerminalTab === 'devices' || activeTerminalTab === 'attempts' ? (
                                                 <div className={`mt-5 rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
                                                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                         <div>
@@ -1986,6 +2032,7 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                     </div>
 
+                                                    {activeTerminalTab === 'attempts' ? (
                                                     <div className="mt-4 rounded-xl border border-white/60 bg-white/70 overflow-hidden">
                                                         <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/60">
                                                             <p className="text-xs font-bold uppercase tracking-wider">Intentos de conexion rechazados</p>
@@ -2044,8 +2091,9 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                         )}
                                                     </div>
+                                                    ) : null}
 
-                                                    {revokeDeviceId && revokeDeviceId !== authorizedDeviceId ? (
+                                                    {activeTerminalTab === 'devices' && revokeDeviceId && revokeDeviceId !== authorizedDeviceId ? (
                                                         <div className="mt-4 flex flex-col gap-3 rounded-xl border border-white/60 bg-white/70 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                                                             <div className="text-sm">
                                                                 <p className="font-bold">Device anterior detectado</p>
@@ -2063,7 +2111,9 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                     ) : null}
                                                 </div>
+                                                ) : null}
 
+                                                {activeTerminalTab === 'erp' ? (
                                                 <div className={`mt-5 rounded-2xl border px-4 py-4 ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
                                                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                         <div>
@@ -2118,8 +2168,9 @@ export const Tenants: React.FC = () => {
                                                         </p>
                                                     ) : null}
                                                 </div>
+                                                ) : null}
 
-                                                {isFiscalEligibleTenant(selectedTenantForTerminals) ? (
+                                                {activeTerminalTab === 'fiscal' && isFiscalEligibleTenant(selectedTenantForTerminals) ? (
                                                     <div className={`mt-5 rounded-2xl border px-4 py-4 ${fiscalStatusClasses}`}>
                                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                             <div>
@@ -2208,7 +2259,7 @@ export const Tenants: React.FC = () => {
                                                     </div>
                                                 ) : null}
 
-                                                {isLocalPosTenant(selectedTenantForTerminals) ? (
+                                                {activeTerminalTab === 'summary' && isLocalPosTenant(selectedTenantForTerminals) ? (
                                                     <div className={`mt-5 rounded-2xl border px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between ${
                                                         isExplicitOfflinePosTenant(selectedTenantForTerminals)
                                                             ? 'border-slate-200 bg-slate-50'
