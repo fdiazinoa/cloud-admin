@@ -1326,20 +1326,47 @@ export const Tenants: React.FC = () => {
         return terminal.is_active ? 'ACTIVA' : 'INACTIVA';
     };
 
+    const getEffectiveApkVersion = (terminal: TenantTerminalSnapshot) => {
+        const registryDeviceId = (terminal.registry?.current_device_id || terminal.registry?.device_id || '').trim().toUpperCase();
+        const erpDeviceId = (terminal.erp_current_device_id || '').trim().toUpperCase();
+        const canUseErpVersion = Boolean(terminal.erp_app_version || terminal.erp_app_version_code)
+            && (!registryDeviceId || !erpDeviceId || registryDeviceId === erpDeviceId);
+
+        if (canUseErpVersion) {
+            return {
+                version: terminal.erp_app_version?.trim() || '',
+                versionCode: terminal.erp_app_version_code ?? null,
+                source: 'ERP',
+            };
+        }
+
+        return {
+            version: terminal.registry?.app_version?.trim() || '',
+            versionCode: terminal.registry?.app_version_code ?? null,
+            source: 'Cloud-Admin',
+        };
+    };
+
     const getApkVersionKey = (terminal: TenantTerminalSnapshot) => {
-        const version = terminal.registry?.app_version?.trim() || '';
-        const versionCode = terminal.registry?.app_version_code ? String(terminal.registry.app_version_code) : '';
+        const apkVersion = getEffectiveApkVersion(terminal);
+        const version = apkVersion.version;
+        const versionCode = apkVersion.versionCode ? String(apkVersion.versionCode) : '';
         if (!version && !versionCode) return '';
         return `${version}::${versionCode}`;
     };
 
     const formatApkVersion = (terminal: TenantTerminalSnapshot) => {
-        const version = terminal.registry?.app_version?.trim() || '';
-        const versionCode = terminal.registry?.app_version_code;
+        const { version, versionCode } = getEffectiveApkVersion(terminal);
         if (!version && !versionCode) return 'N/D';
         if (version && versionCode) return `APK v${version} (${versionCode})`;
         if (version) return `APK v${version}`;
         return `Build ${versionCode}`;
+    };
+
+    const getApkVersionSourceLabel = (terminal: TenantTerminalSnapshot) => {
+        const apkVersion = getEffectiveApkVersion(terminal);
+        if (!apkVersion.version && !apkVersion.versionCode) return '';
+        return apkVersion.source;
     };
 
     const referenceVersionCandidate = (() => {
@@ -1780,6 +1807,7 @@ export const Tenants: React.FC = () => {
                                         const terminalVersionKey = getApkVersionKey(terminal);
                                         const isOutOfVersion = Boolean(referenceVersionKey && terminalVersionKey && terminalVersionKey !== referenceVersionKey);
                                         const hasVersion = Boolean(terminalVersionKey);
+                                        const versionSource = getApkVersionSourceLabel(terminal);
                                         const erpReadiness = terminal.registry?.erp_readiness || null;
                                         const erpReadinessStatus = getErpReadinessStatus(terminal);
                                         const erpTenantId = getReadinessValue(erpReadiness, ['erpTenantId', 'erp_tenant_id']);
@@ -1932,6 +1960,7 @@ export const Tenants: React.FC = () => {
                                                             <div>
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Versión APK</p>
                                                                 <p className="mt-1 text-slate-700 font-mono">{formatApkVersion(terminal)}</p>
+                                                                {versionSource ? <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Fuente: {versionSource}</p> : null}
                                                             </div>
                                                             {isOutOfVersion ? (
                                                                 <div className="flex items-center gap-2 text-amber-700 text-xs font-bold uppercase">

@@ -125,6 +125,45 @@ function getAttemptsFromPayload(payload: unknown): unknown[] {
     return [];
 }
 
+function getAttemptAppVersion(attempt: AuthAttempt | null): string | null {
+    if (!attempt) return null;
+    const fromField = attempt.app_version || attempt.apk_version;
+    if (typeof fromField === 'string' && fromField.trim()) return fromField.trim();
+    const metadata = attempt.metadata && typeof attempt.metadata === 'object' ? attempt.metadata : {};
+    const candidates = [
+        metadata.app_version,
+        metadata.appVersion,
+        metadata.apk_version,
+        metadata.apkVersion,
+        metadata.version,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    }
+    return null;
+}
+
+function getAttemptAppVersionCode(attempt: AuthAttempt | null): number | null {
+    if (!attempt) return null;
+    const metadata = attempt.metadata && typeof attempt.metadata === 'object' ? attempt.metadata : {};
+    const candidates = [
+        metadata.app_version_code,
+        metadata.appVersionCode,
+        metadata.apk_version_code,
+        metadata.apkVersionCode,
+        metadata.version_code,
+        metadata.versionCode,
+    ];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
+        if (typeof candidate === 'string' && candidate.trim()) {
+            const parsed = Number(candidate.trim());
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return null;
+}
+
 function getErrorMessage(status: number, payload: unknown) {
     if (payload && typeof payload === 'object') {
         const record = payload as Record<string, unknown>;
@@ -206,23 +245,48 @@ Deno.serve(async (request) => {
             const status = (attempt.resolution_status || attempt.status || '').toUpperCase();
             return reason === 'DEVICE_NOT_AUTHORIZED' && status !== 'RESOLVED';
         }) || attempts[0] || null;
+        const latestWithVersion = attempts.find((attempt) => getAttemptAppVersion(attempt) || getAttemptAppVersionCode(attempt)) || null;
 
         if (latestRejected?.requested_device_id) {
+            const appVersion = getAttemptAppVersion(latestRejected) || getAttemptAppVersion(latestWithVersion);
+            const appVersionCode = getAttemptAppVersionCode(latestRejected) || getAttemptAppVersionCode(latestWithVersion);
+            const registryUpdate: Record<string, unknown> = {
+                last_rejected_device_id: latestRejected.requested_device_id,
+                authorized_device_id: latestRejected.authorized_device_id || null,
+                auth_status: 'DEVICE_MISMATCH',
+                last_auth_error: latestRejected.reason || latestRejected.message || 'DEVICE_NOT_AUTHORIZED',
+                last_auth_attempt_at: latestRejected.attempted_at || latestRejected.created_at || new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+            };
+            if (appVersion) registryUpdate.app_version = appVersion;
+            if (appVersionCode) registryUpdate.app_version_code = appVersionCode;
+
             const { error: updateError } = await supabase
                 .from('tenant_server_registry')
-                .update({
-                    last_rejected_device_id: latestRejected.requested_device_id,
-                    authorized_device_id: latestRejected.authorized_device_id || null,
-                    auth_status: 'DEVICE_MISMATCH',
-                    last_auth_error: latestRejected.reason || latestRejected.message || 'DEVICE_NOT_AUTHORIZED',
-                    last_auth_attempt_at: latestRejected.attempted_at || latestRejected.created_at || new Date().toISOString(),
-                    updated_at: new Date().toISOString(),
-                })
+                .update(registryUpdate)
                 .eq('tenant_id', tenantId)
                 .eq('terminal_id', terminalId);
 
             if (updateError) {
                 console.error('Failed to persist latest auth attempt metadata', updateError);
+            }
+        } else if (latestWithVersion) {
+            const appVersion = getAttemptAppVersion(latestWithVersion);
+            const appVersionCode = getAttemptAppVersionCode(latestWithVersion);
+            const registryUpdate: Record<string, unknown> = {
+                updated_at: new Date().toISOString(),
+            };
+            if (appVersion) registryUpdate.app_version = appVersion;
+            if (appVersionCode) registryUpdate.app_version_code = appVersionCode;
+
+            const { error: updateError } = await supabase
+                .from('tenant_server_registry')
+                .update(registryUpdate)
+                .eq('tenant_id', tenantId)
+                .eq('terminal_id', terminalId);
+
+            if (updateError) {
+                console.error('Failed to persist terminal app version metadata', updateError);
             }
         }
 
