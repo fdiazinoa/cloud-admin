@@ -31,6 +31,8 @@ import {
     summarizeTerminalFiscalDebug,
 } from '../lib/terminalIdentity';
 
+type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'fiscal' | 'attempts';
+
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -48,6 +50,7 @@ export const Tenants: React.FC = () => {
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
+    const [terminalTabs, setTerminalTabs] = useState<Record<string, TerminalTabKey>>({});
     const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkRelease | null>(null);
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
@@ -2052,6 +2055,14 @@ export const Tenants: React.FC = () => {
                                         const fiscalStatus = fiscalDebug.fiscalReadiness;
                                         const fiscalStatusClasses = getFiscalStatusClasses(fiscalStatus);
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
+                                        const activeTerminalTab = terminalTabs[terminalKey] || 'summary';
+                                        const terminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
+                                            { key: 'summary', label: 'Resumen' },
+                                            { key: 'devices', label: 'Dispositivos' },
+                                            { key: 'erp', label: 'Preparacion ERP' },
+                                            ...(isFiscalEligibleTenant(selectedTenantForTerminals) ? [{ key: 'fiscal' as TerminalTabKey, label: 'Fiscal' }] : []),
+                                            { key: 'attempts', label: 'Intentos', count: authAttempts.length },
+                                        ];
 
                                         return (
                                             <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
@@ -2085,6 +2096,39 @@ export const Tenants: React.FC = () => {
                                                 </div>
 
                                                 <div className="p-5 space-y-5">
+                                                    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-1">
+                                                        <div className="flex min-w-max gap-1">
+                                                            {terminalTabOptions.map((tab) => {
+                                                                const isActive = activeTerminalTab === tab.key;
+                                                                return (
+                                                                    <button
+                                                                        key={tab.key}
+                                                                        type="button"
+                                                                        onClick={() => setTerminalTabs((current) => ({
+                                                                            ...current,
+                                                                            [terminalKey]: tab.key,
+                                                                        }))}
+                                                                        className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-colors ${
+                                                                            isActive
+                                                                                ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-100'
+                                                                                : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
+                                                                        }`}
+                                                                    >
+                                                                        {tab.label}
+                                                                        {typeof tab.count === 'number' && tab.count > 0 ? (
+                                                                            <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                                                                                isActive ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
+                                                                            }`}>
+                                                                                {tab.count}
+                                                                            </span>
+                                                                        ) : null}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+
+                                                    {activeTerminalTab === 'summary' ? (
                                                     <div className={`rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
                                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                             <div>
@@ -2194,7 +2238,9 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                         </div>
                                                     </div>
+                                                    ) : null}
 
+                                                    {activeTerminalTab === 'devices' ? (
                                                     <div>
                                                         <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Dispositivos registrados y roles</h5>
                                                         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -2320,8 +2366,10 @@ export const Tenants: React.FC = () => {
                                                             </table>
                                                         </div>
                                                     </div>
+                                                    ) : null}
                                                 </div>
 
+                                                {activeTerminalTab === 'attempts' ? (
                                                 <div className={`mx-5 rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
                                                     <p className="text-xs font-bold uppercase tracking-wider">Intentos de conexion rechazados</p>
                                                     <div className="mt-3 rounded-xl border border-white/60 bg-white/70 overflow-hidden">
@@ -2439,8 +2487,10 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                     ) : null}
                                                 </div>
+                                                ) : null}
 
-                                                <div className={`mt-5 rounded-2xl border px-4 py-4 ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
+                                                {activeTerminalTab === 'erp' ? (
+                                                <div className={`mx-5 mt-5 rounded-2xl border px-4 py-4 ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
                                                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                         <div>
                                                             <p className="text-xs font-bold uppercase tracking-wider">Preparacion ERP</p>
@@ -2494,8 +2544,9 @@ export const Tenants: React.FC = () => {
                                                         </p>
                                                     ) : null}
                                                 </div>
+                                                ) : null}
 
-                                                {isFiscalEligibleTenant(selectedTenantForTerminals) ? (
+                                                {activeTerminalTab === 'fiscal' && isFiscalEligibleTenant(selectedTenantForTerminals) ? (
                                                     <div className={`mx-5 mt-5 rounded-2xl border px-4 py-4 ${fiscalStatusClasses}`}>
                                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                             <div>
@@ -2573,8 +2624,8 @@ export const Tenants: React.FC = () => {
                                                     </div>
                                                 ) : null}
 
-                                                {isLocalPosTenant(selectedTenantForTerminals) ? (
-                                                    <div className={`mt-5 rounded-2xl border px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between ${
+                                                {activeTerminalTab === 'summary' && isLocalPosTenant(selectedTenantForTerminals) ? (
+                                                    <div className={`mx-5 mt-5 rounded-2xl border px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between ${
                                                         isExplicitOfflinePosTenant(selectedTenantForTerminals)
                                                             ? 'border-slate-200 bg-slate-50'
                                                             : 'border-amber-200 bg-amber-50'
