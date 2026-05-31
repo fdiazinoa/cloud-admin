@@ -12,7 +12,10 @@ import type {
     TerminalAuthAttempt,
     TerminalFiscalProductionConfig,
     TerminalFiscalReadiness,
+    TerminalSyncPendingResult,
+    TerminalSyncRetryResult,
     TenantTerminalRegistryEntry,
+    TenantTerminalErpReadiness,
     TenantTerminalSnapshot,
     TenantType,
     Terminal,
@@ -149,7 +152,7 @@ export interface TerminalErpReadinessResult {
     terminalId?: string | null;
     profileStatus?: string | null;
     checks?: Record<string, unknown>;
-    erp_readiness?: Record<string, unknown>;
+    erp_readiness?: TenantTerminalErpReadiness;
     message?: string;
 }
 
@@ -200,6 +203,26 @@ export interface RequestTerminalFiscalConfigInput {
     terminalName?: string | null;
     mode: "QA_DEMO" | "PRODUCTION";
     config?: TerminalFiscalProductionConfig;
+}
+
+export interface RequestTerminalErpProfilePrepareInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    deviceId?: string | null;
+    terminalName?: string | null;
+}
+
+export interface RequestTerminalSyncPendingInput {
+    tenantId: string;
+    terminalId: string;
+}
+
+export interface RequestTerminalSyncRetryInput {
+    tenantId: string;
+    terminalId: string;
+    documentId?: string | null;
+    documentIds?: string[];
 }
 
 export interface TerminalFiscalConfigResult {
@@ -840,6 +863,93 @@ export async function requestTerminalErpReadiness(input: RequestTerminalErpReadi
     return (payload || { status: "pending" }) as TerminalErpReadinessResult;
 }
 
+export async function requestTerminalErpProfilePrepare(
+    input: RequestTerminalErpProfilePrepareInput,
+): Promise<TerminalErpReadinessResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-erp-profile`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            device_id: input.deviceId || null,
+            terminal_name: input.terminalName || null,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo preparar el perfil ERP de la terminal.");
+    }
+
+    return (payload || { status: "pending" }) as TerminalErpReadinessResult;
+}
+
+export async function getTerminalSyncPending(
+    input: RequestTerminalSyncPendingInput,
+): Promise<TerminalSyncPendingResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-sync-pending`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as (TerminalSyncPendingResult & { message?: string; error?: string }) | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudieron cargar los documentos pendientes de la terminal.");
+    }
+
+    return payload || {
+        status: "success",
+        documents: [],
+        summary: { pending: 0, repairable: 0, functionalErrors: 0 },
+    };
+}
+
+export async function retryTerminalSyncPending(
+    input: RequestTerminalSyncRetryInput,
+): Promise<TerminalSyncRetryResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-sync-retry`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            document_id: input.documentId || null,
+            document_ids: input.documentIds || [],
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as (TerminalSyncRetryResult & { message?: string; error?: string }) | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudieron reintentar los documentos pendientes.");
+    }
+
+    return payload || { status: "success" };
+}
+
 export async function getTerminalAuthAttempts(
     tenantId: string,
     terminalId: string,
@@ -1354,6 +1464,9 @@ export const tenantService = {
     requestTerminalTakeover,
     requestTerminalLocalRebuild,
     requestTerminalErpReadiness,
+    requestTerminalErpProfilePrepare,
+    getTerminalSyncPending,
+    retryTerminalSyncPending,
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
     getTerminalFiscalReadiness,
