@@ -846,6 +846,26 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const handleGeneratePairingCodeForDevice = async (terminal: TenantTerminalSnapshot, deviceId: string) => {
+        const terminalId = getTerminalTakeoverId(terminal);
+        const requestedDeviceId = deviceId.trim();
+        if (!terminalId || !requestedDeviceId) {
+            alert('Esta terminal no tiene device_id candidato para generar codigo de vinculacion.');
+            return;
+        }
+
+        await handleGeneratePairingCode(terminal, {
+            terminal_id: terminalId,
+            terminal_name: terminal.name,
+            requested_device_id: requestedDeviceId,
+            authorized_device_id: getTerminalAuthorizedDeviceId(terminal) || null,
+            reason: 'DEVICE_NOT_AUTHORIZED',
+            status: 'PENDING',
+            resolution_status: 'PENDING',
+            pairing_required: true,
+        });
+    };
+
     const handleReauthorizeAttempt = async (terminal: TenantTerminalSnapshot, attempt: TerminalAuthAttempt) => {
         if (!selectedTenantForTerminals) return;
 
@@ -2100,6 +2120,15 @@ export const Tenants: React.FC = () => {
                                             ...(isFiscalEligibleTenant(selectedTenantForTerminals) ? [{ key: 'fiscal' as TerminalTabKey, label: 'Fiscal' }] : []),
                                             { key: 'attempts', label: 'Intentos', count: authAttempts.length },
                                         ];
+                                        const posReportedDeviceId = identity.posReportedDeviceId !== 'N/D' ? identity.posReportedDeviceId : '';
+                                        const pairingCandidateDeviceId = lastRejectedDeviceId
+                                            || (posReportedDeviceId && posReportedDeviceId !== authorizedDeviceId ? posReportedDeviceId : '');
+                                        const manualPairingKey = pairingCandidateDeviceId ? `${terminalKey}-PAIRING-${pairingCandidateDeviceId}` : '';
+                                        const manualPairing = pairingCandidateDeviceId
+                                            ? pairingCodesByAttempt[getPairingAttemptKey(terminal, pairingCandidateDeviceId)]
+                                            : null;
+                                        const manualPairingCode = getPairingCodeValue(manualPairing);
+                                        const manualPairingExpiresAt = getPairingExpiresAt(manualPairing);
 
                                         return (
                                             <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
@@ -2206,6 +2235,17 @@ export const Tenants: React.FC = () => {
                                                                     {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
                                                                     Actualizar intentos
                                                                 </button>
+                                                                {pairingCandidateDeviceId ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleGeneratePairingCodeForDevice(terminal, pairingCandidateDeviceId)}
+                                                                        disabled={deviceActionSubmittingKey === manualPairingKey}
+                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-900 shadow-sm hover:bg-amber-100 transition-colors disabled:opacity-60"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === manualPairingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
+                                                                        Generar codigo
+                                                                    </button>
+                                                                ) : null}
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => void handleRotateTerminalCredentials(terminal)}
@@ -2221,6 +2261,22 @@ export const Tenants: React.FC = () => {
                                                         {identity.mismatchWarning ? (
                                                             <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-3 py-3 text-sm font-semibold text-red-800">
                                                                 {identity.mismatchWarning}
+                                                            </div>
+                                                        ) : null}
+
+                                                        {manualPairingCode ? (
+                                                            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider">Codigo de vinculacion para escribir en el POS</p>
+                                                                <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                                    <p className="font-mono text-lg font-black tracking-widest">{manualPairingCode}</p>
+                                                                    <p className="text-xs font-semibold">
+                                                                        {manualPairingExpiresAt
+                                                                            ? `Vence: ${formatDateTime(manualPairingExpiresAt)}`
+                                                                            : manualPairing?.ttlSeconds || manualPairing?.ttl_seconds
+                                                                                ? `Vence en ${manualPairing.ttlSeconds || manualPairing.ttl_seconds} segundos`
+                                                                                : 'Usalo antes de que expire.'}
+                                                                    </p>
+                                                                </div>
                                                             </div>
                                                         ) : null}
 
@@ -2430,7 +2486,18 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                         {authAttempts.length === 0 ? (
                                                             <div className="px-3 py-4 text-sm opacity-75">
-                                                                No hay intentos rechazados reportados por ERP para esta terminal.
+                                                                <p>No hay intentos rechazados reportados por ERP para esta terminal.</p>
+                                                                {pairingCandidateDeviceId ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleGeneratePairingCodeForDevice(terminal, pairingCandidateDeviceId)}
+                                                                        disabled={deviceActionSubmittingKey === manualPairingKey}
+                                                                        className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-60"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === manualPairingKey ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                                                                        Generar codigo para {pairingCandidateDeviceId}
+                                                                    </button>
+                                                                ) : null}
                                                             </div>
                                                         ) : (
                                                             <div className="overflow-x-auto">
