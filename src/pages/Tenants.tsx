@@ -2072,6 +2072,7 @@ export const Tenants: React.FC = () => {
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
                                         const authorizedDeviceId = getTerminalAuthorizedDeviceId(terminal);
                                         const lastSeenDeviceId = getTerminalLastSeenDeviceId(terminal);
+                                        const deviceIdentityAligned = isDeviceIdentityAligned(authorizedDeviceId, lastSeenDeviceId);
                                         const effectiveAuthStatus = getEffectiveAuthStatus(authStatus, authorizedDeviceId, lastSeenDeviceId);
                                         const authStatusClasses = getAuthStatusClasses(effectiveAuthStatus);
                                         const actionableAuthAttempts = authAttempts.filter((attempt) => {
@@ -2101,12 +2102,15 @@ export const Tenants: React.FC = () => {
                                         const fiscalCheckedAt = fiscalReadiness?.checked_at || terminal.registry?.last_fiscal_readiness_at || null;
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
                                         const fiscalDemoSubmittingKey = `${terminalKey}-QA_DEMO`;
-                                        const hasActionableAuthIssue = !['AUTHORIZED', 'TAKEOVER_COMPLETED'].includes(effectiveAuthStatus) || actionableAuthAttempts.length > 0;
+                                        const hasActionableAuthIssue = !deviceIdentityAligned && (
+                                            !['AUTHORIZED', 'TAKEOVER_COMPLETED'].includes(effectiveAuthStatus)
+                                            || actionableAuthAttempts.length > 0
+                                        );
                                         const hasActionableErpIssue = profileIncomplete && (syncPending.summary.pending > 0 || erpReadinessStatus === 'error');
                                         const hasActionableSyncIssue = syncPending.summary.pending > 0 && (repairableSyncCount > 0 || functionalSyncErrorCount > 0);
                                         const hasActionableFiscalIssue = isFiscalEligibleTenant(selectedTenantForTerminals) && fiscalStatus === 'ERROR';
                                         const hasAdvancedSignal = hasActionableAuthIssue || hasActionableErpIssue || hasActionableSyncIssue || hasActionableFiscalIssue;
-                                        const isAdvancedOpen = Boolean(terminalAdvancedOpen[terminalKey] || hasAdvancedSignal);
+                                        const isAdvancedOpen = Boolean(terminalAdvancedOpen[terminalKey]);
                                         const showHistoricalAuthDetails = isAdvancedOpen || hasActionableAuthIssue;
                                         const displayRejectedDeviceId = showHistoricalAuthDetails ? lastRejectedDeviceId : '';
                                         const displayLastAuthError = showHistoricalAuthDetails ? lastAuthError : '';
