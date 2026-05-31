@@ -1445,20 +1445,47 @@ export const Tenants: React.FC = () => {
         return 'bg-slate-100 text-slate-500';
     };
 
+    const getEffectiveApkVersion = (terminal: TenantTerminalSnapshot) => {
+        const registryDeviceId = (terminal.registry?.current_device_id || terminal.registry?.device_id || '').trim().toUpperCase();
+        const erpDeviceId = (terminal.erp_current_device_id || '').trim().toUpperCase();
+        const canUseErpVersion = Boolean(terminal.erp_app_version || terminal.erp_app_version_code)
+            && (!registryDeviceId || !erpDeviceId || registryDeviceId === erpDeviceId);
+
+        if (canUseErpVersion) {
+            return {
+                version: terminal.erp_app_version?.trim() || '',
+                versionCode: terminal.erp_app_version_code ?? null,
+                source: 'ERP',
+            };
+        }
+
+        return {
+            version: terminal.registry?.app_version?.trim() || '',
+            versionCode: terminal.registry?.app_version_code ?? null,
+            source: 'Cloud-Admin',
+        };
+    };
+
     const getApkVersionKey = (terminal: TenantTerminalSnapshot) => {
-        const version = terminal.registry?.app_version?.trim() || '';
-        const versionCode = terminal.registry?.app_version_code ? String(terminal.registry.app_version_code) : '';
+        const apkVersion = getEffectiveApkVersion(terminal);
+        const version = apkVersion.version;
+        const versionCode = apkVersion.versionCode ? String(apkVersion.versionCode) : '';
         if (!version && !versionCode) return '';
         return `${version}::${versionCode}`;
     };
 
     const formatApkVersion = (terminal: TenantTerminalSnapshot) => {
-        const version = terminal.registry?.app_version?.trim() || '';
-        const versionCode = terminal.registry?.app_version_code;
+        const { version, versionCode } = getEffectiveApkVersion(terminal);
         if (!version && !versionCode) return 'N/D';
         if (version && versionCode) return `APK v${version} (${versionCode})`;
         if (version) return `APK v${version}`;
         return `Build ${versionCode}`;
+    };
+
+    const getApkVersionSourceLabel = (terminal: TenantTerminalSnapshot) => {
+        const apkVersion = getEffectiveApkVersion(terminal);
+        if (!apkVersion.version && !apkVersion.versionCode) return '';
+        return apkVersion.source;
     };
 
     const referenceVersionCandidate = (() => {
@@ -2378,6 +2405,7 @@ export const Tenants: React.FC = () => {
                                                                         const rStatusLabel = registry ? getRegistryStatusLabel(mockTerminal) : 'N/D';
                                                                         const rVersionKey = getApkVersionKey(mockTerminal);
                                                                         const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
+                                                                        const rVersionSource = getApkVersionSourceLabel(mockTerminal);
                                                                         const prefLanIp = registry ? getPreferredLanIp(mockTerminal) : 'N/D';
                                                                         const endpointRole = getRegistryEndpointRole(registry);
                                         const canReleaseLicenseSlot = Boolean(
@@ -2434,7 +2462,8 @@ export const Tenants: React.FC = () => {
                                                                                 <td className="px-4 py-3 align-top">
                                                                                     {registry ? (
                                                                                         <div className="flex flex-col items-start gap-0.5">
-                                                                                            <span className="font-mono text-slate-700 text-[11px]">v {formatApkVersion(mockTerminal)}</span>
+                                                                                            <span className="font-mono text-slate-700 text-[11px]">{formatApkVersion(mockTerminal)}</span>
+                                                                                            {rVersionSource ? <span className="text-[10px] text-slate-400 font-bold">Fuente: {rVersionSource}</span> : null}
                                                                                             {rIsOutOfVersion ? <span className="text-[10px] text-amber-600 font-bold">Desfasado</span> : null}
                                                                                         </div>
                                                                                     ) : (
