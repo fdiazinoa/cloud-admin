@@ -56,6 +56,10 @@ interface PublicTerminalRecord {
     is_active?: boolean | null;
 }
 
+interface ErpTenantRecord {
+    id: string;
+}
+
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-actor-user-id, x-actor-email, x-actor-source',
@@ -140,6 +144,24 @@ function getPairingCode(payload: unknown): string | null {
     for (const candidate of candidates) {
         if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
     }
+
+    const nestedCandidates = [
+        record.pairing,
+        (record.terminal as Record<string, unknown> | undefined)?.pairing,
+        ((record.terminal as Record<string, unknown> | undefined)?.config as Record<string, unknown> | undefined)?.pairing,
+    ];
+    for (const nested of nestedCandidates) {
+        if (!nested || typeof nested !== 'object') continue;
+        const nestedRecord = nested as Record<string, unknown>;
+        const nestedValues = [
+            nestedRecord.pairingCode,
+            nestedRecord.pairing_code,
+            nestedRecord.code,
+        ];
+        for (const candidate of nestedValues) {
+            if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+        }
+    }
     return null;
 }
 
@@ -153,6 +175,24 @@ function getExpiresAt(payload: unknown): string | null {
     ];
     for (const candidate of candidates) {
         if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    }
+
+    const nestedCandidates = [
+        record.pairing,
+        (record.terminal as Record<string, unknown> | undefined)?.pairing,
+        ((record.terminal as Record<string, unknown> | undefined)?.config as Record<string, unknown> | undefined)?.pairing,
+    ];
+    for (const nested of nestedCandidates) {
+        if (!nested || typeof nested !== 'object') continue;
+        const nestedRecord = nested as Record<string, unknown>;
+        const nestedValues = [
+            nestedRecord.expiresAt,
+            nestedRecord.expires_at,
+            nestedRecord.expires,
+        ];
+        for (const candidate of nestedValues) {
+            if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+        }
     }
     return null;
 }
@@ -206,11 +246,72 @@ function getErrorMessage(status: number, payload: unknown) {
     return 'El ERP no pudo completar la accion de autorizacion.';
 }
 
+function getUnknownErrorMessage(error: unknown) {
+    if (error instanceof Error && error.message) return error.message;
+    if (typeof error === 'string' && error.trim()) return error.trim();
+    if (error && typeof error === 'object') {
+        const record = error as Record<string, unknown>;
+        const candidates = [record.message, record.error, record.details, record.hint, record.code];
+        for (const candidate of candidates) {
+            if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+        }
+    }
+    return 'Error interno ejecutando autorizacion de terminal.';
+}
+
+function isUuid(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function isPosTenant(tenant: TenantRecord) {
     if (tenant.contracted_product) {
         return tenant.contracted_product === 'POS_ONLY' || tenant.contracted_product === 'POS_ERP';
     }
     return tenant.type === 'pos_only' || tenant.type === 'full';
+}
+
+async function fetchFirstAvailableErpRoute(
+    baseUrl: string,
+    paths: string[],
+    init: RequestInit,
+) {
+    let lastResponse: Response | null = null;
+    for (const path of paths) {
+        const response = await fetch(`${baseUrl.replace(/\/$/, '')}${path}`, init);
+        if (response.status !== 404) return response;
+        lastResponse = response;
+    }
+    return lastResponse as Response;
+}
+
+async function resolveErpTenantId(
+    supabase: ReturnType<typeof createClient>,
+    cloudTenantId: string,
+) {
+    const { data: directMatch, error: directError } = await supabase
+        .schema('public')
+        .from('erp_tenants')
+        .select('id')
+        .eq('id', cloudTenantId)
+        .maybeSingle();
+    if (directError) console.error('Failed to resolve ERP tenant by id', directError);
+    if (directMatch) return (directMatch as ErpTenantRecord).id;
+
+    for (const key of ['cloudAdminTenantId', 'cloud_admin_tenant_id']) {
+        const { data, error } = await supabase
+            .schema('public')
+            .from('erp_tenants')
+            .select('id')
+            .eq(`config->>${key}`, cloudTenantId)
+            .maybeSingle();
+        if (error) {
+            console.error(`Failed to resolve ERP tenant by ${key}`, error);
+            continue;
+        }
+        if (data) return (data as ErpTenantRecord).id;
+    }
+
+    return cloudTenantId;
 }
 
 async function insertDeviceAudit(
@@ -343,13 +444,15 @@ Deno.serve(async (request) => {
         }
 
         const registry = await loadRegistry(supabase, tenantId, terminalId, registryId);
-        const { data: terminalData, error: terminalError } = await supabase
+        let terminalQuery = supabase
             .schema('public')
             .from('terminals')
             .select('id,tenant_id,code,is_active')
-            .eq('tenant_id', tenantId)
-            .eq('id', terminalId)
-            .maybeSingle();
+            .eq('tenant_id', tenantId);
+        terminalQuery = isUuid(terminalId)
+            ? terminalQuery.eq('id', terminalId)
+            : terminalQuery.eq('code', terminalId);
+        const { data: terminalData, error: terminalError } = await terminalQuery.maybeSingle();
         if (terminalError) throw terminalError;
         const publicTerminal = terminalData as PublicTerminalRecord | null;
 
@@ -536,15 +639,22 @@ Deno.serve(async (request) => {
         if (action === 'GENERATE_PAIRING_CODE') {
             const erpApiUrl = getEnv('ERP_API_URL', 'CLOUD_ADMIN_ERP_API_URL');
             const erpServiceToken = getEnv('ERP_TAKEOVER_SERVICE_TOKEN', 'ERP_SERVICE_TOKEN', 'CLOUD_ADMIN_ERP_SERVICE_TOKEN');
-            const erpResponse = await fetch(`${erpApiUrl.replace(/\/$/, '')}/api/sync/terminals/${encodeURIComponent(terminalId)}/pairing-code`, {
+            const erpTenantId = await resolveErpTenantId(supabase, tenantId);
+            const terminalPathId = encodeURIComponent(terminalId);
+            const erpResponse = await fetchFirstAvailableErpRoute(erpApiUrl, [
+                `/api/sync/terminals/${terminalPathId}/pairing-code`,
+                `/api/settings/terminals/${terminalPathId}/pairing-code`,
+            ], {
                 method: 'POST',
                 headers: {
                     Authorization: `Bearer ${erpServiceToken}`,
                     'Content-Type': 'application/json',
-                    'X-Tenant-Id': tenantId,
+                    'X-Tenant-Id': erpTenantId,
                     'X-Cloud-Admin-Tenant-Id': tenantId,
                 },
                 body: JSON.stringify({
+                    cloudAdminTenantId: tenantId,
+                    erpTenantId,
                     deviceId,
                     reason,
                     performedBy,
@@ -708,15 +818,24 @@ Deno.serve(async (request) => {
 
         const erpApiUrl = getEnv('ERP_API_URL', 'CLOUD_ADMIN_ERP_API_URL');
         const erpServiceToken = getEnv('ERP_TAKEOVER_SERVICE_TOKEN', 'ERP_SERVICE_TOKEN', 'CLOUD_ADMIN_ERP_SERVICE_TOKEN');
-        const erpResponse = await fetch(`${erpApiUrl.replace(/\/$/, '')}/api/sync/terminals/${encodeURIComponent(terminalId)}/takeover`, {
+        const erpTenantId = await resolveErpTenantId(supabase, tenantId);
+        const terminalPathId = encodeURIComponent(terminalId);
+        const erpResponse = await fetchFirstAvailableErpRoute(erpApiUrl, [
+            `/api/sync/terminals/${terminalPathId}/takeover`,
+            `/api/settings/terminals/${terminalPathId}/takeover`,
+        ], {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${erpServiceToken}`,
                 'Content-Type': 'application/json',
-                'X-Tenant-Id': tenantId,
+                'X-Tenant-Id': erpTenantId,
                 'X-Cloud-Admin-Tenant-Id': tenantId,
             },
-            body: JSON.stringify(erpPayloadBody),
+            body: JSON.stringify({
+                ...erpPayloadBody,
+                cloudAdminTenantId: tenantId,
+                erpTenantId,
+            }),
         });
 
         const erpPayload = await erpResponse.json().catch(async () => ({
@@ -820,10 +939,14 @@ Deno.serve(async (request) => {
                 : 'Credenciales rotadas correctamente. El POS debe reintentar autenticacion para recibir un nuevo syncToken.',
         });
     } catch (error) {
-        console.error('request-terminal-device-authorization failed', error);
+        const message = getUnknownErrorMessage(error);
+        console.error('request-terminal-device-authorization failed', {
+            message,
+            error: sanitizePayload(error),
+        });
         return json({
             error: 'INTERNAL_ERROR',
-            message: error instanceof Error ? error.message : 'Error interno ejecutando autorizacion de terminal.',
+            message,
         }, 500);
     }
 });
