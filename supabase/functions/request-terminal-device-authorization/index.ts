@@ -52,8 +52,7 @@ interface RegistryRecord {
 interface PublicTerminalRecord {
     id: string;
     tenant_id: string;
-    device_token?: string | null;
-    name?: string | null;
+    code?: string | null;
     is_active?: boolean | null;
 }
 
@@ -347,7 +346,7 @@ Deno.serve(async (request) => {
         const { data: terminalData, error: terminalError } = await supabase
             .schema('public')
             .from('terminals')
-            .select('id,tenant_id,device_token,name,is_active')
+            .select('id,tenant_id,code,is_active')
             .eq('tenant_id', tenantId)
             .eq('id', terminalId)
             .maybeSingle();
@@ -386,20 +385,10 @@ Deno.serve(async (request) => {
                 .eq('terminal_id', terminalId);
             if (deleteError) throw deleteError;
 
-            if (publicTerminal?.id) {
-                const { error: terminalUpdateError } = await supabase
-                    .schema('public')
-                    .from('terminals')
-                    .update({ device_token: null })
-                    .eq('tenant_id', tenantId)
-                    .eq('id', terminalId);
-                if (terminalUpdateError) throw terminalUpdateError;
-            }
-
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                 old_device_id: clearedDeviceIds.join(', ') || null,
                 new_device_id: null,
                 action: 'CLEAR_TERMINAL_DEVICES',
@@ -410,7 +399,7 @@ Deno.serve(async (request) => {
                     registry_ids: rows.map((row) => row.id).filter(Boolean),
                     cleared_registry_count: count || 0,
                     cleared_device_ids: clearedDeviceIds,
-                    public_terminal_device_token_cleared: Boolean(publicTerminal?.device_token),
+                    public_terminal_preserved: Boolean(publicTerminal?.id),
                     preserved: [
                         'public.terminals row',
                         'sales',
@@ -441,7 +430,6 @@ Deno.serve(async (request) => {
         const effectiveAuthorizedDeviceId = persistedAuthorizedDeviceId
             || registry?.current_device_id?.trim()
             || registry?.device_id?.trim()
-            || publicTerminal?.device_token?.trim()
             || null;
         const previousDeviceId = action === 'TAKEOVER'
             ? effectiveAuthorizedDeviceId
@@ -492,7 +480,7 @@ Deno.serve(async (request) => {
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry.terminal_name || publicTerminal?.name || null,
+                terminal_name: terminalName || registry.terminal_name || publicTerminal?.code || null,
                 old_device_id: persistedAuthorizedDeviceId,
                 new_device_id: deviceId,
                 action: 'SYNC_AUTHORIZED_DEVICE',
@@ -531,7 +519,7 @@ Deno.serve(async (request) => {
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
-            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             old_device_id: previousDeviceId,
             new_device_id: action === 'REVOKE_DEVICE' ? effectiveAuthorizedDeviceId : deviceId,
             action,
@@ -573,7 +561,7 @@ Deno.serve(async (request) => {
                 await insertDeviceAudit(supabase, {
                     tenant_id: tenantId,
                     terminal_id: terminalId,
-                    terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                    terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                     old_device_id: effectiveAuthorizedDeviceId,
                     new_device_id: deviceId,
                     action,
@@ -598,7 +586,7 @@ Deno.serve(async (request) => {
                 await insertDeviceAudit(supabase, {
                     tenant_id: tenantId,
                     terminal_id: terminalId,
-                    terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                    terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                     old_device_id: effectiveAuthorizedDeviceId,
                     new_device_id: deviceId,
                     action,
@@ -641,7 +629,7 @@ Deno.serve(async (request) => {
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                 old_device_id: effectiveAuthorizedDeviceId,
                 new_device_id: deviceId,
                 action,
@@ -687,7 +675,7 @@ Deno.serve(async (request) => {
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                 old_device_id: deviceId,
                 new_device_id: effectiveAuthorizedDeviceId,
                 action,
@@ -740,7 +728,7 @@ Deno.serve(async (request) => {
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                 old_device_id: previousDeviceId,
                 new_device_id: deviceId,
                 action,
@@ -801,7 +789,7 @@ Deno.serve(async (request) => {
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
-            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             old_device_id: previousDeviceId,
             new_device_id: newAuthorizedDeviceId,
             action,
