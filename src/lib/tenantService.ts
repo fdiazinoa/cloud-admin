@@ -267,9 +267,30 @@ function normalizeKey(value: unknown): string {
     return asText(value).toUpperCase();
 }
 
+function firstText(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = asText(value);
+        if (text) return text;
+    }
+    return null;
+}
+
+function firstNumber(...values: unknown[]): number | null {
+    for (const value of values) {
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        if (typeof value === "string" && value.trim()) {
+            const parsed = Number(value.trim());
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return null;
+}
+
 interface ErpTerminalBinding {
     deviceId: string;
     erpTerminalId: string;
+    appVersion?: string | null;
+    appVersionCode?: number | null;
 }
 
 function resolveErpTerminalBinding(
@@ -322,7 +343,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
         const { data: terminals, error: terminalsError } = await supabaseAdmin
             .schema("public")
             .from("erp_terminals")
-            .select("id,device_id,name,config,last_seen,created_at")
+            .select("id,device_id,name,code,config,last_seen,created_at")
             .in("store_id", storeIds);
 
         if (terminalsError) {
@@ -336,11 +357,67 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
             const erpTerminalId = asText(terminal.id);
             if (!deviceId || !erpTerminalId) continue;
 
-            const binding: ErpTerminalBinding = { deviceId, erpTerminalId };
             const config = asRecord(terminal.config);
             const metadata = asRecord(config.metadata);
+            const status = asRecord(config.status);
+            const app = asRecord(config.app);
+            const apk = asRecord(config.apk);
+            const binding: ErpTerminalBinding = {
+                deviceId,
+                erpTerminalId,
+                appVersion: firstText(
+                    config.app_version,
+                    config.appVersion,
+                    config.apk_version,
+                    config.apkVersion,
+                    config.version,
+                    metadata.app_version,
+                    metadata.appVersion,
+                    metadata.apk_version,
+                    metadata.apkVersion,
+                    metadata.version,
+                    status.app_version,
+                    status.appVersion,
+                    status.apk_version,
+                    status.apkVersion,
+                    status.version,
+                    app.version,
+                    app.app_version,
+                    app.apk_version,
+                    apk.version,
+                    apk.app_version,
+                    apk.apk_version,
+                ),
+                appVersionCode: firstNumber(
+                    config.app_version_code,
+                    config.appVersionCode,
+                    config.apk_version_code,
+                    config.apkVersionCode,
+                    config.version_code,
+                    config.versionCode,
+                    metadata.app_version_code,
+                    metadata.appVersionCode,
+                    metadata.apk_version_code,
+                    metadata.apkVersionCode,
+                    metadata.version_code,
+                    metadata.versionCode,
+                    status.app_version_code,
+                    status.appVersionCode,
+                    status.apk_version_code,
+                    status.apkVersionCode,
+                    status.version_code,
+                    status.versionCode,
+                    app.version_code,
+                    app.versionCode,
+                    apk.version_code,
+                    apk.versionCode,
+                ),
+            };
             [
                 terminal.id,
+                terminal.name,
+                terminal.code,
+                terminal.device_id,
                 metadata.terminal_id,
                 metadata.erp_terminal_id,
             ].forEach((candidate) => {
@@ -1060,6 +1137,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             created_at: primaryTerminal.created_at || null,
             erp_terminal_uuid: erpBinding?.erpTerminalId || null,
             erp_current_device_id: erpBinding?.deviceId || null,
+            erp_app_version: erpBinding?.appVersion || null,
+            erp_app_version_code: erpBinding?.appVersionCode || null,
             registry,
             registries: consolidatedRegistries,
         });
@@ -1109,6 +1188,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             created_at: primary.created_at || null,
             erp_terminal_uuid: orphanBinding?.erpTerminalId || null,
             erp_current_device_id: orphanBinding?.deviceId || null,
+            erp_app_version: orphanBinding?.appVersion || null,
+            erp_app_version_code: orphanBinding?.appVersionCode || null,
             registry: primary,
             registries: arr,
         });
