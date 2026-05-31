@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Server, AlertTriangle, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban } from 'lucide-react';
-import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
+import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TerminalSyncDocument, TerminalSyncPendingResult, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import {
@@ -16,7 +16,7 @@ import {
     type TenantProductSelection
 } from '../lib/tenantProducts';
 
-type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'fiscal' | 'attempts';
+type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'sync' | 'fiscal' | 'attempts';
 
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
@@ -53,6 +53,9 @@ export const Tenants: React.FC = () => {
     const [fiscalConfigSubmittingKey, setFiscalConfigSubmittingKey] = useState<string | null>(null);
     const [fiscalConfigTerminal, setFiscalConfigTerminal] = useState<TenantTerminalSnapshot | null>(null);
     const [isFiscalConfigModalOpen, setIsFiscalConfigModalOpen] = useState(false);
+    const [syncPendingByTerminal, setSyncPendingByTerminal] = useState<Record<string, TerminalSyncPendingResult>>({});
+    const [syncPendingLoadingKey, setSyncPendingLoadingKey] = useState<string | null>(null);
+    const [syncRetrySubmittingKey, setSyncRetrySubmittingKey] = useState<string | null>(null);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
         email: string;
@@ -313,6 +316,7 @@ export const Tenants: React.FC = () => {
         setTenantTerminals([]);
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
+        setSyncPendingByTerminal({});
         setIsTerminalModalOpen(true);
         setIsTerminalModalLoading(true);
 
@@ -320,6 +324,7 @@ export const Tenants: React.FC = () => {
             const data = await tenantService.getTenantTerminalOverview(tenant.id);
             setTenantTerminals(data);
             void loadAuthAttemptsForTerminals(tenant.id, data);
+            void loadSyncPendingForTerminals(tenant.id, data);
             if (isFiscalEligibleTenant(tenant)) {
                 void loadFiscalReadinessForTerminals(tenant.id, data);
             }
@@ -337,6 +342,7 @@ export const Tenants: React.FC = () => {
         setTenantTerminals([]);
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
+        setSyncPendingByTerminal({});
         closeTakeoverModal();
         closeRebuildModal();
         closeFiscalConfigModal();
@@ -582,6 +588,49 @@ export const Tenants: React.FC = () => {
         return null;
     };
 
+    const getReadinessProfileStatus = (readiness: TenantTerminalErpReadiness | null | undefined) => (
+        getReadinessValue(readiness, ['profileStatus', 'profile_status']) || ''
+    ).toUpperCase();
+
+    const isErpProfileIncomplete = (readiness: TenantTerminalErpReadiness | null | undefined) => {
+        const profileStatus = getReadinessProfileStatus(readiness);
+        const profileCheck = getReadinessCheckValue(readiness, ['profile']);
+        return profileStatus === 'DRAFT' || profileCheck === false;
+    };
+
+    const getSyncDocumentValue = (document: TerminalSyncDocument, keys: string[]) => {
+        for (const key of keys) {
+            const value = document[key];
+            if (typeof value === 'string' && value.trim()) return value.trim();
+            if (typeof value === 'number') return String(value);
+        }
+        return '';
+    };
+
+    const getSyncDocumentId = (document: TerminalSyncDocument) => (
+        getSyncDocumentValue(document, ['id', 'document_id', 'documentId', 'uuid'])
+    );
+
+    const getSyncDocumentFolio = (document: TerminalSyncDocument) => (
+        getSyncDocumentValue(document, ['folio', 'document_no', 'documentNo', 'sequence', 'ncf']) || 'Documento sin folio'
+    );
+
+    const getSyncDocumentErrorCode = (document: TerminalSyncDocument) => (
+        getSyncDocumentValue(document, ['error_code', 'errorCode', 'code']).toUpperCase()
+    );
+
+    const getSyncDocumentCreatedAt = (document: TerminalSyncDocument) => (
+        getSyncDocumentValue(document, ['created_at', 'createdAt', 'date', 'timestamp'])
+    );
+
+    const isRepairableSyncDocument = (document: TerminalSyncDocument, fallbackReadiness?: TenantTerminalErpReadiness | null) => {
+        const documentReadiness = document.readiness
+            || (document.erp_readiness && typeof document.erp_readiness === 'object' ? document.erp_readiness as TenantTerminalErpReadiness : null);
+        const readiness = documentReadiness || fallbackReadiness || null;
+        return getSyncDocumentErrorCode(document) === 'ERP_CONTEXT_MISSING'
+            && (isErpProfileIncomplete(readiness) || document.retryable === true);
+    };
+
     const getErpReadinessStatus = (terminal: TenantTerminalSnapshot) => (
         terminal.registry?.erp_readiness?.status?.toString().toLowerCase() || 'missing'
     );
@@ -731,6 +780,125 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const handlePrepareErpProfile = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return null;
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) {
+            alert('Esta terminal necesita terminal_id para preparar el perfil ERP.');
+            return null;
+        }
+
+        const key = getTerminalKey(terminal);
+        setErpReadinessSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalErpProfilePrepare({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                deviceId: getTerminalCurrentDeviceId(terminal) || null,
+                terminalName: terminal.name,
+            });
+            await refreshTerminalModalData();
+            void loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
+            alert(result.message || (result.status === 'ready' ? 'Perfil ERP preparado correctamente.' : 'Perfil ERP solicitado, pero aun no esta listo.'));
+            return result;
+        } catch (err: unknown) {
+            console.error('Error preparing ERP profile:', err);
+            alert(getErrorMessage(err));
+            return null;
+        } finally {
+            setErpReadinessSubmittingKey(null);
+        }
+    };
+
+    const handlePrepareAndRetryDocument = async (terminal: TenantTerminalSnapshot, document: TerminalSyncDocument) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        const documentId = getSyncDocumentId(document);
+        if (!terminalId || !documentId) {
+            alert('No se pudo identificar la terminal o el documento pendiente.');
+            return;
+        }
+
+        const key = `${getTerminalKey(terminal)}-${documentId}`;
+        setSyncRetrySubmittingKey(key);
+        try {
+            const readiness = terminal.registry?.erp_readiness || document.readiness || null;
+            if (isErpProfileIncomplete(readiness)) {
+                const prepareResult = await tenantService.requestTerminalErpProfilePrepare({
+                    tenantId: selectedTenantForTerminals.id,
+                    terminalId,
+                    registryId: terminal.registry?.id || null,
+                    deviceId: getTerminalCurrentDeviceId(terminal) || null,
+                    terminalName: terminal.name,
+                });
+                const preparedReadiness = prepareResult.erp_readiness || prepareResult as TenantTerminalErpReadiness;
+                if (isErpProfileIncomplete(preparedReadiness) || prepareResult.status === 'error') {
+                    alert(prepareResult.message || 'El perfil ERP sigue incompleto. No se reintentara el documento.');
+                    await refreshTerminalModalData();
+                    return;
+                }
+            }
+
+            const result = await tenantService.retryTerminalSyncPending({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                documentId,
+            });
+            await refreshTerminalModalData();
+            await loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
+            alert(result.message || 'Documento reenviado correctamente.');
+        } catch (err: unknown) {
+            console.error('Error preparing and retrying document:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setSyncRetrySubmittingKey(null);
+        }
+    };
+
+    const handleRetryTerminalPending = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) {
+            alert('Esta terminal necesita terminal_id para reintentar pendientes.');
+            return;
+        }
+
+        if (isErpProfileIncomplete(terminal.registry?.erp_readiness || null)) {
+            alert('No se permite reintento masivo mientras el perfil ERP siga incompleto.');
+            return;
+        }
+
+        const key = getTerminalKey(terminal);
+        const pending = syncPendingByTerminal[key];
+        const documentIds = (pending?.documents || [])
+            .filter((document) => isRepairableSyncDocument(document, terminal.registry?.erp_readiness || null))
+            .map(getSyncDocumentId)
+            .filter(Boolean);
+
+        if (!documentIds.length) {
+            alert('No hay documentos reparables para esta terminal.');
+            return;
+        }
+
+        setSyncRetrySubmittingKey(`${key}-bulk`);
+        try {
+            const result = await tenantService.retryTerminalSyncPending({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                documentIds,
+            });
+            await refreshTerminalModalData();
+            await loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
+            alert(result.message || 'Pendientes reenviados correctamente.');
+        } catch (err: unknown) {
+            console.error('Error retrying terminal pending documents:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setSyncRetrySubmittingKey(null);
+        }
+    };
+
     const loadTerminalAuthAttempts = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
         const key = getTerminalKey(terminal);
         const terminalId = getTerminalTakeoverId(terminal);
@@ -765,8 +933,43 @@ export const Tenants: React.FC = () => {
         const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
         setTenantTerminals(data);
         void loadAuthAttemptsForTerminals(selectedTenantForTerminals.id, data);
+        void loadSyncPendingForTerminals(selectedTenantForTerminals.id, data);
         if (isFiscalEligibleTenant(selectedTenantForTerminals)) {
             void loadFiscalReadinessForTerminals(selectedTenantForTerminals.id, data);
+        }
+    };
+
+    const loadTerminalSyncPending = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
+        const key = getTerminalKey(terminal);
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) return;
+
+        setSyncPendingLoadingKey(key);
+        try {
+            const result = await tenantService.getTerminalSyncPending({ tenantId, terminalId });
+            setSyncPendingByTerminal((current) => ({
+                ...current,
+                [key]: result,
+            }));
+        } catch (err) {
+            console.warn('Error fetching terminal sync pending:', err);
+            setSyncPendingByTerminal((current) => ({
+                ...current,
+                [key]: {
+                    status: 'error',
+                    documents: [],
+                    summary: { pending: 0, repairable: 0, functionalErrors: 0 },
+                    message: getErrorMessage(err),
+                },
+            }));
+        } finally {
+            setSyncPendingLoadingKey((current) => current === key ? null : current);
+        }
+    };
+
+    const loadSyncPendingForTerminals = async (tenantId: string, terminals: TenantTerminalSnapshot[]) => {
+        for (const terminal of terminals) {
+            void loadTerminalSyncPending(tenantId, terminal);
         }
     };
 
@@ -1812,12 +2015,33 @@ export const Tenants: React.FC = () => {
                                         const erpReadinessStatus = getErpReadinessStatus(terminal);
                                         const erpTenantId = getReadinessValue(erpReadiness, ['erpTenantId', 'erp_tenant_id']);
                                         const profileStatus = getReadinessValue(erpReadiness, ['profileStatus', 'profile_status']) || (erpReadinessStatus === 'ready' ? 'READY' : 'MISSING');
-                                        const catalogReady = getReadinessCheckValue(erpReadiness, ['catalog', 'catalogReady', 'catalog_ready', 'items', 'itemsReady', 'items_ready']);
-                                        const seriesReady = getReadinessCheckValue(erpReadiness, ['documentSeries', 'document_series', 'series', 'sequences', 'sequencesReady', 'sequences_ready']);
+                                        const tenantReady = getReadinessCheckValue(erpReadiness, ['tenant']);
+                                        const companyReady = getReadinessCheckValue(erpReadiness, ['company']);
+                                        const storeReady = getReadinessCheckValue(erpReadiness, ['store']);
+                                        const terminalReady = getReadinessCheckValue(erpReadiness, ['terminal']);
+                                        const profileReady = getReadinessCheckValue(erpReadiness, ['profile']);
+                                        const taxesReady = getReadinessCheckValue(erpReadiness, ['taxes', 'tax']);
+                                        const paymentMethodsReady = getReadinessCheckValue(erpReadiness, ['paymentMethods', 'payment_methods', 'payments']);
+                                        const warehousesReady = getReadinessCheckValue(erpReadiness, ['warehouses', 'warehouse']);
+                                        const documentSeriesReady = getReadinessCheckValue(erpReadiness, ['documentSeries', 'document_series', 'series', 'sequences', 'sequencesReady', 'sequences_ready']);
+                                        const itemsReady = getReadinessCheckValue(erpReadiness, ['items', 'catalog', 'catalogReady', 'catalog_ready', 'itemsReady', 'items_ready']);
+                                        const profileIncomplete = isErpProfileIncomplete(erpReadiness);
                                         const lastSyncAt = getReadinessValue(erpReadiness, ['lastSyncEventAt', 'last_sync_event_at', 'lastSyncAt', 'last_sync_at']);
                                         const lastSyncType = getReadinessValue(erpReadiness, ['lastSyncEventType', 'last_sync_event_type', 'lastSyncStatus', 'last_sync_status']);
                                         const isReadinessSubmitting = erpReadinessSubmittingKey === getTerminalKey(terminal);
                                         const terminalKey = getTerminalKey(terminal);
+                                        const terminalSyncPending = syncPendingByTerminal[terminalKey];
+                                        const syncPending = {
+                                            ...terminalSyncPending,
+                                            status: terminalSyncPending?.status || 'idle',
+                                            documents: terminalSyncPending?.documents || [],
+                                            summary: { pending: 0, repairable: 0, functionalErrors: 0 },
+                                            ...(terminalSyncPending?.summary ? { summary: terminalSyncPending.summary } : {}),
+                                        };
+                                        const repairableSyncCount = syncPending.documents.filter((document) => isRepairableSyncDocument(document, erpReadiness)).length;
+                                        const functionalSyncErrorCount = Math.max(syncPending.summary.functionalErrors, syncPending.summary.pending - repairableSyncCount);
+                                        const isSyncLoading = syncPendingLoadingKey === terminalKey;
+                                        const syncBulkSubmitting = syncRetrySubmittingKey === `${terminalKey}-bulk`;
                                         const authAttempts = authAttemptsByTerminal[terminalKey] || [];
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
                                         const authStatusClasses = getAuthStatusClasses(authStatus);
@@ -1849,6 +2073,7 @@ export const Tenants: React.FC = () => {
                                             { key: 'summary', label: 'Resumen' },
                                             { key: 'devices', label: 'Dispositivos' },
                                             { key: 'erp', label: 'Preparacion ERP' },
+                                            { key: 'sync', label: 'Sync', count: syncPending.summary.pending },
                                             ...(isFiscalEligibleTenant(selectedTenantForTerminals) ? [{ key: 'fiscal' as TerminalTabKey, label: 'Fiscal' }] : []),
                                             { key: 'attempts', label: 'Intentos', count: authAttempts.length },
                                         ];
@@ -2153,16 +2378,34 @@ export const Tenants: React.FC = () => {
                                                                     POS vinculado, pero el contexto ERP aun no esta listo.
                                                                 </p>
                                                             ) : null}
+                                                            {profileIncomplete ? (
+                                                                <p className="mt-2 rounded-xl border border-amber-200 bg-white/80 px-3 py-2 text-sm font-semibold text-amber-800">
+                                                                    Perfil ERP de terminal incompleto. Los documentos pueden quedar pendientes hasta preparar la terminal.
+                                                                </p>
+                                                            ) : null}
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void handleRetryErpReadiness(terminal)}
-                                                            disabled={isReadinessSubmitting}
-                                                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
-                                                        >
-                                                            {isReadinessSubmitting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
-                                                            Reintentar preparacion ERP
-                                                        </button>
+                                                        <div className="flex flex-col gap-2 sm:flex-row">
+                                                            {profileIncomplete ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handlePrepareErpProfile(terminal)}
+                                                                    disabled={isReadinessSubmitting}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:opacity-60"
+                                                                >
+                                                                    {isReadinessSubmitting ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                                                                    Preparar perfil ERP
+                                                                </button>
+                                                            ) : null}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleRetryErpReadiness(terminal)}
+                                                                disabled={isReadinessSubmitting}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                            >
+                                                                {isReadinessSubmitting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                Reintentar preparacion ERP
+                                                            </button>
+                                                        </div>
                                                     </div>
 
                                                     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
@@ -2171,16 +2414,48 @@ export const Tenants: React.FC = () => {
                                                             <p className="mt-1 font-mono break-all">{erpTenantId || 'No vinculado'}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Tenant</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(tenantReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Compania</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(companyReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Sucursal</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(storeReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal ERP</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(terminalReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal profile</p>
                                                             <p className="mt-1 font-bold uppercase">{profileStatus}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Catalogo</p>
-                                                            <p className="mt-1 font-bold">{getCheckLabel(catalogReady, 'Disponible', 'Vacio / faltante')}</p>
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Perfil</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(profileReady, 'OK', 'DRAFT / faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Impuestos</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(taxesReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Metodos de pago</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(paymentMethodsReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Almacenes</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(warehousesReady, 'OK', 'Faltante')}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Secuencias</p>
-                                                            <p className="mt-1 font-bold">{getCheckLabel(seriesReady, 'Disponibles', 'Faltantes')}</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(documentSeriesReady, 'Disponibles', 'Faltantes')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Articulos</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(itemsReady, 'Disponibles', 'Vacio / faltante')}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo evento sync</p>
@@ -2197,6 +2472,121 @@ export const Tenants: React.FC = () => {
                                                         </p>
                                                     ) : null}
                                                 </div>
+                                                ) : null}
+
+                                                {activeTerminalTab === 'sync' ? (
+                                                    <div className="mt-5 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                                            <div>
+                                                                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Centro de Sincronizacion</p>
+                                                                <p className="mt-1 text-sm text-slate-600">
+                                                                    Pendientes de esta terminal, con reparacion guiada cuando el ERP reporte ERP_CONTEXT_MISSING.
+                                                                </p>
+                                                                {syncPending.message ? (
+                                                                    <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{syncPending.message}</p>
+                                                                ) : null}
+                                                                {profileIncomplete ? (
+                                                                    <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                                                                        Terminal sin perfil ERP listo. No se permite reintento masivo hasta preparar el perfil.
+                                                                    </p>
+                                                                ) : null}
+                                                            </div>
+                                                            <div className="flex flex-col gap-2 sm:flex-row">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void loadTerminalSyncPending(selectedTenantForTerminals.id, terminal)}
+                                                                    disabled={isSyncLoading}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-60"
+                                                                >
+                                                                    {isSyncLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                    Actualizar pendientes
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handleRetryTerminalPending(terminal)}
+                                                                    disabled={profileIncomplete || syncBulkSubmitting || repairableSyncCount === 0}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                                                >
+                                                                    {syncBulkSubmitting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                    Reintentar pendientes de esta terminal
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                                                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Documentos pendientes</p>
+                                                                <p className="mt-1 text-2xl font-black text-slate-800">{syncPending.summary.pending}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">Reparables</p>
+                                                                <p className="mt-1 text-2xl font-black text-amber-800">{repairableSyncCount}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-red-600">Error funcional</p>
+                                                                <p className="mt-1 text-2xl font-black text-red-800">{functionalSyncErrorCount}</p>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+                                                            <table className="min-w-full divide-y divide-slate-100 text-sm">
+                                                                <thead className="bg-slate-50 text-left text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                                                    <tr>
+                                                                        <th className="px-4 py-3">Documento</th>
+                                                                        <th className="px-4 py-3">Fecha</th>
+                                                                        <th className="px-4 py-3">Causa</th>
+                                                                        <th className="px-4 py-3">Estado</th>
+                                                                        <th className="px-4 py-3 text-right">Accion</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-slate-100 bg-white">
+                                                                    {syncPending.documents.length ? syncPending.documents.map((document, index) => {
+                                                                        const documentId = getSyncDocumentId(document);
+                                                                        const documentKey = documentId || `${getSyncDocumentFolio(document)}-${index}`;
+                                                                        const errorCode = getSyncDocumentErrorCode(document);
+                                                                        const repairable = isRepairableSyncDocument(document, erpReadiness);
+                                                                        const submittingDocument = syncRetrySubmittingKey === `${terminalKey}-${documentId}`;
+                                                                        return (
+                                                                            <tr key={documentKey}>
+                                                                                <td className="px-4 py-3 font-mono font-bold text-slate-700">{getSyncDocumentFolio(document)}</td>
+                                                                                <td className="px-4 py-3 text-slate-500">{formatDateTime(getSyncDocumentCreatedAt(document))}</td>
+                                                                                <td className="px-4 py-3">
+                                                                                    <span className={`rounded-full px-2 py-1 text-[11px] font-bold uppercase ${
+                                                                                        repairable ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                                                                                    }`}>
+                                                                                        {repairable ? 'Terminal sin perfil ERP listo' : errorCode || 'Pendiente'}
+                                                                                    </span>
+                                                                                    {document.message ? <p className="mt-1 text-xs text-slate-500">{document.message}</p> : null}
+                                                                                </td>
+                                                                                <td className="px-4 py-3 text-slate-600">{document.status || 'Pendiente'}</td>
+                                                                                <td className="px-4 py-3 text-right">
+                                                                                    {repairable ? (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => void handlePrepareAndRetryDocument(terminal, document)}
+                                                                                            disabled={submittingDocument || !documentId}
+                                                                                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:opacity-60"
+                                                                                        >
+                                                                                            {submittingDocument ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                                                                                            Preparar terminal y reenviar
+                                                                                        </button>
+                                                                                    ) : (
+                                                                                        <span className="text-xs text-slate-400">Sin accion</span>
+                                                                                    )}
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    }) : (
+                                                                        <tr>
+                                                                            <td colSpan={5} className="px-4 py-8 text-center text-sm font-semibold text-slate-400">
+                                                                                {isSyncLoading ? 'Cargando pendientes...' : 'No hay documentos pendientes reportados.'}
+                                                                            </td>
+                                                                        </tr>
+                                                                    )}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    </div>
                                                 ) : null}
 
                                                 {activeTerminalTab === 'fiscal' && isFiscalEligibleTenant(selectedTenantForTerminals) ? (

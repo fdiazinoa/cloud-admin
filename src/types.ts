@@ -149,6 +149,49 @@ export interface TenantTerminalErpReadiness {
     [key: string]: unknown;
 }
 
+export interface TerminalSyncDocument {
+    id?: string | null;
+    folio?: string | null;
+    sequence?: string | number | null;
+    document_no?: string | null;
+    documentNo?: string | null;
+    terminal_id?: string | null;
+    terminalId?: string | null;
+    status?: string | null;
+    error_code?: string | null;
+    errorCode?: string | null;
+    message?: string | null;
+    readiness?: TenantTerminalErpReadiness | null;
+    created_at?: string | null;
+    createdAt?: string | null;
+    updated_at?: string | null;
+    updatedAt?: string | null;
+    retryable?: boolean | null;
+    [key: string]: unknown;
+}
+
+export interface TerminalSyncPendingSummary {
+    pending: number;
+    repairable: number;
+    functionalErrors: number;
+}
+
+export interface TerminalSyncPendingResult {
+    status: string;
+    documents: TerminalSyncDocument[];
+    summary: TerminalSyncPendingSummary;
+    message?: string | null;
+}
+
+export interface TerminalSyncRetryResult {
+    status: string;
+    message?: string | null;
+    retried?: number | null;
+    succeeded?: number | null;
+    failed?: number | null;
+    results?: unknown[];
+}
+
 export interface TenantTerminalSnapshot {
     id: string;
     tenant_id: string;
