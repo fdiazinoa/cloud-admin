@@ -36,6 +36,7 @@ export const Tenants: React.FC = () => {
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
     const [terminalTabs, setTerminalTabs] = useState<Record<string, TerminalTabKey>>({});
+    const [terminalAdvancedOpen, setTerminalAdvancedOpen] = useState<Record<string, boolean>>({});
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
     const [takeoverTerminal, setTakeoverTerminal] = useState<TenantTerminalSnapshot | null>(null);
@@ -317,6 +318,7 @@ export const Tenants: React.FC = () => {
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
         setSyncPendingByTerminal({});
+        setTerminalAdvancedOpen({});
         setIsTerminalModalOpen(true);
         setIsTerminalModalLoading(true);
 
@@ -324,7 +326,6 @@ export const Tenants: React.FC = () => {
             const data = await tenantService.getTenantTerminalOverview(tenant.id);
             setTenantTerminals(data);
             void loadAuthAttemptsForTerminals(tenant.id, data);
-            void loadSyncPendingForTerminals(tenant.id, data);
             if (isFiscalEligibleTenant(tenant)) {
                 void loadFiscalReadinessForTerminals(tenant.id, data);
             }
@@ -343,6 +344,7 @@ export const Tenants: React.FC = () => {
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
         setSyncPendingByTerminal({});
+        setTerminalAdvancedOpen({});
         closeTakeoverModal();
         closeRebuildModal();
         closeFiscalConfigModal();
@@ -451,6 +453,21 @@ export const Tenants: React.FC = () => {
         if (registryStatus) return registryStatus;
         if (getTerminalLastRejectedDeviceId(terminal, attempts)) return 'DEVICE_MISMATCH';
         return 'AUTHORIZED';
+    };
+
+    const isDeviceIdentityAligned = (authorizedDeviceId: string, lastSeenDeviceId: string) => (
+        Boolean(authorizedDeviceId && lastSeenDeviceId && authorizedDeviceId === lastSeenDeviceId)
+    );
+
+    const getEffectiveAuthStatus = (status: string, authorizedDeviceId: string, lastSeenDeviceId: string) => {
+        const normalized = status.toUpperCase();
+        if (
+            isDeviceIdentityAligned(authorizedDeviceId, lastSeenDeviceId)
+            && ['DEVICE_MISMATCH', 'TAKEOVER_PENDING', 'ERP_AUTH_ERROR'].includes(normalized)
+        ) {
+            return 'AUTHORIZED';
+        }
+        return normalized || 'AUTHORIZED';
     };
 
     const getAuthStatusLabel = (status: string) => {
@@ -649,6 +666,22 @@ export const Tenants: React.FC = () => {
         if (status === 'missing_catalog') return 'Catalogo faltante';
         if (status === 'error') return 'ERP con error';
         return 'ERP sin validar';
+    };
+
+    const getOperationalStatusLabel = (status: string) => {
+        if (status === 'OPERATIVE') return 'Operativa';
+        if (status === 'ATTENTION') return 'Requiere atención';
+        if (status === 'AUTH_REQUIRED') return 'Requiere autorización';
+        if (status === 'OFFLINE') return 'Offline';
+        return 'Pendiente de vinculación';
+    };
+
+    const getOperationalStatusClasses = (status: string) => {
+        if (status === 'OPERATIVE') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        if (status === 'ATTENTION') return 'border-amber-200 bg-amber-50 text-amber-700';
+        if (status === 'AUTH_REQUIRED') return 'border-red-200 bg-red-50 text-red-700';
+        if (status === 'OFFLINE') return 'border-slate-200 bg-slate-100 text-slate-600';
+        return 'border-blue-200 bg-blue-50 text-blue-700';
     };
 
     const getCheckLabel = (value: boolean | null, readyLabel: string, missingLabel: string) => {
@@ -933,7 +966,6 @@ export const Tenants: React.FC = () => {
         const data = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
         setTenantTerminals(data);
         void loadAuthAttemptsForTerminals(selectedTenantForTerminals.id, data);
-        void loadSyncPendingForTerminals(selectedTenantForTerminals.id, data);
         if (isFiscalEligibleTenant(selectedTenantForTerminals)) {
             void loadFiscalReadinessForTerminals(selectedTenantForTerminals.id, data);
         }
@@ -964,12 +996,6 @@ export const Tenants: React.FC = () => {
             }));
         } finally {
             setSyncPendingLoadingKey((current) => current === key ? null : current);
-        }
-    };
-
-    const loadSyncPendingForTerminals = async (tenantId: string, terminals: TenantTerminalSnapshot[]) => {
-        for (const terminal of terminals) {
-            void loadTerminalSyncPending(tenantId, terminal);
         }
     };
 
@@ -2044,9 +2070,16 @@ export const Tenants: React.FC = () => {
                                         const syncBulkSubmitting = syncRetrySubmittingKey === `${terminalKey}-bulk`;
                                         const authAttempts = authAttemptsByTerminal[terminalKey] || [];
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
-                                        const authStatusClasses = getAuthStatusClasses(authStatus);
                                         const authorizedDeviceId = getTerminalAuthorizedDeviceId(terminal);
                                         const lastSeenDeviceId = getTerminalLastSeenDeviceId(terminal);
+                                        const effectiveAuthStatus = getEffectiveAuthStatus(authStatus, authorizedDeviceId, lastSeenDeviceId);
+                                        const authStatusClasses = getAuthStatusClasses(effectiveAuthStatus);
+                                        const actionableAuthAttempts = authAttempts.filter((attempt) => {
+                                            const requestedDeviceId = getAttemptDeviceId(attempt);
+                                            return isPendingDeviceUnauthorizedAttempt(attempt)
+                                                && requestedDeviceId !== authorizedDeviceId
+                                                && requestedDeviceId !== lastSeenDeviceId;
+                                        });
                                         const lastRejectedDeviceId = getTerminalLastRejectedDeviceId(terminal, authAttempts);
                                         const lastAuthAttempt = authAttempts[0] || null;
                                         const lastAuthAttemptAt = terminal.registry?.last_auth_attempt_at || (lastAuthAttempt ? getAttemptTime(lastAuthAttempt) : null);
@@ -2068,15 +2101,42 @@ export const Tenants: React.FC = () => {
                                         const fiscalCheckedAt = fiscalReadiness?.checked_at || terminal.registry?.last_fiscal_readiness_at || null;
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
                                         const fiscalDemoSubmittingKey = `${terminalKey}-QA_DEMO`;
-                                        const activeTerminalTab = terminalTabs[terminalKey] || 'summary';
-                                        const terminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
+                                        const hasActionableAuthIssue = !['AUTHORIZED', 'TAKEOVER_COMPLETED'].includes(effectiveAuthStatus) || actionableAuthAttempts.length > 0;
+                                        const hasActionableErpIssue = profileIncomplete && (syncPending.summary.pending > 0 || erpReadinessStatus === 'error');
+                                        const hasActionableSyncIssue = syncPending.summary.pending > 0 && (repairableSyncCount > 0 || functionalSyncErrorCount > 0);
+                                        const hasActionableFiscalIssue = isFiscalEligibleTenant(selectedTenantForTerminals) && fiscalStatus === 'ERROR';
+                                        const hasAdvancedSignal = hasActionableAuthIssue || hasActionableErpIssue || hasActionableSyncIssue || hasActionableFiscalIssue;
+                                        const isAdvancedOpen = Boolean(terminalAdvancedOpen[terminalKey] || hasAdvancedSignal);
+                                        const showHistoricalAuthDetails = isAdvancedOpen || hasActionableAuthIssue;
+                                        const displayRejectedDeviceId = showHistoricalAuthDetails ? lastRejectedDeviceId : '';
+                                        const displayLastAuthError = showHistoricalAuthDetails ? lastAuthError : '';
+                                        const displayLastAuthAttemptAt = showHistoricalAuthDetails ? lastAuthAttemptAt : null;
+                                        const operationalStatus = !isOnline
+                                            ? 'OFFLINE'
+                                            : hasActionableAuthIssue
+                                                ? 'AUTH_REQUIRED'
+                                                : hasActionableErpIssue || hasActionableSyncIssue || hasActionableFiscalIssue
+                                                    ? 'ATTENTION'
+                                                    : authorizedDeviceId || erpReadinessStatus === 'ready' || lastSeenDeviceId
+                                                        ? 'OPERATIVE'
+                                                        : 'PENDING';
+                                        const requestedTerminalTab = terminalTabs[terminalKey] || 'summary';
+                                        const baseTerminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
                                             { key: 'summary', label: 'Resumen' },
                                             { key: 'devices', label: 'Dispositivos' },
+                                        ];
+                                        const advancedTerminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
                                             { key: 'erp', label: 'Preparacion ERP' },
                                             { key: 'sync', label: 'Sync', count: syncPending.summary.pending },
                                             ...(isFiscalEligibleTenant(selectedTenantForTerminals) ? [{ key: 'fiscal' as TerminalTabKey, label: 'Fiscal' }] : []),
                                             { key: 'attempts', label: 'Intentos', count: authAttempts.length },
                                         ];
+                                        const terminalTabOptions = isAdvancedOpen
+                                            ? [...baseTerminalTabOptions, ...advancedTerminalTabOptions]
+                                            : baseTerminalTabOptions;
+                                        const activeTerminalTab = terminalTabOptions.some((tab) => tab.key === requestedTerminalTab)
+                                            ? requestedTerminalTab
+                                            : 'summary';
 
                                         return (
                                             <div key={`${terminal.id}-${terminal.registry?.id || 'catalog'}`} className={`rounded-3xl border bg-white p-5 shadow-sm ${isOutOfVersion ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
@@ -2107,44 +2167,67 @@ export const Tenants: React.FC = () => {
                                                         }`}>
                                                             {isOutOfVersion ? 'Fuera de versión' : hasVersion ? 'Versión reportada' : 'Sin versión'}
                                                         </span>
-                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
-                                                            {getReadinessLabel(erpReadinessStatus)}
+                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${getOperationalStatusClasses(operationalStatus)}`}>
+                                                            {getOperationalStatusLabel(operationalStatus)}
                                                         </span>
-                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${authStatusClasses}`}>
-                                                            {getAuthStatusLabel(authStatus)}
-                                                        </span>
+                                                        {hasAdvancedSignal ? (
+                                                            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-bold uppercase text-amber-700">
+                                                                Revisar soporte
+                                                            </span>
+                                                        ) : null}
                                                     </div>
                                                 </div>
 
-                                                <div className="mt-5 overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-1">
-                                                    <div className="flex min-w-max gap-1">
-                                                        {terminalTabOptions.map((tab) => {
-                                                            const isActive = activeTerminalTab === tab.key;
-                                                            return (
-                                                                <button
-                                                                    key={tab.key}
-                                                                    type="button"
-                                                                    onClick={() => setTerminalTabs((current) => ({
-                                                                        ...current,
-                                                                        [terminalKey]: tab.key,
-                                                                    }))}
-                                                                    className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-colors ${
-                                                                        isActive
-                                                                            ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-100'
-                                                                            : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
-                                                                    }`}
-                                                                >
-                                                                    {tab.label}
-                                                                    {typeof tab.count === 'number' && tab.count > 0 ? (
-                                                                        <span className={`rounded-full px-2 py-0.5 text-[10px] ${
-                                                                            isActive ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
-                                                                        }`}>
-                                                                            {tab.count}
-                                                                        </span>
-                                                                    ) : null}
-                                                                </button>
-                                                            );
-                                                        })}
+                                                <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50/80 p-1">
+                                                    <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                                                        <div className="flex min-w-0 gap-1 overflow-x-auto">
+                                                            {terminalTabOptions.map((tab) => {
+                                                                const isActive = activeTerminalTab === tab.key;
+                                                                return (
+                                                                    <button
+                                                                        key={tab.key}
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setTerminalTabs((current) => ({
+                                                                                ...current,
+                                                                                [terminalKey]: tab.key,
+                                                                            }));
+                                                                            if (tab.key === 'sync' && !terminalSyncPending) {
+                                                                                void loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
+                                                                            }
+                                                                        }}
+                                                                        className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-colors ${
+                                                                            isActive
+                                                                                ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-100'
+                                                                                : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
+                                                                        }`}
+                                                                    >
+                                                                        {tab.label}
+                                                                        {typeof tab.count === 'number' && tab.count > 0 ? (
+                                                                            <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                                                                                isActive ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
+                                                                            }`}>
+                                                                                {tab.count}
+                                                                            </span>
+                                                                        ) : null}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setTerminalAdvancedOpen((current) => ({
+                                                                ...current,
+                                                                [terminalKey]: !isAdvancedOpen,
+                                                            }))}
+                                                            className={`inline-flex items-center justify-center rounded-xl px-3 py-2 text-xs font-bold transition-colors ${
+                                                                isAdvancedOpen
+                                                                    ? 'bg-slate-900 text-white hover:bg-slate-800'
+                                                                    : 'bg-white text-slate-600 shadow-sm ring-1 ring-slate-200 hover:text-slate-900'
+                                                            }`}
+                                                        >
+                                                            {isAdvancedOpen ? 'Ocultar soporte avanzado' : 'Soporte avanzado'}
+                                                        </button>
                                                     </div>
                                                 </div>
 
@@ -2227,33 +2310,35 @@ export const Tenants: React.FC = () => {
                                                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                         <div>
                                                             <p className="text-xs font-bold uppercase tracking-wider">Autorizacion de dispositivo</p>
-                                                            <p className="mt-1 text-sm font-bold">{getAuthStatusLabel(authStatus)}</p>
-                                                            {authStatus === 'DEVICE_MISMATCH' ? (
+                                                            <p className="mt-1 text-sm font-bold">{getAuthStatusLabel(effectiveAuthStatus)}</p>
+                                                            {effectiveAuthStatus === 'DEVICE_MISMATCH' ? (
                                                                 <p className="mt-1 text-sm">
                                                                     Este POS intenta usar una terminal autorizada para otro equipo. Puedes reautorizarlo si realmente reemplazaste el dispositivo.
                                                                 </p>
                                                             ) : null}
                                                         </div>
-                                                        <div className="flex flex-col gap-2 sm:flex-row">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal)}
-                                                                disabled={isAuthAttemptsLoading}
-                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
-                                                            >
-                                                                {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
-                                                                Actualizar intentos
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => void handleRotateTerminalCredentials(terminal)}
-                                                                disabled={!authorizedDeviceId || deviceActionSubmittingKey === rotateSubmittingKey}
-                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 shadow-sm hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                                                            >
-                                                                {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
-                                                                Rotar credenciales
-                                                            </button>
-                                                        </div>
+                                                        {isAdvancedOpen || hasActionableAuthIssue ? (
+                                                            <div className="flex flex-col gap-2 sm:flex-row">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal)}
+                                                                    disabled={isAuthAttemptsLoading}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                                >
+                                                                    {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                    Actualizar intentos
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handleRotateTerminalCredentials(terminal)}
+                                                                    disabled={!authorizedDeviceId || deviceActionSubmittingKey === rotateSubmittingKey}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 shadow-sm hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                                                >
+                                                                    {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
+                                                                    Rotar credenciales
+                                                                </button>
+                                                            </div>
+                                                        ) : null}
                                                     </div>
 
                                                     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
@@ -2267,15 +2352,15 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo rechazado</p>
-                                                            <p className="mt-1 font-mono break-all">{lastRejectedDeviceId || 'N/D'}</p>
+                                                            <p className="mt-1 font-mono break-all">{displayRejectedDeviceId || 'N/D'}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo error auth</p>
-                                                            <p className="mt-1 font-bold break-words">{lastAuthError || 'N/D'}</p>
+                                                            <p className="mt-1 font-bold break-words">{displayLastAuthError || 'N/D'}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo intento</p>
-                                                            <p className="mt-1">{formatDateTime(lastAuthAttemptAt)}</p>
+                                                            <p className="mt-1">{formatDateTime(displayLastAuthAttemptAt)}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Token</p>
