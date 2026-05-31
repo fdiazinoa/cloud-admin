@@ -682,6 +682,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
     }
 
+    const erpBindings = await loadErpTerminalBindings(tenantId);
     const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
     const registryByDeviceId = new Map<string, TenantTerminalRegistryEntry>();
     const matchedRegistryIds = new Set<string>();
@@ -697,6 +698,15 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
 
     const snapshots: TenantTerminalSnapshot[] = ((terminalsRes.data as Terminal[]) || []).map((terminal) => {
         const registry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminal.device_token) || null;
+        const erpBinding = resolveErpTerminalBinding(
+            erpBindings,
+            terminal.id,
+            terminal.name,
+            terminal.device_token,
+            registry?.terminal_id,
+            registry?.terminal_name,
+            registry?.device_id,
+        );
         if (registry?.id) {
             matchedRegistryIds.add(registry.id);
         }
@@ -710,12 +720,22 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             is_active: Boolean(terminal.is_active),
             last_checkin_at: terminal.last_checkin_at || null,
             created_at: terminal.created_at || null,
+            erp_terminal_uuid: erpBinding?.erpTerminalId || null,
+            erp_current_device_id: erpBinding?.deviceId || null,
+            erp_app_version: erpBinding?.appVersion || null,
+            erp_app_version_code: erpBinding?.appVersionCode || null,
             registry,
         };
     });
 
     for (const row of registryRows) {
         if (matchedRegistryIds.has(row.id)) continue;
+        const erpBinding = resolveErpTerminalBinding(
+            erpBindings,
+            row.terminal_id,
+            row.terminal_name,
+            row.device_id,
+        );
 
         snapshots.push({
             id: row.id,
@@ -726,6 +746,10 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             is_active: (row.status || "").toUpperCase() === "ONLINE",
             last_checkin_at: row.last_seen_at || null,
             created_at: row.created_at || null,
+            erp_terminal_uuid: erpBinding?.erpTerminalId || null,
+            erp_current_device_id: erpBinding?.deviceId || null,
+            erp_app_version: erpBinding?.appVersion || null,
+            erp_app_version_code: erpBinding?.appVersionCode || null,
             registry: row,
         });
     }
@@ -1026,6 +1050,185 @@ type DashboardTicketRow = {
     customer_rating?: number | null;
     created_at: string;
 };
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asText(value: unknown): string {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeKey(value: unknown): string {
+    return asText(value).toUpperCase();
+}
+
+function firstText(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = asText(value);
+        if (text) return text;
+    }
+    return null;
+}
+
+function firstNumber(...values: unknown[]): number | null {
+    for (const value of values) {
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        if (typeof value === "string" && value.trim()) {
+            const parsed = Number(value.trim());
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return null;
+}
+
+interface ErpTerminalBinding {
+    deviceId: string;
+    erpTerminalId: string;
+    appVersion?: string | null;
+    appVersionCode?: number | null;
+}
+
+function resolveErpTerminalBinding(
+    bindings: Map<string, ErpTerminalBinding>,
+    ...candidates: Array<string | null | undefined>
+): ErpTerminalBinding | null {
+    for (const candidate of candidates) {
+        const key = normalizeKey(candidate);
+        if (!key) continue;
+        const hit = bindings.get(key);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, ErpTerminalBinding>> {
+    try {
+        const { data: erpTenant, error: erpTenantError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_tenants")
+            .select("id")
+            .eq("config->>cloudAdminTenantId", tenantId)
+            .maybeSingle();
+
+        if (erpTenantError) {
+            console.warn("ERP tenant lookup unavailable for terminal APK version:", erpTenantError);
+            return new Map();
+        }
+
+        const erpTenantId = (erpTenant as { id?: string } | null)?.id;
+        if (!erpTenantId) return new Map();
+
+        const { data: stores, error: storesError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_stores")
+            .select("id")
+            .eq("tenant_id", erpTenantId);
+
+        if (storesError) {
+            console.warn("ERP store lookup unavailable for terminal APK version:", storesError);
+            return new Map();
+        }
+
+        const storeIds = ((stores as Array<{ id?: string }> | null) || [])
+            .map((store) => store.id)
+            .filter((id): id is string => Boolean(id));
+
+        if (storeIds.length === 0) return new Map();
+
+        const { data: terminals, error: terminalsError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_terminals")
+            .select("id,device_id,name,code,config,last_seen,created_at")
+            .in("store_id", storeIds);
+
+        if (terminalsError) {
+            console.warn("ERP terminal lookup unavailable for terminal APK version:", terminalsError);
+            return new Map();
+        }
+
+        const bindings = new Map<string, ErpTerminalBinding>();
+        for (const terminal of ((terminals as Array<Record<string, unknown>> | null) || [])) {
+            const deviceId = asText(terminal.device_id);
+            const erpTerminalId = asText(terminal.id);
+            if (!deviceId || !erpTerminalId) continue;
+
+            const config = asRecord(terminal.config);
+            const metadata = asRecord(config.metadata);
+            const status = asRecord(config.status);
+            const app = asRecord(config.app);
+            const apk = asRecord(config.apk);
+            const binding: ErpTerminalBinding = {
+                deviceId,
+                erpTerminalId,
+                appVersion: firstText(
+                    config.app_version,
+                    config.appVersion,
+                    config.apk_version,
+                    config.apkVersion,
+                    config.version,
+                    metadata.app_version,
+                    metadata.appVersion,
+                    metadata.apk_version,
+                    metadata.apkVersion,
+                    metadata.version,
+                    status.app_version,
+                    status.appVersion,
+                    status.apk_version,
+                    status.apkVersion,
+                    status.version,
+                    app.version,
+                    app.app_version,
+                    app.apk_version,
+                    apk.version,
+                    apk.app_version,
+                    apk.apk_version,
+                ),
+                appVersionCode: firstNumber(
+                    config.app_version_code,
+                    config.appVersionCode,
+                    config.apk_version_code,
+                    config.apkVersionCode,
+                    config.version_code,
+                    config.versionCode,
+                    metadata.app_version_code,
+                    metadata.appVersionCode,
+                    metadata.apk_version_code,
+                    metadata.apkVersionCode,
+                    metadata.version_code,
+                    metadata.versionCode,
+                    status.app_version_code,
+                    status.appVersionCode,
+                    status.apk_version_code,
+                    status.apkVersionCode,
+                    status.version_code,
+                    status.versionCode,
+                    app.version_code,
+                    app.versionCode,
+                    apk.version_code,
+                    apk.versionCode,
+                ),
+            };
+
+            [
+                terminal.id,
+                terminal.name,
+                terminal.code,
+                terminal.device_id,
+                metadata.terminal_id,
+                metadata.erp_terminal_id,
+            ].forEach((candidate) => {
+                const key = normalizeKey(candidate);
+                if (key) bindings.set(key, binding);
+            });
+        }
+
+        return bindings;
+    } catch (error) {
+        console.warn("ERP terminal APK version lookup failed:", error);
+        return new Map();
+    }
+}
 
 async function getDashboardSubscriptions(): Promise<DashboardSubscriptionRow[]> {
     const { data, error } = await supabaseAdmin
