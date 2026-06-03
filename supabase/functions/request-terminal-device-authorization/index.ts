@@ -436,8 +436,16 @@ Deno.serve(async (request) => {
         if (tenantError) throw tenantError;
         const tenant = tenantData as TenantRecord | null;
         if (!tenant) return json({ error: 'TENANT_NOT_FOUND', message: 'Tenant no encontrado.' }, 404);
-        if (tenant.status !== 'ACTIVE') {
-            return json({ error: 'TENANT_NOT_ACTIVE', message: 'No se permite reautorizar si el tenant no esta activo.' }, 400);
+        const allowedTenantStatuses = action === 'GENERATE_PAIRING_CODE'
+            ? ['ACTIVE', 'TRIAL']
+            : ['ACTIVE'];
+        if (!allowedTenantStatuses.includes(tenant.status)) {
+            return json({
+                error: 'TENANT_NOT_ACTIVE',
+                message: action === 'GENERATE_PAIRING_CODE'
+                    ? 'Solo tenants activos o en prueba pueden generar codigo de vinculacion.'
+                    : 'No se permite reautorizar si el tenant no esta activo.',
+            }, 400);
         }
         if (!isPosTenant(tenant)) {
             return json({ error: 'LICENSE_NOT_ALLOWED', message: 'La licencia actual no permite reautorizar esta terminal.' }, 403);
