@@ -1269,8 +1269,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             row.terminal_name,
             rowBinding?.displayName,
             rowBinding?.terminalCode,
-        ) || "Terminal sin catálogo";
-        const groupKey = terminalName.toUpperCase();
+        ) || "Terminal ERP";
+        const groupKey = (row.terminal_id || terminalName).toUpperCase();
 
         const existingSnapshot = snapshots.find(s => (s.name || '').trim().toUpperCase() === groupKey);
 
@@ -1301,7 +1301,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             primary.terminal_name,
             orphanBinding?.displayName,
             orphanBinding?.terminalCode,
-        ) || "Terminal sin catálogo";
+        ) || "Terminal ERP";
         snapshots.push({
             id: primary.id || primary.device_id || `orphan-${Date.now()}`,
             tenant_id: primary.tenant_id,

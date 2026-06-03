@@ -95,6 +95,7 @@ interface PublicTerminalRow {
     id: string;
     tenant_id: string;
     device_token?: string | null;
+    code?: string | null;
     name?: string | null;
     is_active?: boolean | null;
     last_checkin_at?: string | null;
@@ -189,6 +190,31 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function normalizeStatus(value?: string | null): string {
     return (value || '').trim().toUpperCase();
+}
+
+function isUuidLike(value?: string | null): boolean {
+    return Boolean(value?.trim())
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value!.trim());
+}
+
+function firstHumanLabel(...values: Array<string | null | undefined>): string | null {
+    for (const value of values) {
+        const text = value?.trim();
+        if (text && !isUuidLike(text)) return text;
+    }
+    return null;
+}
+
+function getLatestRegistry(registries: TenantTerminalRegistryEntry[]): TenantTerminalRegistryEntry | null {
+    return [...registries].sort((a, b) => {
+        const aTime = toDate(a.last_seen_at || a.updated_at || a.created_at || null)?.getTime() || 0;
+        const bTime = toDate(b.last_seen_at || b.updated_at || b.created_at || null)?.getTime() || 0;
+        return bTime - aTime;
+    })[0] || null;
+}
+
+function getRegistryLogicalTerminalKey(registry: TenantTerminalRegistryEntry): string {
+    return normalizeStatus(registry.terminal_id || registry.terminal_name || registry.device_id || registry.id);
 }
 
 function getReadinessCheck(readiness: TenantTerminalErpReadiness | null | undefined, key: string): boolean | null {
@@ -322,7 +348,7 @@ export async function getOperationalObservability(filters: ObservabilityFilters)
             supabaseAdmin
                 .schema('public')
                 .from('terminals')
-                .select('id,tenant_id,device_token,name,is_active,last_checkin_at,created_at'),
+                .select('id,tenant_id,device_token,code,name,is_active,last_checkin_at,created_at'),
             'public.terminals',
         ),
         safeSelect<TenantTerminalRegistryEntry>(
@@ -416,16 +442,32 @@ export async function getOperationalObservability(filters: ObservabilityFilters)
             if (deviceId) telemetryTerminalRows.set(getTerminalKey('', deviceId), terminal);
         }
 
-        const matchedRegistryIds = new Set<string>();
+        const matchedRegistryKeys = new Set<string>();
         const terminalRows: ObservabilityTerminalRow[] = tenantTerminals.map((terminal) => {
-            const registry = tenantRegistry.find((item) => item.terminal_id === terminal.id || item.device_id === terminal.device_token) || null;
-            if (registry?.id) matchedRegistryIds.add(registry.id);
+            const matchingRegistries = tenantRegistry.filter((item) => (
+                item.terminal_id === terminal.id
+                || item.device_id === terminal.device_token
+                || item.terminal_name === terminal.name
+                || item.terminal_name === terminal.code
+            ));
+            for (const registry of matchingRegistries) {
+                matchedRegistryKeys.add(getRegistryLogicalTerminalKey(registry));
+            }
+            const registry = getLatestRegistry(matchingRegistries);
             return buildTerminalRow(tenant, terminal, registry, telemetryTerminalRows);
         });
 
+        const orphanRegistryGroups = new Map<string, TenantTerminalRegistryEntry[]>();
         for (const registry of tenantRegistry) {
-            if (registry.id && matchedRegistryIds.has(registry.id)) continue;
-            terminalRows.push(buildTerminalRow(tenant, null, registry, telemetryTerminalRows));
+            const key = getRegistryLogicalTerminalKey(registry);
+            if (matchedRegistryKeys.has(key)) continue;
+            const list = orphanRegistryGroups.get(key) || [];
+            list.push(registry);
+            orphanRegistryGroups.set(key, list);
+        }
+
+        for (const registries of orphanRegistryGroups.values()) {
+            terminalRows.push(buildTerminalRow(tenant, null, getLatestRegistry(registries), telemetryTerminalRows));
         }
 
         const terminalsOnline = terminalRows.filter((terminal) => terminal.online).length;
@@ -570,7 +612,7 @@ function buildTerminalRow(
         tenantId: tenant.id,
         tenantName: tenant.name,
         terminalId,
-        terminalName: terminal?.name || registry?.terminal_name || terminalId,
+        terminalName: firstHumanLabel(terminal?.name, terminal?.code, registry?.terminal_name) || 'Terminal ERP',
         deviceId,
         authorizedDeviceId: getAuthorizedDeviceId(registry, terminal),
         cloudChannel: tenant.cloud_channel || 'N/D',
