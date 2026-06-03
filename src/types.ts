@@ -81,6 +81,7 @@ export interface Terminal {
     device_token?: string | null;
     device_id?: string | null;
     current_device_id?: string | null;
+    code?: string | null;
     name?: string | null;
     terminal_name?: string | null;
     label?: string | null;
