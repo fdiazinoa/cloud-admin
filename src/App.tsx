@@ -8,6 +8,7 @@ import SupportCommandCenter from './pages/SupportCommandCenter'
 import { CustomerImprovements } from './pages/CustomerImprovements'
 import { AccessManagement } from './pages/AccessManagement'
 import { PosApkReleases } from './pages/PosApkReleases'
+import { OperationalObservability } from './pages/OperationalObservability'
 
 function App() {
     return (
@@ -20,6 +21,7 @@ function App() {
                     <Route path="support" element={<SupportCommandCenter />} />
                     <Route path="mejoras" element={<CustomerImprovements />} />
                     <Route path="pos-apk" element={<PosApkReleases />} />
+                    <Route path="observabilidad" element={<OperationalObservability />} />
                     <Route path="accesos" element={<AccessManagement />} />
                     <Route path="kill-switch" element={<KillSwitch />} />
                 </Route>

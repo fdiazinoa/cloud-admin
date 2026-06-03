@@ -307,6 +307,7 @@ export type CloudAdminPermissionKey =
     | 'support'
     | 'improvements'
     | 'apk'
+    | 'observability'
     | 'terminal_recovery'
     | 'billing'
     | 'settings'
