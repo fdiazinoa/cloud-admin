@@ -270,10 +270,23 @@ function normalizeKey(value: unknown): string {
     return asText(value).toUpperCase();
 }
 
+function isUuidLike(value: unknown): boolean {
+    const text = asText(value);
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text);
+}
+
 function firstText(...values: unknown[]): string | null {
     for (const value of values) {
         const text = asText(value);
         if (text) return text;
+    }
+    return null;
+}
+
+function firstHumanText(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = asText(value);
+        if (text && !isUuidLike(text)) return text;
     }
     return null;
 }
@@ -292,6 +305,8 @@ function firstNumber(...values: unknown[]): number | null {
 interface ErpTerminalBinding {
     deviceId: string;
     erpTerminalId: string;
+    displayName?: string | null;
+    terminalCode?: string | null;
     appVersion?: string | null;
     appVersionCode?: number | null;
 }
@@ -365,9 +380,33 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
             const status = asRecord(config.status);
             const app = asRecord(config.app);
             const apk = asRecord(config.apk);
+            const terminalCode = firstHumanText(
+                terminal.code,
+                config.station_number,
+                config.stationNumber,
+                metadata.station_number,
+                metadata.stationNumber,
+                metadata.terminal_code,
+                metadata.terminalCode,
+            );
+            const displayName = firstHumanText(
+                terminal.name,
+                terminal.code,
+                metadata.terminal_name,
+                metadata.terminalName,
+                metadata.display_name,
+                metadata.displayName,
+                config.terminal_name,
+                config.terminalName,
+                config.display_name,
+                config.displayName,
+                terminalCode,
+            );
             const binding: ErpTerminalBinding = {
                 deviceId,
                 erpTerminalId,
+                displayName,
+                terminalCode,
                 appVersion: firstText(
                     config.app_version,
                     config.appVersion,
@@ -422,7 +461,11 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
                 terminal.code,
                 terminal.device_id,
                 metadata.terminal_id,
+                metadata.terminal_name,
+                metadata.terminalName,
                 metadata.erp_terminal_id,
+                terminalCode,
+                displayName,
             ].forEach((candidate) => {
                 const key = normalizeKey(candidate);
                 if (key) bindings.set(key, binding);
@@ -1093,10 +1136,52 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         }
     }
 
+    const getTerminalConfig = (terminal?: Terminal | null) => asRecord(terminal?.config);
+    const getTerminalMetadata = (terminal?: Terminal | null) => asRecord(getTerminalConfig(terminal).metadata);
+    const getHumanTerminalCode = (terminal?: Terminal | null, binding?: ErpTerminalBinding | null) => {
+        const config = getTerminalConfig(terminal);
+        const metadata = getTerminalMetadata(terminal);
+        return firstHumanText(
+            terminal?.code,
+            binding?.terminalCode,
+            config.station_number,
+            config.stationNumber,
+            metadata.station_number,
+            metadata.stationNumber,
+            metadata.terminal_code,
+            metadata.terminalCode,
+        );
+    };
+    const getHumanTerminalName = (
+        terminal?: Terminal | null,
+        registry?: TenantTerminalRegistryEntry | null,
+        binding?: ErpTerminalBinding | null,
+    ) => {
+        const config = getTerminalConfig(terminal);
+        const metadata = getTerminalMetadata(terminal);
+        return firstHumanText(
+            terminal?.name,
+            terminal?.terminal_name,
+            terminal?.label,
+            terminal?.code,
+            registry?.terminal_name,
+            binding?.displayName,
+            metadata.terminal_name,
+            metadata.terminalName,
+            metadata.display_name,
+            metadata.displayName,
+            config.terminal_name,
+            config.terminalName,
+            config.display_name,
+            config.displayName,
+            getHumanTerminalCode(terminal, binding),
+        ) || "Terminal sin nombre";
+    };
     const groupedTerminalRows = new Map<string, Terminal[]>();
     for (const terminal of terminalRows) {
-        const terminalName = (terminal.name || terminal.terminal_name || terminal.label || terminal.id || "Terminal Sin Nombre").trim();
-        const groupKey = terminalName.toUpperCase();
+        const binding = resolveErpTerminalBinding(erpBindings, terminal.id, terminal.name, terminal.terminal_name, terminal.code);
+        const terminalName = getHumanTerminalName(terminal, null, binding);
+        const groupKey = terminalName === "Terminal sin nombre" ? terminal.id : terminalName.toUpperCase();
         const arr = groupedTerminalRows.get(groupKey) || [];
         arr.push(terminal);
         groupedTerminalRows.set(groupKey, arr);
@@ -1113,8 +1198,6 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         });
 
         const deviceToken = primaryTerminal.device_token || primaryTerminal.device_id || primaryTerminal.current_device_id || null;
-        const terminalName = primaryTerminal.name || primaryTerminal.terminal_name || primaryTerminal.label || primaryTerminal.id;
-
         const registriesMap = new Map<string, TenantTerminalRegistryEntry>();
 
         for (const terminal of terminalsGroup) {
@@ -1146,8 +1229,12 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             erpBindings,
             primaryTerminal.id,
             registry?.terminal_id,
-            terminalName,
+            primaryTerminal.name,
+            primaryTerminal.terminal_name,
+            primaryTerminal.code,
+            registry?.terminal_name,
         );
+        const terminalName = getHumanTerminalName(primaryTerminal, registry, erpBinding);
 
         snapshots.push({
             id: primaryTerminal.id,
@@ -1172,7 +1259,17 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     for (const row of registryRows) {
         if (row.id && matchedRegistryIds.has(row.id)) continue;
         
-        const terminalName = (row.terminal_name || row.terminal_id || row.device_id || "Terminal sin catálogo").trim();
+        const rowBinding = resolveErpTerminalBinding(
+            erpBindings,
+            row.terminal_id,
+            row.terminal_name,
+            row.device_id,
+        );
+        const terminalName = firstHumanText(
+            row.terminal_name,
+            rowBinding?.displayName,
+            rowBinding?.terminalCode,
+        ) || "Terminal sin catálogo";
         const groupKey = terminalName.toUpperCase();
 
         const existingSnapshot = snapshots.find(s => (s.name || '').trim().toUpperCase() === groupKey);
@@ -1193,13 +1290,18 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     for (const arr of orphanedRegistriesGrouped.values()) {
         arr.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
         const primary = arr[0];
-        const orphanName = (primary.terminal_name || primary.terminal_id || primary.device_id || "Terminal sin catálogo").trim();
         const orphanBinding = resolveErpTerminalBinding(
             erpBindings,
             primary.terminal_id,
             primary.id,
-            orphanName,
+            primary.terminal_name,
+            primary.device_id,
         );
+        const orphanName = firstHumanText(
+            primary.terminal_name,
+            orphanBinding?.displayName,
+            orphanBinding?.terminalCode,
+        ) || "Terminal sin catálogo";
         snapshots.push({
             id: primary.id || primary.device_id || `orphan-${Date.now()}`,
             tenant_id: primary.tenant_id,

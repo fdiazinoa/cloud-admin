@@ -54,6 +54,19 @@ function normalizeDeviceId(value: unknown): string {
     return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
 
+function isUuidLike(value: unknown): boolean {
+    return typeof value === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+function firstHumanLabel(...values: Array<string | null | undefined>): string {
+    for (const value of values) {
+        const text = value?.trim();
+        if (text && !isUuidLike(text)) return text;
+    }
+    return 'Terminal sin nombre';
+}
+
 function uniqueDeviceIds(values: string[]): string[] {
     const seen = new Set<string>();
     const output: string[] = [];
@@ -343,7 +356,7 @@ export function buildTerminalIdentitySummary(
     return {
         erpTerminalUuid: getErpTerminalUuid(terminal),
         terminalCode: getTerminalPosCode(terminal),
-        localName: terminal.name?.trim() || terminal.registry?.terminal_name?.trim() || 'N/D',
+        localName: firstHumanLabel(terminal.name, terminal.registry?.terminal_name),
         authorizedDeviceId: authorizedDeviceId || 'N/D',
         posReportedDeviceId: posReportedDeviceId || 'N/D',
         erpCurrentDeviceId: erpCurrentDeviceId || 'N/D',
