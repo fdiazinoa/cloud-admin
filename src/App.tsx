@@ -11,6 +11,7 @@ import { PosApkReleases } from './pages/PosApkReleases'
 import SupportCommandCenter from './pages/SupportCommandCenter'
 import { CustomerImprovements } from './pages/CustomerImprovements'
 import { AccessManagement } from './pages/AccessManagement'
+import { OperationalObservability } from './pages/OperationalObservability'
 import { supabase, supabaseAdmin } from './lib/supabase'
 import type { CloudAdminProfile, CloudAdminUser } from './types'
 
@@ -191,6 +192,7 @@ function App() {
                     <Route path="support" element={<SupportCommandCenter />} />
                     <Route path="mejoras" element={<CustomerImprovements />} />
                     <Route path="configuracion" element={<Configuration />} />
+                    <Route path="observabilidad" element={<OperationalObservability />} />
                     <Route path="accesos" element={<AccessManagement />} />
                     <Route path="kill-switch" element={<KillSwitch />} />
                 </Route>
