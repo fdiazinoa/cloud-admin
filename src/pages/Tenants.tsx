@@ -1063,6 +1063,11 @@ export const Tenants: React.FC = () => {
 
             const pairingCode = getPairingCodeValue(result);
             if (!pairingCode) {
+                if (result.success || result.status === 'success') {
+                    alert(result.message || 'Device autorizado. Reintenta conexion desde el POS.');
+                    await refreshTerminalModalData();
+                    return;
+                }
                 alert(result.message || 'El ERP no devolvio un codigo de vinculacion.');
                 return;
             }

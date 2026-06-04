@@ -47,6 +47,9 @@ interface RegistryRecord {
     authorized_device_id?: string | null;
     previous_device_id?: string | null;
     last_rejected_device_id?: string | null;
+    is_revoked?: boolean | null;
+    auth_status?: string | null;
+    status?: string | null;
 }
 
 interface PublicTerminalRecord {
@@ -645,6 +648,64 @@ Deno.serve(async (request) => {
         });
 
         if (action === 'GENERATE_PAIRING_CODE') {
+            if (tenant.contracted_product === 'POS_ONLY') {
+                if (!registry?.id) {
+                    return json({
+                        error: 'REGISTRY_NOT_FOUND',
+                        message: 'Esta terminal POS_ONLY aun no tiene un registro de device para autorizar. Reintenta conexion desde el POS para que Cloud-Admin reciba el device_id.',
+                    }, 404);
+                }
+
+                const requestedAt = new Date().toISOString();
+                const posOnlyUpdate: Record<string, unknown> = {
+                    device_id: deviceId,
+                    current_device_id: deviceId,
+                    authorized_device_id: deviceId,
+                    last_rejected_device_id: null,
+                    auth_status: 'AUTHORIZED',
+                    status: 'ONLINE',
+                    is_revoked: false,
+                    revocation_reason: null,
+                    requires_pos_reauth: false,
+                    last_auth_error: null,
+                    last_auth_attempt_at: requestedAt,
+                    last_seen_at: requestedAt,
+                    updated_at: requestedAt,
+                };
+
+                const { error: localAuthorizeError } = await supabase
+                    .from('tenant_server_registry')
+                    .update(posOnlyUpdate)
+                    .eq('id', registry.id);
+                if (localAuthorizeError) throw localAuthorizeError;
+
+                await insertDeviceAudit(supabase, {
+                    tenant_id: tenantId,
+                    terminal_id: terminalId,
+                    terminal_name: terminalName || registry.terminal_name || publicTerminal?.code || null,
+                    old_device_id: effectiveAuthorizedDeviceId,
+                    new_device_id: deviceId,
+                    action,
+                    performed_by: performedBy,
+                    reason,
+                    result: 'SUCCESS',
+                    metadata: {
+                        registry_id: registry.id,
+                        local_pos_only: true,
+                        pairing_code_issued: false,
+                    },
+                });
+
+                return json({
+                    status: 'success',
+                    success: true,
+                    action: 'pos_only_device_authorized',
+                    authorized_device_id: deviceId,
+                    pairingCode: null,
+                    message: 'POS_ONLY no requiere codigo ERP. El device fue autorizado en Cloud-Admin; reintenta conexion desde el POS.',
+                });
+            }
+
             const erpApiUrl = getEnv('ERP_API_URL', 'CLOUD_ADMIN_ERP_API_URL');
             const erpServiceToken = getEnv('ERP_TAKEOVER_SERVICE_TOKEN', 'ERP_SERVICE_TOKEN', 'CLOUD_ADMIN_ERP_SERVICE_TOKEN');
             const erpTenantId = await resolveErpTenantId(supabase, tenantId);

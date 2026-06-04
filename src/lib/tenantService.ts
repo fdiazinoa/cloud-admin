@@ -1006,16 +1006,18 @@ export async function updateTenant(
         await updateTenantPayloadWithFallback(id, corePayload);
     }
 
-    if (Object.keys(semanticPayload).length === 0) return;
-
-    try {
-        await updateTenantPayloadWithFallback(id, semanticPayload);
-    } catch (error) {
-        console.warn(
-            "Tenant semantic fields were not persisted because the database schema is missing columns:",
-            getSupabaseErrorHaystack(error) || error,
-        );
+    if (Object.keys(semanticPayload).length > 0) {
+        try {
+            await updateTenantPayloadWithFallback(id, semanticPayload);
+        } catch (error) {
+            console.warn(
+                "Tenant semantic fields were not persisted because the database schema is missing columns:",
+                getSupabaseErrorHaystack(error) || error,
+            );
+        }
     }
+
+    await syncTenantCommercialState(id);
 }
 
 async function findTenantAuthUserId(tenant: Tenant): Promise<string | null> {
@@ -1040,6 +1042,128 @@ async function findTenantAuthUserId(tenant: Tenant): Promise<string | null> {
         if (users.length < perPage) return null;
         page += 1;
     }
+}
+
+async function resolveErpTenantIdForCloudTenant(tenantId: string): Promise<string | null> {
+    const { data, error } = await supabaseAdmin
+        .schema("public")
+        .from("erp_tenants")
+        .select("id")
+        .eq("config->>cloudAdminTenantId", tenantId)
+        .maybeSingle();
+
+    if (error) {
+        console.warn("ERP tenant lookup failed while syncing tenant metadata:", error);
+        return null;
+    }
+
+    return (data as { id?: string } | null)?.id || null;
+}
+
+async function syncTenantCommercialState(tenantId: string): Promise<void> {
+    const { data: tenant, error: tenantError } = await supabaseAdmin
+        .from("tenants")
+        .select([
+            "id",
+            "name",
+            "email",
+            "slug",
+            "status",
+            "type",
+            "cloud_sync",
+            "contracted_product",
+            "pos_variant",
+            "offline_mode",
+            "explicit_offline",
+            "cloud_disabled_reason",
+            "pos_runtime",
+            "cloud_channel",
+            "data_master",
+            "cloud_sync_enabled",
+            "erp_core_enabled",
+            "erp_ui_enabled",
+            "customer_erp_access",
+            "backup_enabled",
+            "lifecycle_status",
+            "provisioning_status",
+        ].join(","))
+        .eq("id", tenantId)
+        .maybeSingle();
+
+    if (tenantError) throw tenantError;
+    if (!tenant) return;
+
+    const tenantRow = tenant as unknown as Tenant;
+    const erpTenantId = await resolveErpTenantIdForCloudTenant(tenantId);
+
+    const authUserId = await findTenantAuthUserId(tenantRow);
+    if (authUserId) {
+        const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(
+            authUserId,
+            buildTenantAuthMetadataPayload(tenantId, {
+                name: tenantRow.name,
+                full_name: tenantRow.name,
+                slug: tenantRow.slug,
+                type: tenantRow.type,
+                cloudSync: tenantRow.cloud_sync,
+                contracted_product: tenantRow.contracted_product,
+                pos_variant: tenantRow.pos_variant,
+                offline_mode: tenantRow.offline_mode,
+                explicit_offline: tenantRow.explicit_offline,
+                cloud_disabled_reason: tenantRow.cloud_disabled_reason,
+                pos_runtime: tenantRow.pos_runtime,
+                cloud_channel: tenantRow.cloud_channel,
+                data_master: tenantRow.data_master,
+                cloud_sync_enabled: tenantRow.cloud_sync_enabled,
+                erp_core_enabled: tenantRow.erp_core_enabled,
+                erp_ui_enabled: tenantRow.erp_ui_enabled,
+                customer_erp_access: tenantRow.customer_erp_access,
+                backup_enabled: tenantRow.backup_enabled,
+                lifecycle_status: tenantRow.lifecycle_status,
+                provisioning_status: tenantRow.provisioning_status,
+                tenant_name: tenantRow.name,
+                company_ref: tenantRow.slug,
+                is_new_user: false,
+            }, erpTenantId),
+        );
+
+        if (metadataError) throw metadataError;
+    }
+
+    if (!erpTenantId) return;
+
+    const erpEnabled = tenantRow.contracted_product === "POS_ERP";
+    const { data: erpTenant, error: erpFetchError } = await supabaseAdmin
+        .schema("public")
+        .from("erp_tenants")
+        .select("config")
+        .eq("id", erpTenantId)
+        .maybeSingle();
+
+    if (erpFetchError) {
+        console.warn("ERP tenant config lookup failed while syncing tenant metadata:", erpFetchError);
+        return;
+    }
+
+    const config = {
+        ...asRecord((erpTenant as { config?: unknown } | null)?.config),
+        erpEnabled,
+        billingStatus: tenantRow.status === "SUSPENDED" ? "SUSPENDED" : "ACTIVE",
+        cloudAdminTenantId: tenantId,
+        contractedProduct: tenantRow.contracted_product,
+        cloudChannel: tenantRow.cloud_channel,
+        dataMaster: tenantRow.data_master,
+        customerErpAccess: tenantRow.customer_erp_access,
+        erpUiEnabled: tenantRow.erp_ui_enabled,
+    };
+
+    const { error: erpUpdateError } = await supabaseAdmin
+        .schema("public")
+        .from("erp_tenants")
+        .update({ config })
+        .eq("id", erpTenantId);
+
+    if (erpUpdateError) throw erpUpdateError;
 }
 
 export async function deleteTenant(tenant: Tenant): Promise<void> {
