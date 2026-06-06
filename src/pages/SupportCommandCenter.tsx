@@ -791,6 +791,54 @@ const SupportCommandCenter: React.FC = () => {
         };
     }, [tickets]);
 
+    useEffect(() => {
+        const applyQuickFilterAction = (event: Event) => {
+            const action = (event as CustomEvent<{ action: 'open' | 'critical' | 'email' | 'unassigned' }>).detail?.action;
+            if (!action) return;
+
+            switch (action) {
+                case 'open':
+                    setQuickFilter('none');
+                    setFilterStatus('Abierto');
+                    break;
+                case 'critical':
+                    setFilterStatus('Todos');
+                    setFilterSource('Todos');
+                    setQuickFilter('critical');
+                    break;
+                case 'email':
+                    setQuickFilter('none');
+                    setFilterStatus('Todos');
+                    setFilterSource('Email');
+                    break;
+                case 'unassigned':
+                    setFilterStatus('Todos');
+                    setFilterSource('Todos');
+                    setQuickFilter('unassigned');
+                    break;
+                default:
+                    break;
+            }
+        };
+
+        window.addEventListener('support-command-center-quick-filter', applyQuickFilterAction);
+
+        return () => {
+            window.removeEventListener('support-command-center-quick-filter', applyQuickFilterAction);
+        };
+    }, []);
+
+    useEffect(() => {
+        window.dispatchEvent(new CustomEvent('support-command-center-stats', {
+            detail: {
+                ...ticketStats,
+                filterStatus,
+                filterSource,
+                quickFilter,
+            },
+        }));
+    }, [filterSource, filterStatus, quickFilter, ticketStats]);
+
     const filteredTickets = useMemo(() => {
         return tickets.filter((ticket) => {
             const statusMatches = filterStatus === 'Todos' || ticket.status === filterStatus;
@@ -1297,56 +1345,6 @@ const SupportCommandCenter: React.FC = () => {
                         <div className="rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-violet-700">
                             <Sparkles size={18} />
                         </div>
-                    </div>
-
-                    <div className="mb-4 grid grid-cols-4 gap-2">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setQuickFilter('none');
-                                setFilterStatus('Abierto');
-                            }}
-                            className={`rounded-lg border p-2 text-center transition-colors ${filterStatus === 'Abierto' && quickFilter === 'none' ? 'border-orange-300 bg-orange-100 ring-1 ring-orange-300' : 'border-orange-100 bg-orange-50 hover:border-orange-200'}`}
-                        >
-                            <span className="block text-lg font-bold text-orange-600">{ticketStats.open}</span>
-                            <span className="text-[10px] font-bold uppercase text-orange-400">Abiertos</span>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setFilterStatus('Todos');
-                                setFilterSource('Todos');
-                                setQuickFilter('critical');
-                            }}
-                            className={`rounded-lg border p-2 text-center transition-colors ${quickFilter === 'critical' ? 'border-red-300 bg-red-100 ring-1 ring-red-300' : 'border-red-100 bg-red-50 hover:border-red-200'}`}
-                        >
-                            <span className="block text-lg font-bold text-red-600">{ticketStats.critical}</span>
-                            <span className="text-[10px] font-bold uppercase text-red-400">Críticos</span>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setQuickFilter('none');
-                                setFilterStatus('Todos');
-                                setFilterSource('Email');
-                            }}
-                            className={`rounded-lg border p-2 text-center transition-colors ${filterSource === 'Email' && quickFilter === 'none' ? 'border-violet-300 bg-violet-100 ring-1 ring-violet-300' : 'border-violet-100 bg-violet-50 hover:border-violet-200'}`}
-                        >
-                            <span className="block text-lg font-bold text-violet-600">{ticketStats.email}</span>
-                            <span className="text-[10px] font-bold uppercase text-violet-400">Email</span>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setFilterStatus('Todos');
-                                setFilterSource('Todos');
-                                setQuickFilter('unassigned');
-                            }}
-                            className={`rounded-lg border p-2 text-center transition-colors ${quickFilter === 'unassigned' ? 'border-slate-400 bg-slate-200 ring-1 ring-slate-400' : 'border-slate-200 bg-slate-50 hover:border-slate-300'}`}
-                        >
-                            <span className="block text-lg font-bold text-slate-700">{ticketStats.unassigned}</span>
-                            <span className="text-[10px] font-bold uppercase text-slate-400">Asignar</span>
-                        </button>
                     </div>
 
                     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/90 p-3">
