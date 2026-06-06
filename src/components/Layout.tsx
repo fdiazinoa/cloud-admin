@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
 
@@ -7,6 +8,16 @@ interface LayoutProps {
     adminRole?: string | null;
     signingOut?: boolean;
     onSignOut: () => void;
+}
+
+interface SupportCenterHeaderStats {
+    open: number;
+    critical: number;
+    email: number;
+    unassigned: number;
+    filterStatus: string;
+    filterSource: string;
+    quickFilter: 'none' | 'critical' | 'unassigned';
 }
 
 const navItems = [
@@ -34,6 +45,32 @@ function getInitials(name?: string | null, email?: string | null) {
 export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole, signingOut = false, onSignOut }) => {
     const location = useLocation();
     const isImmersiveWorkspace = location.pathname === '/support';
+    const isSupportRoute = location.pathname === '/support';
+    const [supportHeaderStats, setSupportHeaderStats] = useState<SupportCenterHeaderStats | null>(null);
+
+    useEffect(() => {
+        const handleSupportHeaderStats = (event: Event) => {
+            const customEvent = event as CustomEvent<SupportCenterHeaderStats>;
+            if (customEvent.detail) {
+                setSupportHeaderStats(customEvent.detail);
+            }
+        };
+
+        const clearSupportHeaderStats = () => {
+            setSupportHeaderStats(null);
+        };
+
+        window.addEventListener('support-command-center-stats', handleSupportHeaderStats);
+
+        return () => {
+            window.removeEventListener('support-command-center-stats', handleSupportHeaderStats);
+            clearSupportHeaderStats();
+        };
+    }, [location.pathname]);
+
+    const triggerSupportQuickFilter = (action: 'open' | 'critical' | 'email' | 'unassigned') => {
+        window.dispatchEvent(new CustomEvent('support-command-center-quick-filter', { detail: { action } }));
+    };
 
     return (
         <div className="bg-slate-50 text-slate-900 antialiased min-h-screen flex font-['Public_Sans']">
@@ -86,8 +123,8 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
             {/* BEGIN: Main Content Container */}
             <main className={`flex min-w-0 flex-1 flex-col ${isImmersiveWorkspace ? 'min-h-0 overflow-hidden' : 'overflow-auto'}`}>
                 {/* BEGIN: Slim Header */}
-                <header className="h-16 border-b border-slate-200 bg-white/80 sticky top-0 z-10 flex items-center justify-between px-8 backdrop-blur-md">
-                    <div className="flex items-center gap-4">
+                <header className="min-h-16 border-b border-slate-200 bg-white/80 sticky top-0 z-10 flex items-center justify-between gap-4 px-8 py-2 backdrop-blur-md">
+                    <div className="flex min-w-0 flex-1 items-center gap-4 flex-wrap">
                         <h2 className="text-lg font-semibold text-slate-800">Console Overview</h2>
                         <div className="h-6 w-px bg-slate-200"></div>
                         <div className="flex items-center gap-2">
@@ -103,6 +140,39 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                                 <option value="ano">Año</option>
                             </select>
                         </div>
+
+                        {isSupportRoute && supportHeaderStats ? (
+                            <div className="ml-auto flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => triggerSupportQuickFilter('open')}
+                                    className={`h-9 rounded-lg border px-2.5 text-center text-xs font-bold uppercase transition-colors ${supportHeaderStats.filterStatus === 'Abierto' && supportHeaderStats.quickFilter === 'none' ? 'border-orange-300 bg-orange-100 text-orange-700' : 'border-orange-100 bg-orange-50 hover:border-orange-200 text-orange-600'}`}
+                                >
+                                    <span className="font-bold text-sm">{supportHeaderStats.open}</span> Abiertos
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => triggerSupportQuickFilter('critical')}
+                                    className={`h-9 rounded-lg border px-2.5 text-center text-xs font-bold uppercase transition-colors ${supportHeaderStats.quickFilter === 'critical' ? 'border-red-300 bg-red-100 text-red-700' : 'border-red-100 bg-red-50 hover:border-red-200 text-red-600'}`}
+                                >
+                                    <span className="font-bold text-sm">{supportHeaderStats.critical}</span> Críticos
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => triggerSupportQuickFilter('email')}
+                                    className={`h-9 rounded-lg border px-2.5 text-center text-xs font-bold uppercase transition-colors ${supportHeaderStats.filterSource === 'Email' && supportHeaderStats.quickFilter === 'none' ? 'border-violet-300 bg-violet-100 text-violet-700' : 'border-violet-100 bg-violet-50 hover:border-violet-200 text-violet-600'}`}
+                                >
+                                    <span className="font-bold text-sm">{supportHeaderStats.email}</span> Email
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => triggerSupportQuickFilter('unassigned')}
+                                    className={`h-9 rounded-lg border px-2.5 text-center text-xs font-bold uppercase transition-colors ${supportHeaderStats.quickFilter === 'unassigned' ? 'border-slate-400 bg-slate-200 text-slate-700' : 'border-slate-200 bg-slate-50 hover:border-slate-300 text-slate-600'}`}
+                                >
+                                    <span className="font-bold text-sm">{supportHeaderStats.unassigned}</span> Asignar
+                                </button>
+                            </div>
+                        ) : null}
                     </div>
                 </header>
                 {/* END: Slim Header */}
