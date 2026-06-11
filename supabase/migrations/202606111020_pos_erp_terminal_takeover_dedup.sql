@@ -22,6 +22,8 @@ WITH target AS (
     SELECT
         '03aa87fb-906a-46ca-a066-4c51bf080c4e'::uuid AS tenant_id,
         'dfc69374-becc-4644-bad7-2808ddef2248'::uuid AS keep_terminal_id,
+        'DEV-09KRDSPV'::text AS previous_device_id,
+        'DEV-E03WDBOI'::text AS new_device_id,
         ARRAY[
             '1b0f53cc-f031-405e-a03f-e5de44b2a629'::uuid
         ] AS duplicate_terminal_ids
@@ -87,6 +89,65 @@ SELECT
 FROM target
 WHERE EXISTS (SELECT 1 FROM archived)
    OR EXISTS (SELECT 1 FROM normalized_registry);
+
+WITH target AS (
+    SELECT
+        '03aa87fb-906a-46ca-a066-4c51bf080c4e'::uuid AS tenant_id,
+        'dfc69374-becc-4644-bad7-2808ddef2248'::uuid AS keep_terminal_id,
+        'DEV-09KRDSPV'::text AS previous_device_id,
+        'DEV-E03WDBOI'::text AS new_device_id
+), ranked_registry AS (
+    SELECT
+        registry.id,
+        ROW_NUMBER() OVER (
+            ORDER BY
+                CASE
+                    WHEN registry.device_id = target.new_device_id
+                      OR registry.current_device_id = target.new_device_id
+                      OR registry.authorized_device_id = target.new_device_id
+                    THEN 0 ELSE 1
+                END,
+                COALESCE(registry.last_seen_at, registry.updated_at, registry.created_at) DESC NULLS LAST,
+                registry.id
+        ) AS row_rank
+    FROM landlord.tenant_server_registry AS registry
+    JOIN target ON target.tenant_id = registry.tenant_id
+    WHERE registry.tenant_id = target.tenant_id
+      AND registry.terminal_id = target.keep_terminal_id::text
+      AND UPPER(BTRIM(COALESCE(registry.terminal_name, ''))) = 'BAR-001'
+), canonical_registry AS (
+    UPDATE landlord.tenant_server_registry AS registry
+    SET
+        device_id = target.new_device_id,
+        current_device_id = target.new_device_id,
+        authorized_device_id = target.new_device_id,
+        previous_device_id = target.previous_device_id,
+        last_rejected_device_id = NULL,
+        status = 'ONLINE',
+        auth_status = 'TAKEOVER_COMPLETED',
+        is_revoked = FALSE,
+        revocation_reason = NULL,
+        requires_pos_reauth = TRUE,
+        last_takeover_at = NOW(),
+        last_auth_attempt_at = NOW(),
+        updated_at = NOW()
+    FROM target, ranked_registry
+    WHERE registry.id = ranked_registry.id
+      AND ranked_registry.row_rank = 1
+    RETURNING registry.id
+)
+UPDATE landlord.tenant_server_registry AS registry
+SET
+    status = 'OFFLINE',
+    auth_status = 'OLD_DEVICE_REVOKED',
+    is_revoked = TRUE,
+    revocation_reason = 'POS_ERP_DUPLICATE_REGISTRY_ARCHIVED',
+    requires_pos_reauth = TRUE,
+    previous_device_id = target.previous_device_id,
+    updated_at = NOW()
+FROM target, ranked_registry
+WHERE registry.id = ranked_registry.id
+  AND ranked_registry.row_rank > 1;
 
 CREATE UNIQUE INDEX IF NOT EXISTS terminals_active_tenant_config_erp_terminal_uidx
     ON public.terminals (tenant_id, (config ->> 'erp_terminal_id'))
