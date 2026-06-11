@@ -400,7 +400,7 @@ Deno.serve(async (request) => {
 
         const body = await request.json().catch(() => ({})) as DeviceActionRequest;
         const tenantId = body.tenant_id?.trim();
-        const terminalId = body.terminal_id?.trim();
+        let terminalId = body.terminal_id?.trim();
         const registryId = body.registry_id?.trim() || null;
         const terminalName = body.terminal_name?.trim() || null;
         const deviceId = body.device_id?.trim();
@@ -462,10 +462,11 @@ Deno.serve(async (request) => {
             .eq('tenant_id', tenantId);
         terminalQuery = isUuid(terminalId)
             ? terminalQuery.eq('id', terminalId)
-            : terminalQuery.eq('code', terminalId);
+            : terminalQuery.eq('code', terminalName || registry?.terminal_name || terminalId);
         const { data: terminalData, error: terminalError } = await terminalQuery.maybeSingle();
         if (terminalError) throw terminalError;
         const publicTerminal = terminalData as PublicTerminalRecord | null;
+        if (publicTerminal?.id) terminalId = publicTerminal.id;
 
         if (!registry && !publicTerminal) {
             return json({ error: 'TERMINAL_NOT_FOUND', message: 'Terminal no encontrada para este tenant.' }, 404);
