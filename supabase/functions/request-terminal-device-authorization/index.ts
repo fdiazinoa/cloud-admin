@@ -467,6 +467,7 @@ Deno.serve(async (request) => {
         if (terminalError) throw terminalError;
         const publicTerminal = terminalData as PublicTerminalRecord | null;
         if (publicTerminal?.id) terminalId = publicTerminal.id;
+        const terminalDisplayCode = publicTerminal?.code || terminalName || registry?.terminal_name || null;
 
         if (!registry && !publicTerminal) {
             return json({ error: 'TERMINAL_NOT_FOUND', message: 'Terminal no encontrada para este tenant.' }, 404);
@@ -475,12 +476,19 @@ Deno.serve(async (request) => {
         if (action === 'CLEAR_TERMINAL_DEVICES') {
             const { data: registryRows, error: registryRowsError } = await supabase
                 .from('tenant_server_registry')
-                .select('id,device_id,current_device_id,authorized_device_id,previous_device_id,last_rejected_device_id,terminal_name,status,auth_status')
+                .select('id,terminal_id,device_id,current_device_id,authorized_device_id,previous_device_id,last_rejected_device_id,terminal_name,status,auth_status')
                 .eq('tenant_id', tenantId)
-                .eq('terminal_id', terminalId);
+                .order('last_seen_at', { ascending: false });
             if (registryRowsError) throw registryRowsError;
 
-            const rows = Array.isArray(registryRows) ? registryRows as RegistryRecord[] : [];
+            const rows = (Array.isArray(registryRows) ? registryRows as RegistryRecord[] : []).filter((row) => {
+                const rowTerminalId = row.terminal_id?.trim() || '';
+                const rowTerminalName = row.terminal_name?.trim() || '';
+                return rowTerminalId === terminalId
+                    || Boolean(terminalDisplayCode && rowTerminalId.toUpperCase() === terminalDisplayCode.toUpperCase())
+                    || Boolean(terminalDisplayCode && rowTerminalName.toUpperCase() === terminalDisplayCode.toUpperCase());
+            });
+            const registryIds = rows.map((row) => row.id).filter(Boolean);
             const clearedDeviceIds = Array.from(new Set(
                 rows
                     .flatMap((row) => [
@@ -493,17 +501,21 @@ Deno.serve(async (request) => {
                     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
             ));
 
-            const { error: deleteError, count } = await supabase
-                .from('tenant_server_registry')
-                .delete({ count: 'exact' })
-                .eq('tenant_id', tenantId)
-                .eq('terminal_id', terminalId);
-            if (deleteError) throw deleteError;
+            let count = 0;
+            if (registryIds.length > 0) {
+                const { error: deleteError, count: deletedCount } = await supabase
+                    .from('tenant_server_registry')
+                    .delete({ count: 'exact' })
+                    .eq('tenant_id', tenantId)
+                    .in('id', registryIds);
+                if (deleteError) throw deleteError;
+                count = deletedCount || 0;
+            }
 
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+                terminal_name: terminalDisplayCode,
                 old_device_id: clearedDeviceIds.join(', ') || null,
                 new_device_id: null,
                 action: 'CLEAR_TERMINAL_DEVICES',
@@ -511,10 +523,11 @@ Deno.serve(async (request) => {
                 reason,
                 result: 'SUCCESS',
                 metadata: {
-                    registry_ids: rows.map((row) => row.id).filter(Boolean),
+                    registry_ids: registryIds,
                     cleared_registry_count: count || 0,
                     cleared_device_ids: clearedDeviceIds,
                     public_terminal_preserved: Boolean(publicTerminal?.id),
+                    action_result: 'duplicate_ignored',
                     preserved: [
                         'public.terminals row',
                         'sales',
@@ -793,6 +806,8 @@ Deno.serve(async (request) => {
                 const { error: updateError } = await supabase
                     .from('tenant_server_registry')
                     .update({
+                        terminal_id: terminalId,
+                        terminal_name: terminalDisplayCode,
                         last_rejected_device_id: deviceId,
                         auth_status: 'TAKEOVER_PENDING',
                         last_auth_error: null,
@@ -951,6 +966,8 @@ Deno.serve(async (request) => {
 
         if (registry?.id) {
             const registryUpdate: Record<string, unknown> = {
+                terminal_id: terminalId,
+                terminal_name: terminalDisplayCode,
                 device_id: newAuthorizedDeviceId,
                 current_device_id: newAuthorizedDeviceId,
                 authorized_device_id: newAuthorizedDeviceId,
@@ -990,6 +1007,8 @@ Deno.serve(async (request) => {
                 deviceTokenIssued,
                 deviceTokenStatus,
                 tokenPreview,
+                action_result: registry?.id ? 'updated_existing' : 'updated_existing_no_local_registry',
+                pairing_code_validated: Boolean(pairingCode),
             },
         });
 

@@ -1082,7 +1082,7 @@ export async function getDistributors(): Promise<Distributor[]> {
 }
 
 export async function getTenantTerminalOverview(tenantId: string): Promise<TenantTerminalSnapshot[]> {
-    const [terminalsRes, registryRes] = await Promise.all([
+    const [terminalsRes, registryRes, tenantRes] = await Promise.all([
         supabaseAdmin
             .schema("public")
             .from("terminals")
@@ -1093,7 +1093,17 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             .select("*")
             .eq("tenant_id", tenantId)
             .order("last_seen_at", { ascending: false }),
+        supabaseAdmin
+            .from("tenants")
+            .select("contracted_product,cloud_channel,type")
+            .eq("id", tenantId)
+            .maybeSingle(),
     ]);
+
+    const tenantRow = (tenantRes.data || null) as { contracted_product?: string | null; cloud_channel?: string | null; type?: string | null } | null;
+    const isPosErpTenant = tenantRow?.contracted_product === "POS_ERP"
+        || tenantRow?.cloud_channel === "ERP_ACTIVE"
+        || tenantRow?.type === "full";
 
     const terminalRows: Terminal[] = [];
     if (terminalsRes.error) {
@@ -1177,11 +1187,23 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             getHumanTerminalCode(terminal, binding),
         ) || "Terminal sin nombre";
     };
+    const getPosErpTerminalGroupKey = (
+        terminal?: Terminal | null,
+        registry?: TenantTerminalRegistryEntry | null,
+        binding?: ErpTerminalBinding | null,
+    ) => {
+        const key = normalizeKey(binding?.erpTerminalId)
+            || normalizeKey(getHumanTerminalCode(terminal, binding))
+            || normalizeKey(getHumanTerminalName(terminal, registry, binding));
+        return key || normalizeKey(terminal?.id) || normalizeKey(registry?.terminal_id) || normalizeKey(registry?.id);
+    };
     const groupedTerminalRows = new Map<string, Terminal[]>();
     for (const terminal of terminalRows) {
         const binding = resolveErpTerminalBinding(erpBindings, terminal.id, terminal.name, terminal.terminal_name, terminal.code);
         const terminalName = getHumanTerminalName(terminal, null, binding);
-        const groupKey = terminalName === "Terminal sin nombre" ? terminal.id : terminalName.toUpperCase();
+        const groupKey = isPosErpTenant
+            ? getPosErpTerminalGroupKey(terminal, null, binding)
+            : terminalName === "Terminal sin nombre" ? terminal.id : terminalName.toUpperCase();
         const arr = groupedTerminalRows.get(groupKey) || [];
         arr.push(terminal);
         groupedTerminalRows.set(groupKey, arr);
@@ -1239,7 +1261,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         snapshots.push({
             id: primaryTerminal.id,
             tenant_id: primaryTerminal.tenant_id,
-            terminal_id: primaryTerminal.id,
+            terminal_id: erpBinding?.erpTerminalId || primaryTerminal.id,
             name: terminalName,
             device_token: deviceToken,
             is_active: primaryTerminal.config?.is_active ?? primaryTerminal.is_active ?? primaryTerminal.active ?? true,
@@ -1270,9 +1292,19 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             rowBinding?.displayName,
             rowBinding?.terminalCode,
         ) || "Terminal sin catálogo";
-        const groupKey = terminalName.toUpperCase();
+        const groupKey = isPosErpTenant
+            ? getPosErpTerminalGroupKey(null, row, rowBinding)
+            : terminalName.toUpperCase();
 
-        const existingSnapshot = snapshots.find(s => (s.name || '').trim().toUpperCase() === groupKey);
+        const existingSnapshot = snapshots.find((snapshot) => {
+            if (isPosErpTenant) {
+                const snapshotKey = normalizeKey(snapshot.erp_terminal_uuid)
+                    || normalizeKey(snapshot.name)
+                    || normalizeKey(snapshot.terminal_id);
+                return snapshotKey === groupKey;
+            }
+            return (snapshot.name || '').trim().toUpperCase() === groupKey;
+        });
 
         if (existingSnapshot) {
             existingSnapshot.registries = existingSnapshot.registries || [];
@@ -1305,7 +1337,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         snapshots.push({
             id: primary.id || primary.device_id || `orphan-${Date.now()}`,
             tenant_id: primary.tenant_id,
-            terminal_id: primary.terminal_id || null,
+            terminal_id: orphanBinding?.erpTerminalId || primary.terminal_id || null,
             name: orphanName,
             device_token: primary.device_id || null,
             is_active: (primary.status || "").toUpperCase() === "ONLINE",
@@ -1320,7 +1352,34 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         });
     }
 
-    return snapshots.sort((a, b) => {
+    const consolidatedSnapshots = new Map<string, TenantTerminalSnapshot>();
+    for (const snapshot of snapshots) {
+        const key = isPosErpTenant
+            ? normalizeKey(snapshot.erp_terminal_uuid) || normalizeKey(snapshot.name) || normalizeKey(snapshot.terminal_id) || snapshot.id
+            : snapshot.id;
+        const existing = consolidatedSnapshots.get(key);
+        if (!existing) {
+            consolidatedSnapshots.set(key, snapshot);
+            continue;
+        }
+
+        const mergedRegistries = [...(existing.registries || []), ...(snapshot.registries || [])]
+            .filter((registry, index, arr) => registry.id ? arr.findIndex((item) => item.id === registry.id) === index : true)
+            .sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
+
+        consolidatedSnapshots.set(key, {
+            ...existing,
+            erp_terminal_uuid: existing.erp_terminal_uuid || snapshot.erp_terminal_uuid,
+            erp_current_device_id: existing.erp_current_device_id || snapshot.erp_current_device_id,
+            erp_app_version: existing.erp_app_version || snapshot.erp_app_version,
+            erp_app_version_code: existing.erp_app_version_code || snapshot.erp_app_version_code,
+            last_checkin_at: existing.last_checkin_at || snapshot.last_checkin_at,
+            registry: mergedRegistries[0] || existing.registry || snapshot.registry || null,
+            registries: mergedRegistries,
+        });
+    }
+
+    return Array.from(consolidatedSnapshots.values()).sort((a, b) => {
         const aTime = new Date(a.last_checkin_at || a.created_at || 0).getTime();
         const bTime = new Date(b.last_checkin_at || b.created_at || 0).getTime();
         return bTime - aTime;
