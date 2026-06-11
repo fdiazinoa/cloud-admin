@@ -22,28 +22,19 @@ WITH target AS (
     SELECT
         '03aa87fb-906a-46ca-a066-4c51bf080c4e'::uuid AS tenant_id,
         'dfc69374-becc-4644-bad7-2808ddef2248'::uuid AS keep_terminal_id,
-        'DEV-09KRDSPV'::text AS previous_device_id,
-        'DEV-E03WDBOI'::text AS new_device_id,
+        'DEV-E03WD8OI'::text AS previous_device_id,
+        'DEV-CQQ1Z7YN'::text AS new_device_id,
         ARRAY[
             '1b0f53cc-f031-405e-a03f-e5de44b2a629'::uuid
         ] AS duplicate_terminal_ids
 ), archived AS (
     UPDATE public.terminals AS terminal
     SET
-        is_active = FALSE,
-        config = COALESCE(terminal.config, '{}'::jsonb)
-            || jsonb_build_object(
-                'is_active', FALSE,
-                'archived', TRUE,
-                'archived_reason', 'POS_ERP_DUPLICATE_TERMINAL_PREVENTED',
-                'canonical_erp_terminal_id', target.keep_terminal_id::text,
-                'archived_at', NOW()
-            ),
-        updated_at = NOW()
+        is_active = FALSE
     FROM target
     WHERE terminal.tenant_id = target.tenant_id
       AND terminal.id = ANY(target.duplicate_terminal_ids)
-    RETURNING terminal.id, terminal.tenant_id, terminal.code, terminal.name
+    RETURNING terminal.id, terminal.tenant_id, terminal.code
 ), normalized_registry AS (
     UPDATE landlord.tenant_server_registry AS registry
     SET
@@ -94,8 +85,8 @@ WITH target AS (
     SELECT
         '03aa87fb-906a-46ca-a066-4c51bf080c4e'::uuid AS tenant_id,
         'dfc69374-becc-4644-bad7-2808ddef2248'::uuid AS keep_terminal_id,
-        'DEV-09KRDSPV'::text AS previous_device_id,
-        'DEV-E03WDBOI'::text AS new_device_id
+        'DEV-E03WD8OI'::text AS previous_device_id,
+        'DEV-CQQ1Z7YN'::text AS new_device_id
 ), ranked_registry AS (
     SELECT
         registry.id,
@@ -148,11 +139,6 @@ SET
 FROM target, ranked_registry
 WHERE registry.id = ranked_registry.id
   AND ranked_registry.row_rank > 1;
-
-CREATE UNIQUE INDEX IF NOT EXISTS terminals_active_tenant_config_erp_terminal_uidx
-    ON public.terminals (tenant_id, (config ->> 'erp_terminal_id'))
-    WHERE COALESCE(is_active, TRUE) = TRUE
-      AND NULLIF(BTRIM(config ->> 'erp_terminal_id'), '') IS NOT NULL;
 
 DO $$
 BEGIN

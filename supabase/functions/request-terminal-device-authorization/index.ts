@@ -513,7 +513,7 @@ Deno.serve(async (request) => {
             ? terminalQuery.eq('id', terminalId)
             : terminalQuery.eq('code', terminalName || registry?.terminal_name || terminalId);
         const { data: terminalData, error: terminalError } = await terminalQuery
-            .order('updated_at', { ascending: false })
+            .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
         if (terminalError) throw terminalError;
