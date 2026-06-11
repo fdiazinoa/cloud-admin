@@ -15,6 +15,7 @@ export const permissionCatalog: Array<{ key: CloudAdminPermissionKey; label: str
     { key: 'support', label: 'HelpDesk', description: 'Tickets, respuestas y acciones de soporte.' },
     { key: 'improvements', label: 'Mejoras', description: 'Solicitudes de mejora y seguimiento.' },
     { key: 'apk', label: 'APK POS', description: 'Versiones, notas de release y descargas.' },
+    { key: 'observability', label: 'Observabilidad', description: 'Consumo, salud operativa y telemetría por tenant.' },
     { key: 'terminal_recovery', label: 'Recuperación POS', description: 'Takeover y rebuild local de terminales.' },
     { key: 'billing', label: 'Facturación', description: 'Suscripciones, estado comercial y pagos.' },
     { key: 'settings', label: 'Configuración', description: 'Integraciones, llaves y parámetros técnicos.' },

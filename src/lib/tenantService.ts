@@ -12,7 +12,11 @@ import type {
     TerminalAuthAttempt,
     TerminalFiscalProductionConfig,
     TerminalFiscalReadiness,
+    TerminalPairingCodeResult,
+    TerminalSyncPendingResult,
+    TerminalSyncRetryResult,
     TenantTerminalRegistryEntry,
+    TenantTerminalErpReadiness,
     TenantTerminalSnapshot,
     TenantType,
     Terminal,
@@ -266,9 +270,45 @@ function normalizeKey(value: unknown): string {
     return asText(value).toUpperCase();
 }
 
+function isUuidLike(value: unknown): boolean {
+    const text = asText(value);
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text);
+}
+
+function firstText(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = asText(value);
+        if (text) return text;
+    }
+    return null;
+}
+
+function firstHumanText(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = asText(value);
+        if (text && !isUuidLike(text)) return text;
+    }
+    return null;
+}
+
+function firstNumber(...values: unknown[]): number | null {
+    for (const value of values) {
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        if (typeof value === "string" && value.trim()) {
+            const parsed = Number(value.trim());
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return null;
+}
+
 interface ErpTerminalBinding {
     deviceId: string;
     erpTerminalId: string;
+    displayName?: string | null;
+    terminalCode?: string | null;
+    appVersion?: string | null;
+    appVersionCode?: number | null;
 }
 
 function resolveErpTerminalBinding(
@@ -321,7 +361,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
         const { data: terminals, error: terminalsError } = await supabaseAdmin
             .schema("public")
             .from("erp_terminals")
-            .select("id,device_id,name,config,last_seen,created_at")
+            .select("id,device_id,name,code,config,last_seen,created_at")
             .in("store_id", storeIds);
 
         if (terminalsError) {
@@ -335,13 +375,97 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
             const erpTerminalId = asText(terminal.id);
             if (!deviceId || !erpTerminalId) continue;
 
-            const binding: ErpTerminalBinding = { deviceId, erpTerminalId };
             const config = asRecord(terminal.config);
             const metadata = asRecord(config.metadata);
+            const status = asRecord(config.status);
+            const app = asRecord(config.app);
+            const apk = asRecord(config.apk);
+            const terminalCode = firstHumanText(
+                terminal.code,
+                config.station_number,
+                config.stationNumber,
+                metadata.station_number,
+                metadata.stationNumber,
+                metadata.terminal_code,
+                metadata.terminalCode,
+            );
+            const displayName = firstHumanText(
+                terminal.name,
+                terminal.code,
+                metadata.terminal_name,
+                metadata.terminalName,
+                metadata.display_name,
+                metadata.displayName,
+                config.terminal_name,
+                config.terminalName,
+                config.display_name,
+                config.displayName,
+                terminalCode,
+            );
+            const binding: ErpTerminalBinding = {
+                deviceId,
+                erpTerminalId,
+                displayName,
+                terminalCode,
+                appVersion: firstText(
+                    config.app_version,
+                    config.appVersion,
+                    config.apk_version,
+                    config.apkVersion,
+                    config.version,
+                    metadata.app_version,
+                    metadata.appVersion,
+                    metadata.apk_version,
+                    metadata.apkVersion,
+                    metadata.version,
+                    status.app_version,
+                    status.appVersion,
+                    status.apk_version,
+                    status.apkVersion,
+                    status.version,
+                    app.version,
+                    app.app_version,
+                    app.apk_version,
+                    apk.version,
+                    apk.app_version,
+                    apk.apk_version,
+                ),
+                appVersionCode: firstNumber(
+                    config.app_version_code,
+                    config.appVersionCode,
+                    config.apk_version_code,
+                    config.apkVersionCode,
+                    config.version_code,
+                    config.versionCode,
+                    metadata.app_version_code,
+                    metadata.appVersionCode,
+                    metadata.apk_version_code,
+                    metadata.apkVersionCode,
+                    metadata.version_code,
+                    metadata.versionCode,
+                    status.app_version_code,
+                    status.appVersionCode,
+                    status.apk_version_code,
+                    status.apkVersionCode,
+                    status.version_code,
+                    status.versionCode,
+                    app.version_code,
+                    app.versionCode,
+                    apk.version_code,
+                    apk.versionCode,
+                ),
+            };
             [
                 terminal.id,
+                terminal.name,
+                terminal.code,
+                terminal.device_id,
                 metadata.terminal_id,
+                metadata.terminal_name,
+                metadata.terminalName,
                 metadata.erp_terminal_id,
+                terminalCode,
+                displayName,
             ].forEach((candidate) => {
                 const key = normalizeKey(candidate);
                 if (key) bindings.set(key, binding);
@@ -435,21 +559,28 @@ export interface TerminalErpReadinessResult {
     terminalId?: string | null;
     profileStatus?: string | null;
     checks?: Record<string, unknown>;
-    erp_readiness?: Record<string, unknown>;
+    erp_readiness?: TenantTerminalErpReadiness;
     message?: string;
 }
 
-export type TerminalDeviceAction = "TAKEOVER" | "ROTATE_TOKEN" | "REVOKE_DEVICE" | "SYNC_AUTHORIZED_DEVICE";
+export type TerminalDeviceAction =
+    | "TAKEOVER"
+    | "ROTATE_TOKEN"
+    | "REVOKE_DEVICE"
+    | "SYNC_AUTHORIZED_DEVICE"
+    | "GENERATE_PAIRING_CODE"
+    | "CLEAR_TERMINAL_DEVICES";
 
 export interface RequestTerminalDeviceActionInput {
     tenantId: string;
     terminalId: string;
     registryId?: string | null;
     terminalName?: string | null;
-    deviceId: string;
+    deviceId?: string | null;
     action: TerminalDeviceAction;
     reason: string;
     pairingCode?: string | null;
+    ttlSeconds?: number | null;
 }
 
 export interface TerminalDeviceActionResult {
@@ -463,6 +594,8 @@ export interface TerminalDeviceActionResult {
     deviceTokenIssued?: boolean;
     deviceTokenStatus?: string | null;
     tokenPreview?: string | null;
+    cleared_registry_count?: number | null;
+    cleared_device_ids?: string[] | null;
     message?: string;
 }
 
@@ -486,6 +619,26 @@ export interface RequestTerminalFiscalConfigInput {
     terminalName?: string | null;
     mode: "QA_DEMO" | "PRODUCTION";
     config?: TerminalFiscalProductionConfig;
+}
+
+export interface RequestTerminalErpProfilePrepareInput {
+    tenantId: string;
+    terminalId: string;
+    registryId?: string | null;
+    deviceId?: string | null;
+    terminalName?: string | null;
+}
+
+export interface RequestTerminalSyncPendingInput {
+    tenantId: string;
+    terminalId: string;
+}
+
+export interface RequestTerminalSyncRetryInput {
+    tenantId: string;
+    terminalId: string;
+    documentId?: string | null;
+    documentIds?: string[];
 }
 
 export interface TerminalFiscalConfigResult {
@@ -983,10 +1136,52 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         }
     }
 
+    const getTerminalConfig = (terminal?: Terminal | null) => asRecord(terminal?.config);
+    const getTerminalMetadata = (terminal?: Terminal | null) => asRecord(getTerminalConfig(terminal).metadata);
+    const getHumanTerminalCode = (terminal?: Terminal | null, binding?: ErpTerminalBinding | null) => {
+        const config = getTerminalConfig(terminal);
+        const metadata = getTerminalMetadata(terminal);
+        return firstHumanText(
+            terminal?.code,
+            binding?.terminalCode,
+            config.station_number,
+            config.stationNumber,
+            metadata.station_number,
+            metadata.stationNumber,
+            metadata.terminal_code,
+            metadata.terminalCode,
+        );
+    };
+    const getHumanTerminalName = (
+        terminal?: Terminal | null,
+        registry?: TenantTerminalRegistryEntry | null,
+        binding?: ErpTerminalBinding | null,
+    ) => {
+        const config = getTerminalConfig(terminal);
+        const metadata = getTerminalMetadata(terminal);
+        return firstHumanText(
+            terminal?.name,
+            terminal?.terminal_name,
+            terminal?.label,
+            terminal?.code,
+            registry?.terminal_name,
+            binding?.displayName,
+            metadata.terminal_name,
+            metadata.terminalName,
+            metadata.display_name,
+            metadata.displayName,
+            config.terminal_name,
+            config.terminalName,
+            config.display_name,
+            config.displayName,
+            getHumanTerminalCode(terminal, binding),
+        ) || "Terminal sin nombre";
+    };
     const groupedTerminalRows = new Map<string, Terminal[]>();
     for (const terminal of terminalRows) {
-        const terminalName = (terminal.name || terminal.terminal_name || terminal.label || terminal.id || "Terminal Sin Nombre").trim();
-        const groupKey = terminalName.toUpperCase();
+        const binding = resolveErpTerminalBinding(erpBindings, terminal.id, terminal.name, terminal.terminal_name, terminal.code);
+        const terminalName = getHumanTerminalName(terminal, null, binding);
+        const groupKey = terminalName === "Terminal sin nombre" ? terminal.id : terminalName.toUpperCase();
         const arr = groupedTerminalRows.get(groupKey) || [];
         arr.push(terminal);
         groupedTerminalRows.set(groupKey, arr);
@@ -1003,8 +1198,6 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         });
 
         const deviceToken = primaryTerminal.device_token || primaryTerminal.device_id || primaryTerminal.current_device_id || null;
-        const terminalName = primaryTerminal.name || primaryTerminal.terminal_name || primaryTerminal.label || primaryTerminal.id;
-
         const registriesMap = new Map<string, TenantTerminalRegistryEntry>();
 
         for (const terminal of terminalsGroup) {
@@ -1036,8 +1229,12 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             erpBindings,
             primaryTerminal.id,
             registry?.terminal_id,
-            terminalName,
+            primaryTerminal.name,
+            primaryTerminal.terminal_name,
+            primaryTerminal.code,
+            registry?.terminal_name,
         );
+        const terminalName = getHumanTerminalName(primaryTerminal, registry, erpBinding);
 
         snapshots.push({
             id: primaryTerminal.id,
@@ -1050,6 +1247,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             created_at: primaryTerminal.created_at || null,
             erp_terminal_uuid: erpBinding?.erpTerminalId || null,
             erp_current_device_id: erpBinding?.deviceId || null,
+            erp_app_version: erpBinding?.appVersion || null,
+            erp_app_version_code: erpBinding?.appVersionCode || null,
             registry,
             registries: consolidatedRegistries,
         });
@@ -1060,7 +1259,17 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     for (const row of registryRows) {
         if (row.id && matchedRegistryIds.has(row.id)) continue;
         
-        const terminalName = (row.terminal_name || row.terminal_id || row.device_id || "Terminal sin catálogo").trim();
+        const rowBinding = resolveErpTerminalBinding(
+            erpBindings,
+            row.terminal_id,
+            row.terminal_name,
+            row.device_id,
+        );
+        const terminalName = firstHumanText(
+            row.terminal_name,
+            rowBinding?.displayName,
+            rowBinding?.terminalCode,
+        ) || "Terminal sin catálogo";
         const groupKey = terminalName.toUpperCase();
 
         const existingSnapshot = snapshots.find(s => (s.name || '').trim().toUpperCase() === groupKey);
@@ -1081,13 +1290,18 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     for (const arr of orphanedRegistriesGrouped.values()) {
         arr.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
         const primary = arr[0];
-        const orphanName = (primary.terminal_name || primary.terminal_id || primary.device_id || "Terminal sin catálogo").trim();
         const orphanBinding = resolveErpTerminalBinding(
             erpBindings,
             primary.terminal_id,
             primary.id,
-            orphanName,
+            primary.terminal_name,
+            primary.device_id,
         );
+        const orphanName = firstHumanText(
+            primary.terminal_name,
+            orphanBinding?.displayName,
+            orphanBinding?.terminalCode,
+        ) || "Terminal sin catálogo";
         snapshots.push({
             id: primary.id || primary.device_id || `orphan-${Date.now()}`,
             tenant_id: primary.tenant_id,
@@ -1099,6 +1313,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             created_at: primary.created_at || null,
             erp_terminal_uuid: orphanBinding?.erpTerminalId || null,
             erp_current_device_id: orphanBinding?.deviceId || null,
+            erp_app_version: orphanBinding?.appVersion || null,
+            erp_app_version_code: orphanBinding?.appVersionCode || null,
             registry: primary,
             registries: arr,
         });
@@ -1191,6 +1407,93 @@ export async function requestTerminalErpReadiness(input: RequestTerminalErpReadi
     }
 
     return (payload || { status: "pending" }) as TerminalErpReadinessResult;
+}
+
+export async function requestTerminalErpProfilePrepare(
+    input: RequestTerminalErpProfilePrepareInput,
+): Promise<TerminalErpReadinessResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-erp-profile`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+            device_id: input.deviceId || null,
+            terminal_name: input.terminalName || null,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo preparar el perfil ERP de la terminal.");
+    }
+
+    return (payload || { status: "pending" }) as TerminalErpReadinessResult;
+}
+
+export async function getTerminalSyncPending(
+    input: RequestTerminalSyncPendingInput,
+): Promise<TerminalSyncPendingResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-sync-pending`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as (TerminalSyncPendingResult & { message?: string; error?: string }) | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudieron cargar los documentos pendientes de la terminal.");
+    }
+
+    return payload || {
+        status: "success",
+        documents: [],
+        summary: { pending: 0, repairable: 0, functionalErrors: 0 },
+    };
+}
+
+export async function retryTerminalSyncPending(
+    input: RequestTerminalSyncRetryInput,
+): Promise<TerminalSyncRetryResult> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-sync-retry`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            document_id: input.documentId || null,
+            document_ids: input.documentIds || [],
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as (TerminalSyncRetryResult & { message?: string; error?: string }) | null;
+
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudieron reintentar los documentos pendientes.");
+    }
+
+    return payload || { status: "success" };
 }
 
 export async function getTerminalAuthAttempts(
@@ -1390,10 +1693,13 @@ export async function syncTerminalAuthorizedDevice(input: {
 
 export async function requestTerminalDeviceAction(
     input: RequestTerminalDeviceActionInput,
-): Promise<TerminalDeviceActionResult> {
+): Promise<TerminalDeviceActionResult | TerminalPairingCodeResult> {
     if (input.action === "SYNC_AUTHORIZED_DEVICE") {
         if (!input.registryId) {
             throw new Error("registry_id requerido para sincronizar device autorizado.");
+        }
+        if (!input.deviceId) {
+            throw new Error("device_id requerido para sincronizar device autorizado.");
         }
         return syncTerminalAuthorizedDevice({
             tenantId: input.tenantId,
@@ -1415,10 +1721,11 @@ export async function requestTerminalDeviceAction(
             terminal_id: input.terminalId,
             registry_id: input.registryId || null,
             terminal_name: input.terminalName || null,
-            device_id: input.deviceId,
+            device_id: input.deviceId || null,
             action: input.action,
             reason: input.reason,
             pairing_code: input.pairingCode || null,
+            ttl_seconds: input.ttlSeconds || null,
             confirm_action: true,
         }),
     });
@@ -1429,7 +1736,7 @@ export async function requestTerminalDeviceAction(
         throw new Error(payload?.message || payload?.error || "No se pudo ejecutar la accion de autorizacion.");
     }
 
-    return (payload || { status: "success" }) as TerminalDeviceActionResult;
+    return (payload || { status: "success" }) as TerminalDeviceActionResult | TerminalPairingCodeResult;
 }
 
 export type TenantPosLicenseSeats = {
@@ -1992,6 +2299,9 @@ export const tenantService = {
     requestTerminalTakeover,
     requestTerminalLocalRebuild,
     requestTerminalErpReadiness,
+    requestTerminalErpProfilePrepare,
+    getTerminalSyncPending,
+    retryTerminalSyncPending,
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
     syncTerminalAuthorizedDevice,

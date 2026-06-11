@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2, Unlink } from 'lucide-react';
-import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
+import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TerminalPairingCodeResult, TerminalSyncDocument, TerminalSyncPendingResult, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService, type TenantPosLicenseSeats } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import { getPosApkReleases, type PosApkRelease } from '../lib/posApkReleases';
@@ -31,6 +31,8 @@ import {
     summarizeTerminalFiscalDebug,
 } from '../lib/terminalIdentity';
 
+type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'sync' | 'fiscal' | 'attempts';
+
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -48,7 +50,9 @@ export const Tenants: React.FC = () => {
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
+    const [terminalTabs, setTerminalTabs] = useState<Record<string, TerminalTabKey>>({});
     const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkRelease | null>(null);
+    const [terminalAdvancedOpen, setTerminalAdvancedOpen] = useState<Record<string, boolean>>({});
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
     const [takeoverTerminal, setTakeoverTerminal] = useState<TenantTerminalSnapshot | null>(null);
@@ -61,9 +65,14 @@ export const Tenants: React.FC = () => {
     const [authAttemptsByTerminal, setAuthAttemptsByTerminal] = useState<Record<string, TerminalAuthAttempt[]>>({});
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
+    const [pairingCodesByAttempt, setPairingCodesByAttempt] = useState<Record<string, TerminalPairingCodeResult>>({});
+    const [manualPairingDeviceIds, setManualPairingDeviceIds] = useState<Record<string, string>>({});
     const [posLicenseSeats, setPosLicenseSeats] = useState<TenantPosLicenseSeats | null>(null);
     const [fiscalReadinessByTerminal, setFiscalReadinessByTerminal] = useState<Record<string, TerminalFiscalReadiness>>({});
     const [fiscalReadinessLoadingKey, setFiscalReadinessLoadingKey] = useState<string | null>(null);
+    const [syncPendingByTerminal, setSyncPendingByTerminal] = useState<Record<string, TerminalSyncPendingResult>>({});
+    const [syncPendingLoadingKey, setSyncPendingLoadingKey] = useState<string | null>(null);
+    const [syncRetrySubmittingKey, setSyncRetrySubmittingKey] = useState<string | null>(null);
     const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
     const [updatingStatusTenantId, setUpdatingStatusTenantId] = useState<string | null>(null);
     const [provisionedCredentials, setProvisionedCredentials] = useState<{
@@ -356,6 +365,8 @@ export const Tenants: React.FC = () => {
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
         setPosLicenseSeats(null);
+        setSyncPendingByTerminal({});
+        setTerminalAdvancedOpen({});
         setIsTerminalModalOpen(true);
         setIsTerminalModalLoading(true);
 
@@ -394,6 +405,8 @@ export const Tenants: React.FC = () => {
         setFiscalReadinessByTerminal({});
         setLatestPosApkRelease(null);
         setPosLicenseSeats(null);
+        setSyncPendingByTerminal({});
+        setTerminalAdvancedOpen({});
         closeTakeoverModal();
         closeRebuildModal();
     };
@@ -488,7 +501,19 @@ export const Tenants: React.FC = () => {
 
     const getTerminalKey = (terminal: TenantTerminalSnapshot) => `${terminal.id}-${terminal.registry?.id || 'catalog'}`;
 
+    const getPairingAttemptKey = (terminal: TenantTerminalSnapshot, deviceId: string) => (
+        `${getTerminalKey(terminal)}-${deviceId || 'unknown'}`
+    );
+
     const getAttemptTime = (attempt: TerminalAuthAttempt) => attempt.attempted_at || attempt.created_at || null;
+
+    const getPairingCodeValue = (result: TerminalPairingCodeResult | null | undefined) => (
+        result?.pairingCode || result?.pairing_code || result?.code || ''
+    );
+
+    const getPairingExpiresAt = (result: TerminalPairingCodeResult | null | undefined) => (
+        result?.expiresAt || result?.expires_at || null
+    );
 
     const getAuthStatusLabel = (status: string) => {
         switch (status) {
@@ -512,6 +537,24 @@ export const Tenants: React.FC = () => {
         if (status === 'TAKEOVER_PENDING' || status === 'TOKEN_ROTATION_REQUIRED') return 'border-amber-200 bg-amber-50 text-amber-700';
         if (status === 'OLD_DEVICE_REVOKED') return 'border-slate-200 bg-slate-100 text-slate-700';
         return 'border-slate-200 bg-slate-50 text-slate-600';
+    };
+
+    const isDeviceIdentityAligned = (authorizedDeviceId: string, reportedDeviceId: string, erpDeviceId?: string) => (
+        Boolean(authorizedDeviceId && (
+            (reportedDeviceId && authorizedDeviceId === reportedDeviceId)
+            || (erpDeviceId && erpDeviceId !== 'N/D' && authorizedDeviceId === erpDeviceId)
+        ))
+    );
+
+    const getEffectiveAuthStatus = (status: string, authorizedDeviceId: string, reportedDeviceId: string, erpDeviceId?: string) => {
+        const normalized = status.toUpperCase();
+        if (
+            isDeviceIdentityAligned(authorizedDeviceId, reportedDeviceId, erpDeviceId)
+            && ['DEVICE_MISMATCH', 'TAKEOVER_PENDING', 'ERP_AUTH_ERROR'].includes(normalized)
+        ) {
+            return 'AUTHORIZED';
+        }
+        return normalized || 'AUTHORIZED';
     };
 
     const getFiscalReadiness = (terminal: TenantTerminalSnapshot) => (
@@ -562,6 +605,49 @@ export const Tenants: React.FC = () => {
         return null;
     };
 
+    const getReadinessProfileStatus = (readiness: TenantTerminalErpReadiness | null | undefined) => (
+        getReadinessValue(readiness, ['profileStatus', 'profile_status']) || ''
+    ).toUpperCase();
+
+    const isErpProfileIncomplete = (readiness: TenantTerminalErpReadiness | null | undefined) => {
+        const profileStatus = getReadinessProfileStatus(readiness);
+        const profileCheck = getReadinessCheckValue(readiness, ['profile']);
+        return profileStatus === 'DRAFT' || profileCheck === false;
+    };
+
+    const getSyncDocumentValue = (document: TerminalSyncDocument, keys: string[]) => {
+        for (const key of keys) {
+            const value = document[key];
+            if (typeof value === 'string' && value.trim()) return value.trim();
+            if (typeof value === 'number') return String(value);
+        }
+        return '';
+    };
+
+    const getSyncDocumentId = (document: TerminalSyncDocument) => (
+        getSyncDocumentValue(document, ['id', 'document_id', 'documentId', 'uuid'])
+    );
+
+    const getSyncDocumentFolio = (document: TerminalSyncDocument) => (
+        getSyncDocumentValue(document, ['folio', 'document_no', 'documentNo', 'sequence', 'ncf']) || 'Documento sin folio'
+    );
+
+    const getSyncDocumentErrorCode = (document: TerminalSyncDocument) => (
+        getSyncDocumentValue(document, ['error_code', 'errorCode', 'code']).toUpperCase()
+    );
+
+    const getSyncDocumentCreatedAt = (document: TerminalSyncDocument) => (
+        getSyncDocumentValue(document, ['created_at', 'createdAt', 'date', 'timestamp'])
+    );
+
+    const isRepairableSyncDocument = (document: TerminalSyncDocument, fallbackReadiness?: TenantTerminalErpReadiness | null) => {
+        const documentReadiness = document.readiness
+            || (document.erp_readiness && typeof document.erp_readiness === 'object' ? document.erp_readiness as TenantTerminalErpReadiness : null);
+        const readiness = documentReadiness || fallbackReadiness || null;
+        return getSyncDocumentErrorCode(document) === 'ERP_CONTEXT_MISSING'
+            && (isErpProfileIncomplete(readiness) || document.retryable === true);
+    };
+
     const getErpReadinessStatus = (terminal: TenantTerminalSnapshot) => (
         terminal.registry?.erp_readiness?.status?.toString().toLowerCase() || 'missing'
     );
@@ -580,6 +666,22 @@ export const Tenants: React.FC = () => {
         if (status === 'missing_catalog') return 'Catalogo faltante';
         if (status === 'error') return 'ERP con error';
         return 'ERP sin validar';
+    };
+
+    const getOperationalStatusLabel = (status: string) => {
+        if (status === 'OPERATIVE') return 'Operativa';
+        if (status === 'ATTENTION') return 'Requiere atención';
+        if (status === 'AUTH_REQUIRED') return 'Requiere autorización';
+        if (status === 'OFFLINE') return 'Offline';
+        return 'Pendiente de vinculación';
+    };
+
+    const getOperationalStatusClasses = (status: string) => {
+        if (status === 'OPERATIVE') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        if (status === 'ATTENTION') return 'border-amber-200 bg-amber-50 text-amber-700';
+        if (status === 'AUTH_REQUIRED') return 'border-red-200 bg-red-50 text-red-700';
+        if (status === 'OFFLINE') return 'border-slate-200 bg-slate-100 text-slate-600';
+        return 'border-blue-200 bg-blue-50 text-blue-700';
     };
 
     const getCheckLabel = (value: boolean | null, readyLabel: string, missingLabel: string) => {
@@ -685,6 +787,125 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const handlePrepareErpProfile = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return null;
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) {
+            alert('Esta terminal necesita terminal_id para preparar el perfil ERP.');
+            return null;
+        }
+
+        const key = getTerminalKey(terminal);
+        setErpReadinessSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalErpProfilePrepare({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                deviceId: getTerminalOperationalDeviceId(terminal) || null,
+                terminalName: terminal.name,
+            });
+            await refreshTerminalModalData();
+            void loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
+            alert(result.message || (result.status === 'ready' ? 'Perfil ERP preparado correctamente.' : 'Perfil ERP solicitado, pero aun no esta listo.'));
+            return result;
+        } catch (err: unknown) {
+            console.error('Error preparing ERP profile:', err);
+            alert(getErrorMessage(err));
+            return null;
+        } finally {
+            setErpReadinessSubmittingKey(null);
+        }
+    };
+
+    const handlePrepareAndRetryDocument = async (terminal: TenantTerminalSnapshot, document: TerminalSyncDocument) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        const documentId = getSyncDocumentId(document);
+        if (!terminalId || !documentId) {
+            alert('No se pudo identificar la terminal o el documento pendiente.');
+            return;
+        }
+
+        const key = `${getTerminalKey(terminal)}-${documentId}`;
+        setSyncRetrySubmittingKey(key);
+        try {
+            const readiness = terminal.registry?.erp_readiness || document.readiness || null;
+            if (isErpProfileIncomplete(readiness)) {
+                const prepareResult = await tenantService.requestTerminalErpProfilePrepare({
+                    tenantId: selectedTenantForTerminals.id,
+                    terminalId,
+                    registryId: terminal.registry?.id || null,
+                    deviceId: getTerminalOperationalDeviceId(terminal) || null,
+                    terminalName: terminal.name,
+                });
+                const preparedReadiness = prepareResult.erp_readiness || prepareResult as TenantTerminalErpReadiness;
+                if (isErpProfileIncomplete(preparedReadiness) || prepareResult.status === 'error') {
+                    alert(prepareResult.message || 'El perfil ERP sigue incompleto. No se reintentara el documento.');
+                    await refreshTerminalModalData();
+                    return;
+                }
+            }
+
+            const result = await tenantService.retryTerminalSyncPending({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                documentId,
+            });
+            await refreshTerminalModalData();
+            await loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
+            alert(result.message || 'Documento reenviado correctamente.');
+        } catch (err: unknown) {
+            console.error('Error preparing and retrying document:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setSyncRetrySubmittingKey(null);
+        }
+    };
+
+    const handleRetryTerminalPending = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) {
+            alert('Esta terminal necesita terminal_id para reintentar pendientes.');
+            return;
+        }
+
+        if (isErpProfileIncomplete(terminal.registry?.erp_readiness || null)) {
+            alert('No se permite reintento masivo mientras el perfil ERP siga incompleto.');
+            return;
+        }
+
+        const key = getTerminalKey(terminal);
+        const pending = syncPendingByTerminal[key];
+        const documentIds = (pending?.documents || [])
+            .filter((document) => isRepairableSyncDocument(document, terminal.registry?.erp_readiness || null))
+            .map(getSyncDocumentId)
+            .filter(Boolean);
+
+        if (!documentIds.length) {
+            alert('No hay documentos reparables para esta terminal.');
+            return;
+        }
+
+        setSyncRetrySubmittingKey(`${key}-bulk`);
+        try {
+            const result = await tenantService.retryTerminalSyncPending({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                documentIds,
+            });
+            await refreshTerminalModalData();
+            await loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
+            alert(result.message || 'Pendientes reenviados correctamente.');
+        } catch (err: unknown) {
+            console.error('Error retrying terminal pending documents:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setSyncRetrySubmittingKey(null);
+        }
+    };
+
     const loadTerminalAuthAttempts = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
         const key = getTerminalKey(terminal);
         const terminalId = getTerminalTakeoverId(terminal);
@@ -745,6 +966,34 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const loadTerminalSyncPending = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
+        const key = getTerminalKey(terminal);
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) return;
+
+        setSyncPendingLoadingKey(key);
+        try {
+            const result = await tenantService.getTerminalSyncPending({ tenantId, terminalId });
+            setSyncPendingByTerminal((current) => ({
+                ...current,
+                [key]: result,
+            }));
+        } catch (err) {
+            console.warn('Error fetching terminal sync pending:', err);
+            setSyncPendingByTerminal((current) => ({
+                ...current,
+                [key]: {
+                    status: 'error',
+                    documents: [],
+                    summary: { pending: 0, repairable: 0, functionalErrors: 0 },
+                    message: getErrorMessage(err),
+                },
+            }));
+        } finally {
+            setSyncPendingLoadingKey((current) => current === key ? null : current);
+        }
+    };
+
     const loadTerminalFiscalReadiness = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
         const key = getTerminalKey(terminal);
         const terminalId = getTerminalTakeoverId(terminal);
@@ -782,6 +1031,81 @@ export const Tenants: React.FC = () => {
         }
     };
 
+    const handleGeneratePairingCode = async (terminal: TenantTerminalSnapshot, attempt: TerminalAuthAttempt) => {
+        if (!selectedTenantForTerminals) return;
+
+        const requestedDeviceId = getAttemptDeviceId(attempt);
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId || !requestedDeviceId) {
+            alert('El intento rechazado no tiene terminal o device_id suficiente para generar codigo.');
+            return;
+        }
+
+        const confirmed = confirm(
+            `Se generara un codigo temporal para que ${requestedDeviceId} pueda tomar control de ${terminal.name} / ${terminalId}. `
+            + 'El codigo debe escribirse en el POS y vencera en pocos minutos.',
+        );
+        if (!confirmed) return;
+
+        const key = `${getTerminalKey(terminal)}-PAIRING-${requestedDeviceId}`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                deviceId: requestedDeviceId,
+                action: 'GENERATE_PAIRING_CODE',
+                reason: 'DEVICE_REINSTALL_OR_REPLACEMENT',
+                ttlSeconds: 600,
+            }) as TerminalPairingCodeResult;
+
+            const pairingCode = getPairingCodeValue(result);
+            if (!pairingCode) {
+                if (result.success || result.status === 'success') {
+                    alert(result.message || 'Device autorizado. Reintenta conexion desde el POS.');
+                    await refreshTerminalModalData();
+                    return;
+                }
+                alert(result.message || 'El ERP no devolvio un codigo de vinculacion.');
+                return;
+            }
+
+            setPairingCodesByAttempt((current) => ({
+                ...current,
+                [getPairingAttemptKey(terminal, requestedDeviceId)]: result,
+            }));
+            alert(result.message || `Codigo de vinculacion generado: ${pairingCode}`);
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error generating terminal pairing code:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
+    const handleGeneratePairingCodeForDevice = async (terminal: TenantTerminalSnapshot, deviceId: string) => {
+        const terminalId = getTerminalTakeoverId(terminal);
+        const requestedDeviceId = deviceId.trim();
+        if (!terminalId || !requestedDeviceId) {
+            alert('Esta terminal no tiene device_id candidato para generar codigo de vinculacion.');
+            return;
+        }
+
+        await handleGeneratePairingCode(terminal, {
+            terminal_id: terminalId,
+            terminal_name: terminal.name,
+            requested_device_id: requestedDeviceId,
+            authorized_device_id: getTerminalAuthorizedDeviceId(terminal) || null,
+            reason: 'DEVICE_NOT_AUTHORIZED',
+            status: 'PENDING',
+            resolution_status: 'PENDING',
+            pairing_required: true,
+        });
+    };
+
     const handleReauthorizeAttempt = async (terminal: TenantTerminalSnapshot, attempt: TerminalAuthAttempt) => {
         if (!selectedTenantForTerminals) return;
 
@@ -800,8 +1124,10 @@ export const Tenants: React.FC = () => {
         );
         if (!confirmed) return;
 
+        const savedPairing = pairingCodesByAttempt[getPairingAttemptKey(terminal, requestedDeviceId)];
+        const savedPairingCode = getPairingCodeValue(savedPairing);
         const pairingCode = attempt.pairing_required
-            ? prompt('Codigo de vinculacion')
+            ? savedPairingCode || prompt('Codigo de vinculacion')
             : null;
         if (attempt.pairing_required && !pairingCode?.trim()) {
             alert('El codigo de vinculacion es requerido para reautorizar este equipo.');
@@ -993,6 +1319,42 @@ export const Tenants: React.FC = () => {
             await refreshTerminalModalData();
         } catch (err: unknown) {
             console.error('Error revoking terminal device:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
+    const handleClearTerminalDevices = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        if (!terminalId) {
+            alert('Esta terminal necesita terminal_id para limpiar devices.');
+            return;
+        }
+
+        const confirmation = prompt(
+            `Esta accion eliminara solo los devices/vinculaciones de ${terminal.name} (${terminalId}). `
+            + 'No borra ventas, maestros, secuencias ni configuracion fiscal. Escribe LIMPIAR para confirmar.',
+        );
+        if (confirmation !== 'LIMPIAR') return;
+
+        const key = `${getTerminalKey(terminal)}-CLEAR-DEVICES`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                action: 'CLEAR_TERMINAL_DEVICES',
+                reason: 'LAB_DEVICE_BINDING_RESET',
+            });
+            const cleared = result.cleared_registry_count ?? 0;
+            alert(result.message || `Devices limpiados. Registros eliminados: ${cleared}.`);
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error clearing terminal devices:', err);
             alert(getErrorMessage(err));
         } finally {
             setDeviceActionSubmittingKey(null);
@@ -1321,20 +1683,47 @@ export const Tenants: React.FC = () => {
         return 'bg-slate-100 text-slate-500';
     };
 
+    const getEffectiveApkVersion = (terminal: TenantTerminalSnapshot) => {
+        const registryDeviceId = (terminal.registry?.current_device_id || terminal.registry?.device_id || '').trim().toUpperCase();
+        const erpDeviceId = (terminal.erp_current_device_id || '').trim().toUpperCase();
+        const canUseErpVersion = Boolean(terminal.erp_app_version || terminal.erp_app_version_code)
+            && (!registryDeviceId || !erpDeviceId || registryDeviceId === erpDeviceId);
+
+        if (canUseErpVersion) {
+            return {
+                version: terminal.erp_app_version?.trim() || '',
+                versionCode: terminal.erp_app_version_code ?? null,
+                source: 'ERP',
+            };
+        }
+
+        return {
+            version: terminal.registry?.app_version?.trim() || '',
+            versionCode: terminal.registry?.app_version_code ?? null,
+            source: 'Cloud-Admin',
+        };
+    };
+
     const getApkVersionKey = (terminal: TenantTerminalSnapshot) => {
-        const version = terminal.registry?.app_version?.trim() || '';
-        const versionCode = terminal.registry?.app_version_code ? String(terminal.registry.app_version_code) : '';
+        const apkVersion = getEffectiveApkVersion(terminal);
+        const version = apkVersion.version;
+        const versionCode = apkVersion.versionCode ? String(apkVersion.versionCode) : '';
         if (!version && !versionCode) return '';
         return `${version}::${versionCode}`;
     };
 
     const formatApkVersion = (terminal: TenantTerminalSnapshot) => {
-        const version = terminal.registry?.app_version?.trim() || '';
-        const versionCode = terminal.registry?.app_version_code;
+        const { version, versionCode } = getEffectiveApkVersion(terminal);
         if (!version && !versionCode) return 'N/D';
         if (version && versionCode) return `APK v${version} (${versionCode})`;
         if (version) return `APK v${version}`;
         return `Build ${versionCode}`;
+    };
+
+    const getApkVersionSourceLabel = (terminal: TenantTerminalSnapshot) => {
+        const apkVersion = getEffectiveApkVersion(terminal);
+        if (!apkVersion.version && !apkVersion.versionCode) return '';
+        return apkVersion.source;
     };
 
     const referenceVersionCandidate = (() => {
@@ -1957,17 +2346,49 @@ export const Tenants: React.FC = () => {
                                         const erpReadinessStatus = getErpReadinessStatus(terminal);
                                         const erpTenantId = getReadinessValue(erpReadiness, ['erpTenantId', 'erp_tenant_id']);
                                         const profileStatus = getReadinessValue(erpReadiness, ['profileStatus', 'profile_status']) || (erpReadinessStatus === 'ready' ? 'READY' : 'MISSING');
-                                        const catalogReady = getReadinessCheckValue(erpReadiness, ['catalog', 'catalogReady', 'catalog_ready', 'items', 'itemsReady', 'items_ready']);
-                                        const seriesReady = getReadinessCheckValue(erpReadiness, ['documentSeries', 'document_series', 'series', 'sequences', 'sequencesReady', 'sequences_ready']);
+                                        const tenantReady = getReadinessCheckValue(erpReadiness, ['tenant']);
+                                        const companyReady = getReadinessCheckValue(erpReadiness, ['company']);
+                                        const storeReady = getReadinessCheckValue(erpReadiness, ['store']);
+                                        const terminalReady = getReadinessCheckValue(erpReadiness, ['terminal']);
+                                        const profileReady = getReadinessCheckValue(erpReadiness, ['profile']);
+                                        const taxesReady = getReadinessCheckValue(erpReadiness, ['taxes', 'tax']);
+                                        const paymentMethodsReady = getReadinessCheckValue(erpReadiness, ['paymentMethods', 'payment_methods', 'payments']);
+                                        const warehousesReady = getReadinessCheckValue(erpReadiness, ['warehouses', 'warehouse']);
+                                        const documentSeriesReady = getReadinessCheckValue(erpReadiness, ['documentSeries', 'document_series', 'series', 'sequences', 'sequencesReady', 'sequences_ready']);
+                                        const itemsReady = getReadinessCheckValue(erpReadiness, ['items', 'catalog', 'catalogReady', 'catalog_ready', 'itemsReady', 'items_ready']);
+                                        const profileIncomplete = isErpProfileIncomplete(erpReadiness);
                                         const lastSyncAt = getReadinessValue(erpReadiness, ['lastSyncEventAt', 'last_sync_event_at', 'lastSyncAt', 'last_sync_at']);
                                         const lastSyncType = getReadinessValue(erpReadiness, ['lastSyncEventType', 'last_sync_event_type', 'lastSyncStatus', 'last_sync_status']);
                                         const isReadinessSubmitting = erpReadinessSubmittingKey === getTerminalKey(terminal);
                                         const terminalKey = getTerminalKey(terminal);
+                                        const terminalSyncPending = syncPendingByTerminal[terminalKey];
+                                        const syncPending = {
+                                            ...terminalSyncPending,
+                                            status: terminalSyncPending?.status || 'idle',
+                                            documents: terminalSyncPending?.documents || [],
+                                            summary: { pending: 0, repairable: 0, functionalErrors: 0 },
+                                            ...(terminalSyncPending?.summary ? { summary: terminalSyncPending.summary } : {}),
+                                        };
+                                        const repairableSyncCount = syncPending.documents.filter((document) => isRepairableSyncDocument(document, erpReadiness)).length;
+                                        const functionalSyncErrorCount = Math.max(syncPending.summary.functionalErrors, syncPending.summary.pending - repairableSyncCount);
+                                        const isSyncLoading = syncPendingLoadingKey === terminalKey;
+                                        const syncBulkSubmitting = syncRetrySubmittingKey === `${terminalKey}-bulk`;
                                         const authAttempts = authAttemptsByTerminal[terminalKey] || [];
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
-                                        const authStatusClasses = getAuthStatusClasses(authStatus);
                                         const identity = buildTerminalIdentitySummary(terminal, authAttempts);
                                         const authorizedDeviceId = identity.authorizedDeviceId !== 'N/D' ? identity.authorizedDeviceId : '';
+                                        const posReportedDeviceId = identity.posReportedDeviceId !== 'N/D' ? identity.posReportedDeviceId : '';
+                                        const erpCurrentDeviceId = identity.erpCurrentDeviceId !== 'N/D' ? identity.erpCurrentDeviceId : '';
+                                        const deviceIdentityAligned = isDeviceIdentityAligned(authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId);
+                                        const effectiveAuthStatus = getEffectiveAuthStatus(authStatus, authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId);
+                                        const authStatusClasses = getAuthStatusClasses(effectiveAuthStatus);
+                                        const actionableAuthAttempts = authAttempts.filter((attempt) => {
+                                            const requestedDeviceId = getAttemptDeviceId(attempt);
+                                            return isPendingDeviceUnauthorizedAttempt(attempt)
+                                                && requestedDeviceId !== authorizedDeviceId
+                                                && requestedDeviceId !== posReportedDeviceId
+                                                && requestedDeviceId !== erpCurrentDeviceId;
+                                        });
                                         const lastRejectedDeviceId = identity.lastRejectedDeviceId !== 'N/D' ? identity.lastRejectedDeviceId : '';
                                         const lastAuthAttempt = authAttempts[0] || null;
                                         const lastAuthAttemptAt = terminal.registry?.last_auth_attempt_at || (lastAuthAttempt ? getAttemptTime(lastAuthAttempt) : null);
@@ -1984,11 +2405,63 @@ export const Tenants: React.FC = () => {
                                             && selectedTenantForTerminals.lifecycle_status === 'BLOCKED';
                                         const revokeDeviceId = terminal.registry?.previous_device_id || lastRejectedDeviceId;
                                         const revokeSubmittingKey = revokeDeviceId ? `${terminalKey}-REVOKE-${revokeDeviceId}` : '';
+                                        const clearDevicesSubmittingKey = `${terminalKey}-CLEAR-DEVICES`;
                                         const fiscalReadiness = getFiscalReadiness(terminal);
                                         const fiscalDebug = summarizeTerminalFiscalDebug(fiscalReadiness);
                                         const fiscalStatus = fiscalDebug.fiscalReadiness;
                                         const fiscalStatusClasses = getFiscalStatusClasses(fiscalStatus);
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
+                                        const hasActionableAuthIssue = !deviceIdentityAligned && (
+                                            !['AUTHORIZED', 'TAKEOVER_COMPLETED'].includes(effectiveAuthStatus)
+                                            || actionableAuthAttempts.length > 0
+                                        );
+                                        const hasActionableErpIssue = profileIncomplete && (syncPending.summary.pending > 0 || erpReadinessStatus === 'error');
+                                        const hasActionableSyncIssue = syncPending.summary.pending > 0 && (repairableSyncCount > 0 || functionalSyncErrorCount > 0);
+                                        const hasActionableFiscalIssue = isFiscalEligibleTenant(selectedTenantForTerminals) && fiscalStatus === 'ERROR';
+                                        const hasAdvancedSignal = hasActionableAuthIssue || hasActionableErpIssue || hasActionableSyncIssue || hasActionableFiscalIssue;
+                                        const isAdvancedOpen = Boolean(terminalAdvancedOpen[terminalKey]);
+                                        const showHistoricalAuthDetails = isAdvancedOpen || hasActionableAuthIssue;
+                                        const displayRejectedDeviceId = showHistoricalAuthDetails ? identity.lastRejectedDeviceId : 'N/D';
+                                        const displayLastAuthError = showHistoricalAuthDetails ? lastAuthError : '';
+                                        const displayLastAuthAttemptAt = showHistoricalAuthDetails ? lastAuthAttemptAt : null;
+                                        const hasVisibleMismatchWarning = Boolean(identity.mismatchWarning && hasActionableAuthIssue);
+                                        const operationalStatus = !hasOnlineRegistry
+                                            ? 'OFFLINE'
+                                            : hasActionableAuthIssue
+                                                ? 'AUTH_REQUIRED'
+                                                : hasActionableErpIssue || hasActionableSyncIssue || hasActionableFiscalIssue
+                                                    ? 'ATTENTION'
+                                                    : authorizedDeviceId || erpReadinessStatus === 'ready' || posReportedDeviceId
+                                                        ? 'OPERATIVE'
+                                                        : 'PENDING';
+                                        const requestedTerminalTab = terminalTabs[terminalKey] || 'summary';
+                                        const baseTerminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
+                                            { key: 'summary', label: 'Resumen' },
+                                            { key: 'devices', label: 'Dispositivos' },
+                                        ];
+                                        const advancedTerminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
+                                            { key: 'erp', label: 'Preparacion ERP' },
+                                            { key: 'sync', label: 'Sync', count: syncPending.summary.pending },
+                                            ...(isFiscalEligibleTenant(selectedTenantForTerminals) ? [{ key: 'fiscal' as TerminalTabKey, label: 'Fiscal' }] : []),
+                                            { key: 'attempts', label: 'Intentos', count: authAttempts.length },
+                                        ];
+                                        const terminalTabOptions = isAdvancedOpen
+                                            ? [...baseTerminalTabOptions, ...advancedTerminalTabOptions]
+                                            : baseTerminalTabOptions;
+                                        const activeTerminalTab = terminalTabOptions.some((tab) => tab.key === requestedTerminalTab)
+                                            ? requestedTerminalTab
+                                            : 'summary';
+                                        const pairingCandidateDeviceId = lastRejectedDeviceId
+                                            || (posReportedDeviceId && posReportedDeviceId !== authorizedDeviceId ? posReportedDeviceId : '');
+                                        const manualPairingDeviceId = pairingCandidateDeviceId
+                                            || manualPairingDeviceIds[terminalKey]?.trim()
+                                            || '';
+                                        const manualPairingKey = manualPairingDeviceId ? `${terminalKey}-PAIRING-${manualPairingDeviceId}` : '';
+                                        const manualPairing = manualPairingDeviceId
+                                            ? pairingCodesByAttempt[getPairingAttemptKey(terminal, manualPairingDeviceId)]
+                                            : null;
+                                        const manualPairingCode = getPairingCodeValue(manualPairing);
+                                        const manualPairingExpiresAt = getPairingExpiresAt(manualPairing);
 
                                         return (
                                             <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
@@ -2012,25 +2485,82 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                     </div>
                                                     <div className="flex flex-col items-end gap-2">
-                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
-                                                            {getReadinessLabel(erpReadinessStatus)}
+                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${getOperationalStatusClasses(operationalStatus)}`}>
+                                                            {getOperationalStatusLabel(operationalStatus)}
                                                         </span>
-                                                        <span className={`px-3 py-1 rounded-full border text-[11px] font-bold uppercase ${authStatusClasses}`}>
-                                                            {getAuthStatusLabel(authStatus)}
-                                                        </span>
+                                                        {hasAdvancedSignal ? (
+                                                            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-bold uppercase text-amber-700">
+                                                                Revisar soporte
+                                                            </span>
+                                                        ) : null}
                                                     </div>
                                                 </div>
 
                                                 <div className="p-5 space-y-5">
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-1">
+                                                        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                                                            <div className="flex min-w-0 gap-1 overflow-x-auto">
+                                                            {terminalTabOptions.map((tab) => {
+                                                                const isActive = activeTerminalTab === tab.key;
+                                                                return (
+                                                                    <button
+                                                                        key={tab.key}
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setTerminalTabs((current) => ({
+                                                                                ...current,
+                                                                                [terminalKey]: tab.key,
+                                                                            }));
+                                                                            if (tab.key === 'sync' && !terminalSyncPending) {
+                                                                                void loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
+                                                                            }
+                                                                        }}
+                                                                        className={`inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-colors ${
+                                                                            isActive
+                                                                                ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-100'
+                                                                                : 'text-slate-500 hover:bg-white/70 hover:text-slate-800'
+                                                                        }`}
+                                                                    >
+                                                                        {tab.label}
+                                                                        {typeof tab.count === 'number' && tab.count > 0 ? (
+                                                                            <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                                                                                isActive ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
+                                                                            }`}>
+                                                                                {tab.count}
+                                                                            </span>
+                                                                        ) : null}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setTerminalAdvancedOpen((current) => ({
+                                                                    ...current,
+                                                                    [terminalKey]: !isAdvancedOpen,
+                                                                }))}
+                                                                className={`inline-flex items-center justify-center rounded-xl px-3 py-2 text-xs font-bold transition-colors ${
+                                                                    isAdvancedOpen
+                                                                        ? 'bg-slate-900 text-white hover:bg-slate-800'
+                                                                        : 'bg-white text-slate-600 shadow-sm ring-1 ring-slate-200 hover:text-slate-900'
+                                                                }`}
+                                                            >
+                                                                {isAdvancedOpen ? 'Ocultar soporte avanzado' : 'Soporte avanzado'}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    {activeTerminalTab === 'summary' ? (
                                                     <div className={`rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
                                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                             <div>
                                                                 <p className="text-xs font-bold uppercase tracking-wider">Identidad y autorizacion</p>
-                                                                <p className="mt-1 text-sm font-bold">{getAuthStatusLabel(authStatus)}</p>
+                                                                <p className="mt-1 text-sm font-bold">{getAuthStatusLabel(effectiveAuthStatus)}</p>
                                                                 <p className="mt-1 text-xs opacity-80">
                                                                     Cloud-Admin muestra autorizacion, heartbeat del POS y device actual reportado por ERP por separado.
                                                                 </p>
                                                             </div>
+                                                            {(isAdvancedOpen || hasActionableAuthIssue || posOnlyProvisioningBlocked || needsAuthorizedDeviceSync || manualPairingDeviceId || !hasOnlineRegistry) ? (
                                                             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
                                                                 {posOnlyProvisioningBlocked ? (
                                                                     <button
@@ -2062,6 +2592,17 @@ export const Tenants: React.FC = () => {
                                                                     {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
                                                                     Actualizar intentos
                                                                 </button>
+                                                                {manualPairingDeviceId ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleGeneratePairingCodeForDevice(terminal, manualPairingDeviceId)}
+                                                                        disabled={deviceActionSubmittingKey === manualPairingKey}
+                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-900 shadow-sm hover:bg-amber-100 transition-colors disabled:opacity-60"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === manualPairingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
+                                                                        Generar codigo
+                                                                    </button>
+                                                                ) : null}
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => void handleRotateTerminalCredentials(terminal)}
@@ -2072,11 +2613,58 @@ export const Tenants: React.FC = () => {
                                                                     Rotar credenciales
                                                                 </button>
                                                             </div>
+                                                            ) : null}
                                                         </div>
 
-                                                        {identity.mismatchWarning ? (
+                                                        {!pairingCandidateDeviceId ? (
+                                                            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                                                                <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Device del POS para vinculacion</p>
+                                                                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                                                    <input
+                                                                        type="text"
+                                                                        value={manualPairingDeviceIds[terminalKey] || ''}
+                                                                        onChange={(event) => setManualPairingDeviceIds((current) => ({
+                                                                            ...current,
+                                                                            [terminalKey]: event.target.value.toUpperCase(),
+                                                                        }))}
+                                                                        placeholder="Ej. DEV-D31OAKBD"
+                                                                        className="min-w-0 flex-1 rounded-xl border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-slate-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleGeneratePairingCodeForDevice(terminal, manualPairingDeviceIds[terminalKey] || '')}
+                                                                        disabled={!manualPairingDeviceId || deviceActionSubmittingKey === manualPairingKey}
+                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === manualPairingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
+                                                                        Generar codigo
+                                                                    </button>
+                                                                </div>
+                                                                <p className="mt-2 text-xs text-amber-800">
+                                                                    Usalo cuando el POS muestra un device_id, pero Cloud-Admin aun no tiene registros o intentos rechazados para esta terminal.
+                                                                </p>
+                                                            </div>
+                                                        ) : null}
+
+                                                        {hasVisibleMismatchWarning ? (
                                                             <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-3 py-3 text-sm font-semibold text-red-800">
                                                                 {identity.mismatchWarning}
+                                                            </div>
+                                                        ) : null}
+
+                                                        {manualPairingCode ? (
+                                                            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider">Codigo de vinculacion para escribir en el POS</p>
+                                                                <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                                    <p className="font-mono text-lg font-black tracking-widest">{manualPairingCode}</p>
+                                                                    <p className="text-xs font-semibold">
+                                                                        {manualPairingExpiresAt
+                                                                            ? `Vence: ${formatDateTime(manualPairingExpiresAt)}`
+                                                                            : manualPairing?.ttlSeconds || manualPairing?.ttl_seconds
+                                                                                ? `Vence en ${manualPairing.ttlSeconds || manualPairing.ttl_seconds} segundos`
+                                                                                : 'Usalo antes de que expire.'}
+                                                                    </p>
+                                                                </div>
                                                             </div>
                                                         ) : null}
 
@@ -2095,7 +2683,7 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Estado autorizacion</p>
-                                                                <p className="mt-1 font-bold uppercase">{getAuthStatusLabel(authStatus)}</p>
+                                                                <p className="mt-1 font-bold uppercase">{getAuthStatusLabel(effectiveAuthStatus)}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device autorizado actual</p>
@@ -2111,7 +2699,7 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo device rechazado</p>
-                                                                <p className="mt-1 font-mono break-all">{identity.lastRejectedDeviceId}</p>
+                                                                <p className="mt-1 font-mono break-all">{displayRejectedDeviceId}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Devices historicos</p>
@@ -2123,17 +2711,62 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo error auth</p>
-                                                                <p className="mt-1 font-bold break-words">{lastAuthError || 'N/D'}</p>
+                                                                <p className="mt-1 font-bold break-words">{displayLastAuthError || 'N/D'}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo intento</p>
-                                                                <p className="mt-1">{formatDateTime(lastAuthAttemptAt)}</p>
+                                                                <p className="mt-1">{formatDateTime(displayLastAuthAttemptAt)}</p>
                                                             </div>
                                                         </div>
                                                     </div>
+                                                    ) : null}
 
+                                                    {activeTerminalTab === 'devices' ? (
                                                     <div>
-                                                        <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Dispositivos registrados y roles</h5>
+                                                        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                            <div>
+                                                                <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dispositivos registrados y roles</h5>
+                                                                <p className="mt-1 text-xs text-slate-500">Limpia solo vinculaciones de prueba; no borra ventas, maestros, fiscal ni secuencias.</p>
+                                                            </div>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleClearTerminalDevices(terminal)}
+                                                                disabled={deviceActionSubmittingKey === clearDevicesSubmittingKey}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-red-700 shadow-sm hover:bg-red-50 transition-colors disabled:opacity-60"
+                                                            >
+                                                                {deviceActionSubmittingKey === clearDevicesSubmittingKey ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                                                                Limpiar devices
+                                                            </button>
+                                                        </div>
+                                                        {identity.deviceRows.length === 0 ? (
+                                                            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                                                                <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Vincular device nuevo</p>
+                                                                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                                                    <input
+                                                                        type="text"
+                                                                        value={manualPairingDeviceIds[terminalKey] || ''}
+                                                                        onChange={(event) => setManualPairingDeviceIds((current) => ({
+                                                                            ...current,
+                                                                            [terminalKey]: event.target.value.toUpperCase(),
+                                                                        }))}
+                                                                        placeholder="Pega el device_id del POS, ej. DEV-D31OAKBD"
+                                                                        className="min-w-0 flex-1 rounded-xl border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-slate-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleGeneratePairingCodeForDevice(terminal, manualPairingDeviceIds[terminalKey] || '')}
+                                                                        disabled={!manualPairingDeviceId || deviceActionSubmittingKey === manualPairingKey}
+                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === manualPairingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
+                                                                        Generar codigo
+                                                                    </button>
+                                                                </div>
+                                                                <p className="mt-2 text-xs text-amber-800">
+                                                                    Escribe el device que muestra el POS para emitir un codigo temporal de vinculacion.
+                                                                </p>
+                                                            </div>
+                                                        ) : null}
                                                         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                                                             <table className="w-full text-left text-sm whitespace-nowrap">
                                                                 <thead className="text-[10px] uppercase text-slate-400 border-b border-slate-100 bg-slate-50">
@@ -2160,6 +2793,7 @@ export const Tenants: React.FC = () => {
                                                                         const rStatusLabel = registry ? getRegistryStatusLabel(mockTerminal) : 'N/D';
                                                                         const rVersionKey = getApkVersionKey(mockTerminal);
                                                                         const rIsOutOfVersion = Boolean(referenceVersionKey && rVersionKey && rVersionKey !== referenceVersionKey);
+                                                                        const rVersionSource = getApkVersionSourceLabel(mockTerminal);
                                                                         const prefLanIp = registry ? getPreferredLanIp(mockTerminal) : 'N/D';
                                                                         const endpointRole = getRegistryEndpointRole(registry);
                                         const canReleaseLicenseSlot = Boolean(
@@ -2216,7 +2850,8 @@ export const Tenants: React.FC = () => {
                                                                                 <td className="px-4 py-3 align-top">
                                                                                     {registry ? (
                                                                                         <div className="flex flex-col items-start gap-0.5">
-                                                                                            <span className="font-mono text-slate-700 text-[11px]">v {formatApkVersion(mockTerminal)}</span>
+                                                                                            <span className="font-mono text-slate-700 text-[11px]">{formatApkVersion(mockTerminal)}</span>
+                                                                                            {rVersionSource ? <span className="text-[10px] text-slate-400 font-bold">Fuente: {rVersionSource}</span> : null}
                                                                                             {rIsOutOfVersion ? <span className="text-[10px] text-amber-600 font-bold">Desfasado</span> : null}
                                                                                         </div>
                                                                                     ) : (
@@ -2257,8 +2892,10 @@ export const Tenants: React.FC = () => {
                                                             </table>
                                                         </div>
                                                     </div>
+                                                    ) : null}
                                                 </div>
 
+                                                {activeTerminalTab === 'attempts' ? (
                                                 <div className={`mx-5 rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
                                                     <p className="text-xs font-bold uppercase tracking-wider">Intentos de conexion rechazados</p>
                                                     <div className="mt-3 rounded-xl border border-white/60 bg-white/70 overflow-hidden">
@@ -2268,7 +2905,18 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                         {authAttempts.length === 0 ? (
                                                             <div className="px-3 py-4 text-sm opacity-75">
-                                                                No hay intentos rechazados reportados por ERP para esta terminal.
+                                                                <p>No hay intentos rechazados reportados por ERP para esta terminal.</p>
+                                                                {manualPairingDeviceId ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleGeneratePairingCodeForDevice(terminal, manualPairingDeviceId)}
+                                                                        disabled={deviceActionSubmittingKey === manualPairingKey}
+                                                                        className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-60"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === manualPairingKey ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                                                                        Generar codigo para {manualPairingDeviceId}
+                                                                    </button>
+                                                                ) : null}
                                                             </div>
                                                         ) : (
                                                             <div className="overflow-x-auto">
@@ -2289,29 +2937,67 @@ export const Tenants: React.FC = () => {
                                                                             const attemptStatus = attempt.resolution_status || attempt.status || 'PENDING';
                                                                             const canReauthorize = isPendingDeviceUnauthorizedAttempt(attempt);
                                                                             const reauthorizeKey = `${terminalKey}-TAKEOVER-${requestedDeviceId}`;
+                                                                            const pairingKey = `${terminalKey}-PAIRING-${requestedDeviceId}`;
+                                                                            const generatedPairing = pairingCodesByAttempt[getPairingAttemptKey(terminal, requestedDeviceId)];
+                                                                            const generatedPairingCode = getPairingCodeValue(generatedPairing);
+                                                                            const generatedPairingExpiresAt = getPairingExpiresAt(generatedPairing);
                                                                             return (
-                                                                                <tr key={attempt.id || `${requestedDeviceId}-${attemptIndex}`}>
-                                                                                    <td className="px-3 py-2 font-mono font-bold">{requestedDeviceId || 'N/D'}</td>
-                                                                                    <td className="px-3 py-2 font-mono">{attempt.authorized_device_id || authorizedDeviceId || 'N/D'}</td>
-                                                                                    <td className="px-3 py-2">{attempt.reason || attempt.message || 'N/D'}</td>
-                                                                                    <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(getAttemptTime(attempt))}</td>
-                                                                                    <td className="px-3 py-2 font-bold uppercase">{attemptStatus}</td>
-                                                                                    <td className="px-3 py-2 text-right">
-                                                                                        {canReauthorize ? (
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                onClick={() => void handleReauthorizeAttempt(terminal, attempt)}
-                                                                                                disabled={deviceActionSubmittingKey === reauthorizeKey}
-                                                                                                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-60"
-                                                                                            >
-                                                                                                {deviceActionSubmittingKey === reauthorizeKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
-                                                                                                Reautorizar
-                                                                                            </button>
-                                                                                        ) : (
-                                                                                            <span className="text-slate-400">Sin accion</span>
-                                                                                        )}
-                                                                                    </td>
-                                                                                </tr>
+                                                                                <React.Fragment key={attempt.id || `${requestedDeviceId}-${attemptIndex}`}>
+                                                                                    <tr>
+                                                                                        <td className="px-3 py-2 font-mono font-bold">{requestedDeviceId || 'N/D'}</td>
+                                                                                        <td className="px-3 py-2 font-mono">{attempt.authorized_device_id || authorizedDeviceId || 'N/D'}</td>
+                                                                                        <td className="px-3 py-2">{attempt.reason || attempt.message || 'N/D'}</td>
+                                                                                        <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(getAttemptTime(attempt))}</td>
+                                                                                        <td className="px-3 py-2 font-bold uppercase">{attemptStatus}</td>
+                                                                                        <td className="px-3 py-2 text-right">
+                                                                                            {canReauthorize ? (
+                                                                                                <div className="flex flex-col items-end gap-1.5 sm:flex-row sm:justify-end">
+                                                                                                    {attempt.pairing_required ? (
+                                                                                                        <button
+                                                                                                            type="button"
+                                                                                                            onClick={() => void handleGeneratePairingCode(terminal, attempt)}
+                                                                                                            disabled={deviceActionSubmittingKey === pairingKey}
+                                                                                                            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-700 disabled:opacity-60"
+                                                                                                        >
+                                                                                                            {deviceActionSubmittingKey === pairingKey ? <Loader2 size={13} className="animate-spin" /> : <KeyRound size={13} />}
+                                                                                                            Generar codigo
+                                                                                                        </button>
+                                                                                                    ) : null}
+                                                                                                    <button
+                                                                                                        type="button"
+                                                                                                        onClick={() => void handleReauthorizeAttempt(terminal, attempt)}
+                                                                                                        disabled={deviceActionSubmittingKey === reauthorizeKey}
+                                                                                                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-60"
+                                                                                                    >
+                                                                                                        {deviceActionSubmittingKey === reauthorizeKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
+                                                                                                        Reautorizar
+                                                                                                    </button>
+                                                                                                </div>
+                                                                                            ) : (
+                                                                                                <span className="text-slate-400">Sin accion</span>
+                                                                                            )}
+                                                                                        </td>
+                                                                                    </tr>
+                                                                                    {generatedPairingCode ? (
+                                                                                        <tr>
+                                                                                            <td colSpan={6} className="px-3 pb-3">
+                                                                                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                                                                                                    <p className="text-[11px] font-bold uppercase tracking-wider">Codigo de vinculacion para escribir en el POS</p>
+                                                                                                    <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                                                                                        <p className="font-mono text-lg font-black tracking-widest">{generatedPairingCode}</p>
+                                                                                                        <p className="text-xs font-semibold">
+                                                                                                            {generatedPairingExpiresAt
+                                                                                                                ? `Vence: ${formatDateTime(generatedPairingExpiresAt)}`
+                                                                                                                : generatedPairing.ttlSeconds || generatedPairing.ttl_seconds
+                                                                                                                    ? `Vence en ${generatedPairing.ttlSeconds || generatedPairing.ttl_seconds} segundos`
+                                                                                                                    : 'Usalo antes de que expire.'}
+                                                                                                        </p>
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            </td>
+                                                                                        </tr>
+                                                                                    ) : null}
+                                                                                </React.Fragment>
                                                                             );
                                                                         })}
                                                                     </tbody>
@@ -2338,8 +3024,10 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                     ) : null}
                                                 </div>
+                                                ) : null}
 
-                                                <div className={`mt-5 rounded-2xl border px-4 py-4 ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
+                                                {activeTerminalTab === 'erp' ? (
+                                                <div className={`mx-5 mt-5 rounded-2xl border px-4 py-4 ${getReadinessBadgeClasses(erpReadinessStatus)}`}>
                                                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                         <div>
                                                             <p className="text-xs font-bold uppercase tracking-wider">Preparacion ERP</p>
@@ -2349,16 +3037,34 @@ export const Tenants: React.FC = () => {
                                                                     POS vinculado, pero el contexto ERP aun no esta listo.
                                                                 </p>
                                                             ) : null}
+                                                            {profileIncomplete ? (
+                                                                <p className="mt-2 rounded-xl border border-amber-200 bg-white/80 px-3 py-2 text-sm font-semibold text-amber-800">
+                                                                    Perfil ERP de terminal incompleto. Los documentos pueden quedar pendientes hasta preparar la terminal.
+                                                                </p>
+                                                            ) : null}
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => void handleRetryErpReadiness(terminal)}
-                                                            disabled={isReadinessSubmitting}
-                                                            className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
-                                                        >
-                                                            {isReadinessSubmitting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
-                                                            Reintentar preparacion ERP
-                                                        </button>
+                                                        <div className="flex flex-col gap-2 sm:flex-row">
+                                                            {profileIncomplete ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handlePrepareErpProfile(terminal)}
+                                                                    disabled={isReadinessSubmitting}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:opacity-60"
+                                                                >
+                                                                    {isReadinessSubmitting ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                                                                    Preparar perfil ERP
+                                                                </button>
+                                                            ) : null}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => void handleRetryErpReadiness(terminal)}
+                                                                disabled={isReadinessSubmitting}
+                                                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-current bg-white/80 px-4 py-2 text-sm font-bold shadow-sm hover:bg-white transition-colors disabled:opacity-60"
+                                                            >
+                                                                {isReadinessSubmitting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                Reintentar preparacion ERP
+                                                            </button>
+                                                        </div>
                                                     </div>
 
                                                     <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-sm">
@@ -2367,16 +3073,48 @@ export const Tenants: React.FC = () => {
                                                             <p className="mt-1 font-mono break-all">{erpTenantId || 'No vinculado'}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Tenant</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(tenantReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Compania</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(companyReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Sucursal</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(storeReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal ERP</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(terminalReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal profile</p>
                                                             <p className="mt-1 font-bold uppercase">{profileStatus}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
-                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Catalogo</p>
-                                                            <p className="mt-1 font-bold">{getCheckLabel(catalogReady, 'Disponible', 'Vacio / faltante')}</p>
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Perfil</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(profileReady, 'OK', 'DRAFT / faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Impuestos</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(taxesReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Metodos de pago</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(paymentMethodsReady, 'OK', 'Faltante')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Almacenes</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(warehousesReady, 'OK', 'Faltante')}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Secuencias</p>
-                                                            <p className="mt-1 font-bold">{getCheckLabel(seriesReady, 'Disponibles', 'Faltantes')}</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(documentSeriesReady, 'Disponibles', 'Faltantes')}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Articulos</p>
+                                                            <p className="mt-1 font-bold">{getCheckLabel(itemsReady, 'Disponibles', 'Vacio / faltante')}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2 md:col-span-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo evento sync</p>
@@ -2393,8 +3131,124 @@ export const Tenants: React.FC = () => {
                                                         </p>
                                                     ) : null}
                                                 </div>
+                                                ) : null}
 
-                                                {isFiscalEligibleTenant(selectedTenantForTerminals) ? (
+                                                {activeTerminalTab === 'sync' ? (
+                                                    <div className="mt-5 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+                                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                                            <div>
+                                                                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Centro de Sincronizacion</p>
+                                                                <p className="mt-1 text-sm text-slate-600">
+                                                                    Pendientes de esta terminal, con reparacion guiada cuando el ERP reporte ERP_CONTEXT_MISSING.
+                                                                </p>
+                                                                {syncPending.message ? (
+                                                                    <p className="mt-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{syncPending.message}</p>
+                                                                ) : null}
+                                                                {profileIncomplete ? (
+                                                                    <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                                                                        Terminal sin perfil ERP listo. No se permite reintento masivo hasta preparar el perfil.
+                                                                    </p>
+                                                                ) : null}
+                                                            </div>
+                                                            <div className="flex flex-col gap-2 sm:flex-row">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void loadTerminalSyncPending(selectedTenantForTerminals.id, terminal)}
+                                                                    disabled={isSyncLoading}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-60"
+                                                                >
+                                                                    {isSyncLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                    Actualizar pendientes
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void handleRetryTerminalPending(terminal)}
+                                                                    disabled={profileIncomplete || syncBulkSubmitting || repairableSyncCount === 0}
+                                                                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                                                >
+                                                                    {syncBulkSubmitting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                                                                    Reintentar pendientes de esta terminal
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                                                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Documentos pendientes</p>
+                                                                <p className="mt-1 text-2xl font-black text-slate-800">{syncPending.summary.pending}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-amber-600">Reparables</p>
+                                                                <p className="mt-1 text-2xl font-black text-amber-800">{repairableSyncCount}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-red-600">Error funcional</p>
+                                                                <p className="mt-1 text-2xl font-black text-red-800">{functionalSyncErrorCount}</p>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-200">
+                                                            <table className="min-w-full divide-y divide-slate-100 text-sm">
+                                                                <thead className="bg-slate-50 text-left text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                                                    <tr>
+                                                                        <th className="px-4 py-3">Documento</th>
+                                                                        <th className="px-4 py-3">Fecha</th>
+                                                                        <th className="px-4 py-3">Causa</th>
+                                                                        <th className="px-4 py-3">Estado</th>
+                                                                        <th className="px-4 py-3 text-right">Accion</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-slate-100 bg-white">
+                                                                    {syncPending.documents.length ? syncPending.documents.map((document, index) => {
+                                                                        const documentId = getSyncDocumentId(document);
+                                                                        const documentKey = documentId || `${getSyncDocumentFolio(document)}-${index}`;
+                                                                        const errorCode = getSyncDocumentErrorCode(document);
+                                                                        const repairable = isRepairableSyncDocument(document, erpReadiness);
+                                                                        const submittingDocument = syncRetrySubmittingKey === `${terminalKey}-${documentId}`;
+                                                                        return (
+                                                                            <tr key={documentKey}>
+                                                                                <td className="px-4 py-3 font-mono font-bold text-slate-700">{getSyncDocumentFolio(document)}</td>
+                                                                                <td className="px-4 py-3 text-slate-500">{formatDateTime(getSyncDocumentCreatedAt(document))}</td>
+                                                                                <td className="px-4 py-3">
+                                                                                    <span className={`rounded-full px-2 py-1 text-[11px] font-bold uppercase ${
+                                                                                        repairable ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                                                                                    }`}>
+                                                                                        {repairable ? 'Terminal sin perfil ERP listo' : errorCode || 'Pendiente'}
+                                                                                    </span>
+                                                                                    {document.message ? <p className="mt-1 text-xs text-slate-500">{document.message}</p> : null}
+                                                                                </td>
+                                                                                <td className="px-4 py-3 text-slate-600">{document.status || 'Pendiente'}</td>
+                                                                                <td className="px-4 py-3 text-right">
+                                                                                    {repairable ? (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => void handlePrepareAndRetryDocument(terminal, document)}
+                                                                                            disabled={submittingDocument || !documentId}
+                                                                                            className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:opacity-60"
+                                                                                        >
+                                                                                            {submittingDocument ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                                                                                            Preparar terminal y reenviar
+                                                                                        </button>
+                                                                                    ) : (
+                                                                                        <span className="text-xs text-slate-400">Sin accion</span>
+                                                                                    )}
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    }) : (
+                                                                        <tr>
+                                                                            <td colSpan={5} className="px-4 py-8 text-center text-sm font-semibold text-slate-400">
+                                                                                {isSyncLoading ? 'Cargando pendientes...' : 'No hay documentos pendientes reportados.'}
+                                                                            </td>
+                                                                        </tr>
+                                                                    )}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    </div>
+                                                ) : null}
+
+                                                {activeTerminalTab === 'fiscal' && isFiscalEligibleTenant(selectedTenantForTerminals) ? (
                                                     <div className={`mx-5 mt-5 rounded-2xl border px-4 py-4 ${fiscalStatusClasses}`}>
                                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                                             <div>
@@ -2472,8 +3326,8 @@ export const Tenants: React.FC = () => {
                                                     </div>
                                                 ) : null}
 
-                                                {isLocalPosTenant(selectedTenantForTerminals) ? (
-                                                    <div className={`mt-5 rounded-2xl border px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between ${
+                                                {activeTerminalTab === 'summary' && isLocalPosTenant(selectedTenantForTerminals) ? (
+                                                    <div className={`mx-5 mt-5 rounded-2xl border px-4 py-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between ${
                                                         isExplicitOfflinePosTenant(selectedTenantForTerminals)
                                                             ? 'border-slate-200 bg-slate-50'
                                                             : 'border-amber-200 bg-amber-50'

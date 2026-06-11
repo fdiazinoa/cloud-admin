@@ -81,6 +81,7 @@ export interface Terminal {
     device_token?: string | null;
     device_id?: string | null;
     current_device_id?: string | null;
+    code?: string | null;
     name?: string | null;
     terminal_name?: string | null;
     label?: string | null;
@@ -162,6 +163,49 @@ export interface TenantTerminalErpReadiness {
     [key: string]: unknown;
 }
 
+export interface TerminalSyncDocument {
+    id?: string | null;
+    folio?: string | null;
+    sequence?: string | number | null;
+    document_no?: string | null;
+    documentNo?: string | null;
+    terminal_id?: string | null;
+    terminalId?: string | null;
+    status?: string | null;
+    error_code?: string | null;
+    errorCode?: string | null;
+    message?: string | null;
+    readiness?: TenantTerminalErpReadiness | null;
+    created_at?: string | null;
+    createdAt?: string | null;
+    updated_at?: string | null;
+    updatedAt?: string | null;
+    retryable?: boolean | null;
+    [key: string]: unknown;
+}
+
+export interface TerminalSyncPendingSummary {
+    pending: number;
+    repairable: number;
+    functionalErrors: number;
+}
+
+export interface TerminalSyncPendingResult {
+    status: string;
+    documents: TerminalSyncDocument[];
+    summary: TerminalSyncPendingSummary;
+    message?: string | null;
+}
+
+export interface TerminalSyncRetryResult {
+    status: string;
+    message?: string | null;
+    retried?: number | null;
+    succeeded?: number | null;
+    failed?: number | null;
+    results?: unknown[];
+}
+
 export interface TenantTerminalSnapshot {
     id: string;
     tenant_id: string;
@@ -173,6 +217,8 @@ export interface TenantTerminalSnapshot {
     created_at?: string | null;
     erp_terminal_uuid?: string | null;
     erp_current_device_id?: string | null;
+    erp_app_version?: string | null;
+    erp_app_version_code?: number | null;
     registry?: TenantTerminalRegistryEntry | null;
     registries: TenantTerminalRegistryEntry[];
 }
@@ -207,6 +253,21 @@ export interface TerminalAuthAttempt {
     created_at?: string | null;
     pairing_required?: boolean | null;
     metadata?: Record<string, unknown> | null;
+}
+
+export interface TerminalPairingCodeResult {
+    status: string;
+    success?: boolean;
+    pairingCode?: string | null;
+    pairing_code?: string | null;
+    code?: string | null;
+    expiresAt?: string | null;
+    expires_at?: string | null;
+    ttlSeconds?: number | null;
+    ttl_seconds?: number | null;
+    cleared_registry_count?: number | null;
+    cleared_device_ids?: string[] | null;
+    message?: string;
 }
 
 export type TerminalFiscalStatus = 'MISSING' | 'READY' | 'DEMO_READY' | 'ERROR';
@@ -276,6 +337,7 @@ export type CloudAdminPermissionKey =
     | 'support'
     | 'improvements'
     | 'apk'
+    | 'observability'
     | 'terminal_recovery'
     | 'billing'
     | 'settings'
