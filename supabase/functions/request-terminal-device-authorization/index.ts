@@ -376,6 +376,8 @@ async function loadRegistry(
         .select('*')
         .eq('tenant_id', tenantId)
         .eq('terminal_id', terminalId)
+        .order('last_seen_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
     if (error) throw error;
     return data as RegistryRecord | null;
@@ -463,7 +465,10 @@ Deno.serve(async (request) => {
         terminalQuery = isUuid(terminalId)
             ? terminalQuery.eq('id', terminalId)
             : terminalQuery.eq('code', terminalName || registry?.terminal_name || terminalId);
-        const { data: terminalData, error: terminalError } = await terminalQuery.maybeSingle();
+        const { data: terminalData, error: terminalError } = await terminalQuery
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
         if (terminalError) throw terminalError;
         const publicTerminal = terminalData as PublicTerminalRecord | null;
         if (publicTerminal?.id) terminalId = publicTerminal.id;
