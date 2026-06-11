@@ -84,6 +84,10 @@ function getEnv(...names: string[]) {
     throw new Error(`Missing required environment variable: ${names.join(' or ')}`);
 }
 
+function isUuid(value: string | null | undefined): boolean {
+    return Boolean(value?.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i));
+}
+
 function sanitizePayload(value: unknown): unknown {
     if (Array.isArray(value)) return value.map((item) => sanitizePayload(item));
     if (!value || typeof value !== 'object') return value;
@@ -241,7 +245,7 @@ Deno.serve(async (request) => {
 
         const body = await request.json().catch(() => ({})) as DeviceActionRequest;
         const tenantId = body.tenant_id?.trim();
-        const terminalId = body.terminal_id?.trim();
+        let terminalId = body.terminal_id?.trim();
         const registryId = body.registry_id?.trim() || null;
         const terminalName = body.terminal_name?.trim() || null;
         const deviceId = body.device_id?.trim();
@@ -285,15 +289,34 @@ Deno.serve(async (request) => {
         }
 
         const registry = await loadRegistry(supabase, tenantId, terminalId, registryId);
-        const { data: terminalData, error: terminalError } = await supabase
-            .schema('public')
-            .from('terminals')
-            .select('id,tenant_id,device_token,name,is_active')
-            .eq('tenant_id', tenantId)
-            .eq('id', terminalId)
-            .maybeSingle();
-        if (terminalError) throw terminalError;
-        const publicTerminal = terminalData as PublicTerminalRecord | null;
+        let publicTerminal: PublicTerminalRecord | null = null;
+
+        if (isUuid(terminalId)) {
+            const { data: terminalData, error: terminalError } = await supabase
+                .schema('public')
+                .from('terminals')
+                .select('id,tenant_id,device_token,name,is_active')
+                .eq('tenant_id', tenantId)
+                .eq('id', terminalId)
+                .maybeSingle();
+            if (terminalError) throw terminalError;
+            publicTerminal = terminalData as PublicTerminalRecord | null;
+        } else {
+            const lookupName = terminalName || registry?.terminal_name || terminalId;
+            if (lookupName) {
+                const { data: terminalData, error: terminalError } = await supabase
+                    .schema('public')
+                    .from('terminals')
+                    .select('id,tenant_id,device_token,name,is_active')
+                    .eq('tenant_id', tenantId)
+                    .ilike('name', lookupName)
+                    .limit(1)
+                    .maybeSingle();
+                if (terminalError) throw terminalError;
+                publicTerminal = terminalData as PublicTerminalRecord | null;
+                if (publicTerminal?.id) terminalId = publicTerminal.id;
+            }
+        }
 
         if (!registry && !publicTerminal) {
             return json({ error: 'TERMINAL_NOT_FOUND', message: 'Terminal no encontrada para este tenant.' }, 404);

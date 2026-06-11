@@ -447,7 +447,9 @@ export const Tenants: React.FC = () => {
         return semantics.contractedProduct === 'POS_ERP' || semantics.cloudChannel === 'ERP_ACTIVE';
     };
 
-    const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => terminal.terminal_id || terminal.id;
+    const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => (
+        terminal.erp_terminal_uuid || terminal.terminal_id || terminal.id
+    );
 
     const getTakeoverSelectionKey = (terminalId: string, registryId?: string | null) => (
         registryId ? `registry:${registryId}` : `terminal:${terminalId}`
@@ -472,7 +474,7 @@ export const Tenants: React.FC = () => {
         }
 
         return registries.map((registry) => {
-            const terminalId = registry.terminal_id || getTerminalTakeoverId(terminal);
+            const terminalId = getTerminalTakeoverId(terminal) || registry.terminal_id || '';
             const deviceId = registry.current_device_id || registry.device_id || terminal.device_token || 'N/D';
             return {
                 key: getTakeoverSelectionKey(terminalId, registry.id),
