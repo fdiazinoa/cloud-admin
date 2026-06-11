@@ -151,7 +151,7 @@ function getErrorMessage(status: number, payload: unknown) {
         return 'Este POS intenta usar una terminal que esta autorizada para otro equipo. Puedes reautorizar este equipo si realmente reemplazaste el dispositivo.';
     }
     if (code === 'PAIRING_CODE_INVALID' || code === 'INVALID_PAIRING_CODE') {
-        return 'El codigo de vinculacion no es valido.';
+        return 'El ERP rechazo la autorizacion del device.';
     }
     if (code === 'LICENSE_NOT_ALLOWED') {
         return 'La licencia actual no permite reautorizar esta terminal.';

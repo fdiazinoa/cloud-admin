@@ -65,7 +65,7 @@ export const Tenants: React.FC = () => {
     const [authAttemptsByTerminal, setAuthAttemptsByTerminal] = useState<Record<string, TerminalAuthAttempt[]>>({});
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
-    const [manualPairingDeviceIds, setManualPairingDeviceIds] = useState<Record<string, string>>({});
+    const [manualDeviceIds, setManualDeviceIds] = useState<Record<string, string>>({});
     const [posLicenseSeats, setPosLicenseSeats] = useState<TenantPosLicenseSeats | null>(null);
     const [fiscalReadinessByTerminal, setFiscalReadinessByTerminal] = useState<Record<string, TerminalFiscalReadiness>>({});
     const [fiscalReadinessLoadingKey, setFiscalReadinessLoadingKey] = useState<string | null>(null);
@@ -660,7 +660,7 @@ export const Tenants: React.FC = () => {
         if (status === 'ATTENTION') return 'Requiere atención';
         if (status === 'AUTH_REQUIRED') return 'Requiere autorización';
         if (status === 'OFFLINE') return 'Offline';
-        return 'Pendiente de vinculación';
+        return 'Pendiente de autorizacion';
     };
 
     const getOperationalStatusClasses = (status: string) => {
@@ -1252,7 +1252,7 @@ export const Tenants: React.FC = () => {
         }
 
         const confirmation = prompt(
-            `Esta accion eliminara solo los devices/vinculaciones de ${terminal.name} (${terminalId}). `
+            `Esta accion eliminara solo autorizaciones de devices de ${terminal.name} (${terminalId}). `
             + 'No borra ventas, maestros, secuencias ni configuracion fiscal. Escribe LIMPIAR para confirmar.',
         );
         if (confirmation !== 'LIMPIAR') return;
@@ -2369,12 +2369,11 @@ export const Tenants: React.FC = () => {
                                         const activeTerminalTab = terminalTabOptions.some((tab) => tab.key === requestedTerminalTab)
                                             ? requestedTerminalTab
                                             : 'summary';
-                                        const pairingCandidateDeviceId = lastRejectedDeviceId
+                                        const detectedAuthorizationDeviceId = lastRejectedDeviceId
                                             || (posReportedDeviceId && posReportedDeviceId !== authorizedDeviceId ? posReportedDeviceId : '');
-                                        const manualPairingDeviceId = pairingCandidateDeviceId
-                                            || manualPairingDeviceIds[terminalKey]?.trim()
-                                            || '';
-                                        const manualAuthorizeKey = manualPairingDeviceId ? `${terminalKey}-TAKEOVER-${manualPairingDeviceId}` : '';
+                                        const manualDeviceId = manualDeviceIds[terminalKey]?.trim() || '';
+                                        const authorizationDeviceId = detectedAuthorizationDeviceId || manualDeviceId;
+                                        const manualAuthorizeKey = authorizationDeviceId ? `${terminalKey}-TAKEOVER-${authorizationDeviceId}` : '';
 
                                         return (
                                             <div key={`${terminal.id}`} className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col">
@@ -2473,7 +2472,7 @@ export const Tenants: React.FC = () => {
                                                                     Cloud-Admin muestra autorizacion, heartbeat del POS y device actual reportado por ERP por separado.
                                                                 </p>
                                                             </div>
-                                                            {(isAdvancedOpen || hasActionableAuthIssue || posOnlyProvisioningBlocked || needsAuthorizedDeviceSync || manualPairingDeviceId || !hasOnlineRegistry) ? (
+                                                            {(isAdvancedOpen || hasActionableAuthIssue || posOnlyProvisioningBlocked || needsAuthorizedDeviceSync || detectedAuthorizationDeviceId || !hasOnlineRegistry) ? (
                                                             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
                                                                 {posOnlyProvisioningBlocked ? (
                                                                     <button
@@ -2505,15 +2504,15 @@ export const Tenants: React.FC = () => {
                                                                     {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
                                                                     Actualizar intentos
                                                                 </button>
-                                                                {manualPairingDeviceId ? (
+                                                                {detectedAuthorizationDeviceId ? (
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualPairingDeviceId)}
+                                                                        onClick={() => void handleAuthorizeDeviceForManualInput(terminal, detectedAuthorizationDeviceId)}
                                                                         disabled={deviceActionSubmittingKey === manualAuthorizeKey}
                                                                         className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-900 shadow-sm hover:bg-amber-100 transition-colors disabled:opacity-60"
                                                                     >
                                                                         {deviceActionSubmittingKey === manualAuthorizeKey ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
-                                                                        Autorizar device
+                                                                        Autorizar device detectado
                                                                     </button>
                                                                 ) : null}
                                                                 <button
@@ -2528,37 +2527,6 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                             ) : null}
                                                         </div>
-
-                                                        {!pairingCandidateDeviceId ? (
-                                                            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
-                                                                <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Device del POS para vinculacion</p>
-                                                                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                                                                    <input
-                                                                        type="text"
-                                                                        value={manualPairingDeviceIds[terminalKey] || ''}
-                                                                        onChange={(event) => setManualPairingDeviceIds((current) => ({
-                                                                            ...current,
-                                                                            [terminalKey]: event.target.value.toUpperCase(),
-                                                                        }))}
-                                                                        placeholder="Ej. DEV-D31OAKBD"
-                                                                        className="min-w-0 flex-1 rounded-xl border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-slate-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
-                                                                    />
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualPairingDeviceIds[terminalKey] || '')}
-                                                                        disabled={!manualPairingDeviceId || deviceActionSubmittingKey === manualAuthorizeKey}
-                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                                                                    >
-                                                                        {deviceActionSubmittingKey === manualAuthorizeKey ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
-                                                                        Autorizar device
-                                                                    </button>
-                                                                </div>
-                                                                <p className="mt-2 text-xs text-amber-800">
-                                                                    Usalo cuando el POS muestra un device_id, pero Cloud-Admin aun no tiene registros o intentos rechazados para esta terminal.
-                                                                </p>
-                                                            </div>
-                                                        ) : null}
-
                                                         {hasVisibleMismatchWarning ? (
                                                             <div className="mt-4 rounded-xl border border-red-300 bg-red-50 px-3 py-3 text-sm font-semibold text-red-800">
                                                                 {identity.mismatchWarning}
@@ -2623,7 +2591,7 @@ export const Tenants: React.FC = () => {
                                                         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                                             <div>
                                                                 <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dispositivos registrados y roles</h5>
-                                                                <p className="mt-1 text-xs text-slate-500">Limpia solo vinculaciones de prueba; no borra ventas, maestros, fiscal ni secuencias.</p>
+                                                                <p className="mt-1 text-xs text-slate-500">Limpia solo autorizaciones de devices de prueba; no borra ventas, maestros, fiscal ni secuencias.</p>
                                                             </div>
                                                             <button
                                                                 type="button"
@@ -2637,22 +2605,22 @@ export const Tenants: React.FC = () => {
                                                         </div>
                                                         {identity.deviceRows.length === 0 ? (
                                                             <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
-                                                                <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Vincular device nuevo</p>
+                                                                <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Fallback tecnico: autorizar device reportado</p>
                                                                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                                                                     <input
                                                                         type="text"
-                                                                        value={manualPairingDeviceIds[terminalKey] || ''}
-                                                                        onChange={(event) => setManualPairingDeviceIds((current) => ({
+                                                                        value={manualDeviceIds[terminalKey] || ''}
+                                                                        onChange={(event) => setManualDeviceIds((current) => ({
                                                                             ...current,
                                                                             [terminalKey]: event.target.value.toUpperCase(),
                                                                         }))}
-                                                                        placeholder="Pega el device_id del POS, ej. DEV-D31OAKBD"
+                                                                        placeholder="Device reportado por el POS, ej. DEV-D31OAKBD"
                                                                         className="min-w-0 flex-1 rounded-xl border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-slate-800 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
                                                                     />
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualPairingDeviceIds[terminalKey] || '')}
-                                                                        disabled={!manualPairingDeviceId || deviceActionSubmittingKey === manualAuthorizeKey}
+                                                                        onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualDeviceIds[terminalKey] || '')}
+                                                                        disabled={!manualDeviceId || deviceActionSubmittingKey === manualAuthorizeKey}
                                                                         className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                                                                     >
                                                                         {deviceActionSubmittingKey === manualAuthorizeKey ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
@@ -2660,7 +2628,7 @@ export const Tenants: React.FC = () => {
                                                                     </button>
                                                                 </div>
                                                                 <p className="mt-2 text-xs text-amber-800">
-                                                                    Escribe el device que muestra el POS para autorizarlo sin codigo manual.
+                                                                    Usar solo si el ERP todavia no reporto el intento rechazado.
                                                                 </p>
                                                             </div>
                                                         ) : null}
@@ -2803,15 +2771,15 @@ export const Tenants: React.FC = () => {
                                                         {authAttempts.length === 0 ? (
                                                             <div className="px-3 py-4 text-sm opacity-75">
                                                                 <p>No hay intentos rechazados reportados por ERP para esta terminal.</p>
-                                                                {manualPairingDeviceId ? (
+                                                                {manualDeviceId ? (
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualPairingDeviceId)}
+                                                                        onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualDeviceId)}
                                                                         disabled={deviceActionSubmittingKey === manualAuthorizeKey}
                                                                         className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-60"
                                                                     >
                                                                         {deviceActionSubmittingKey === manualAuthorizeKey ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                                                                        Autorizar {manualPairingDeviceId}
+                                                                        Autorizar {manualDeviceId}
                                                                     </button>
                                                                 ) : null}
                                                             </div>
