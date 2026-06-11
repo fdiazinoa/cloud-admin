@@ -13,7 +13,10 @@ type DeviceAction =
     | 'REVOKE_DEVICE'
     | 'SYNC_AUTHORIZED_DEVICE'
     | 'GENERATE_PAIRING_CODE'
-    | 'CLEAR_TERMINAL_DEVICES';
+    | 'CLEAR_TERMINAL_DEVICES'
+    | 'TAKEOVER_AUTHORIZED'
+    | 'DEVICE_REVOKED'
+    | 'DUPLICATE_PREVENTED';
 
 interface DeviceActionRequest {
     tenant_id?: string;
@@ -291,9 +294,55 @@ async function loadRegistry(
         .select('*')
         .eq('tenant_id', tenantId)
         .eq('terminal_id', terminalId)
+        .order('last_seen_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
     if (error) throw error;
     return data as RegistryRecord | null;
+}
+
+async function archiveDuplicateRegistriesForTerminal(
+    supabase: ReturnType<typeof createClient>,
+    tenantId: string,
+    terminalId: string,
+    terminalCode: string | null,
+    keepRegistryId: string | null | undefined,
+    previousDeviceId: string | null | undefined,
+) {
+    const { data, error } = await supabase
+        .from('tenant_server_registry')
+        .select('id,terminal_id,terminal_name,device_id,current_device_id,authorized_device_id')
+        .eq('tenant_id', tenantId);
+    if (error) throw error;
+
+    const rows = (Array.isArray(data) ? data as RegistryRecord[] : []).filter((row) => {
+        if (!row.id || row.id === keepRegistryId) return false;
+        const rowTerminalId = row.terminal_id?.trim() || '';
+        const rowTerminalName = row.terminal_name?.trim() || '';
+        return rowTerminalId === terminalId
+            || Boolean(terminalCode && rowTerminalId.toUpperCase() === terminalCode.toUpperCase())
+            || Boolean(terminalCode && rowTerminalName.toUpperCase() === terminalCode.toUpperCase());
+    });
+
+    const ids = rows.map((row) => row.id).filter(Boolean);
+    if (ids.length === 0) return [];
+
+    const archivedAt = new Date().toISOString();
+    const { error: updateError } = await supabase
+        .from('tenant_server_registry')
+        .update({
+            status: 'OFFLINE',
+            auth_status: 'OLD_DEVICE_REVOKED',
+            is_revoked: true,
+            revocation_reason: 'POS_ERP_TERMINAL_TAKEOVER_SUPERSEDED',
+            requires_pos_reauth: true,
+            previous_device_id: previousDeviceId || null,
+            updated_at: archivedAt,
+        })
+        .in('id', ids);
+    if (updateError) throw updateError;
+
+    return ids;
 }
 
 Deno.serve(async (request) => {
@@ -315,7 +364,7 @@ Deno.serve(async (request) => {
 
         const body = await request.json().catch(() => ({})) as DeviceActionRequest;
         const tenantId = body.tenant_id?.trim();
-        const terminalId = body.terminal_id?.trim();
+        let terminalId = body.terminal_id?.trim();
         const registryId = body.registry_id?.trim() || null;
         const terminalName = body.terminal_name?.trim() || null;
         const deviceId = body.device_id?.trim();
@@ -369,10 +418,15 @@ Deno.serve(async (request) => {
             .eq('tenant_id', tenantId);
         terminalQuery = isUuid(terminalId)
             ? terminalQuery.eq('id', terminalId)
-            : terminalQuery.eq('code', terminalId);
-        const { data: terminalData, error: terminalError } = await terminalQuery.maybeSingle();
+            : terminalQuery.eq('code', terminalName || registry?.terminal_name || terminalId);
+        const { data: terminalData, error: terminalError } = await terminalQuery
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
         if (terminalError) throw terminalError;
         const publicTerminal = terminalData as PublicTerminalRecord | null;
+        if (publicTerminal?.id) terminalId = publicTerminal.id;
+        const terminalDisplayCode = publicTerminal?.code || terminalName || registry?.terminal_name || null;
 
         if (!registry && !publicTerminal) {
             return json({ error: 'TERMINAL_NOT_FOUND', message: 'Terminal no encontrada para este tenant.' }, 404);
@@ -381,12 +435,19 @@ Deno.serve(async (request) => {
         if (action === 'CLEAR_TERMINAL_DEVICES') {
             const { data: registryRows, error: registryRowsError } = await supabase
                 .from('tenant_server_registry')
-                .select('id,device_id,current_device_id,authorized_device_id,previous_device_id,last_rejected_device_id,terminal_name,status,auth_status')
+                .select('id,terminal_id,device_id,current_device_id,authorized_device_id,previous_device_id,last_rejected_device_id,terminal_name,status,auth_status')
                 .eq('tenant_id', tenantId)
-                .eq('terminal_id', terminalId);
+                .order('last_seen_at', { ascending: false });
             if (registryRowsError) throw registryRowsError;
 
-            const rows = Array.isArray(registryRows) ? registryRows as RegistryRecord[] : [];
+            const rows = (Array.isArray(registryRows) ? registryRows as RegistryRecord[] : []).filter((row) => {
+                const rowTerminalId = row.terminal_id?.trim() || '';
+                const rowTerminalName = row.terminal_name?.trim() || '';
+                return rowTerminalId === terminalId
+                    || Boolean(terminalDisplayCode && rowTerminalId.toUpperCase() === terminalDisplayCode.toUpperCase())
+                    || Boolean(terminalDisplayCode && rowTerminalName.toUpperCase() === terminalDisplayCode.toUpperCase());
+            });
+            const registryIds = rows.map((row) => row.id).filter(Boolean);
             const clearedDeviceIds = Array.from(new Set(
                 rows
                     .flatMap((row) => [
@@ -399,17 +460,21 @@ Deno.serve(async (request) => {
                     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0),
             ));
 
-            const { error: deleteError, count } = await supabase
-                .from('tenant_server_registry')
-                .delete({ count: 'exact' })
-                .eq('tenant_id', tenantId)
-                .eq('terminal_id', terminalId);
-            if (deleteError) throw deleteError;
+            let count = 0;
+            if (registryIds.length > 0) {
+                const { error: deleteError, count: deletedCount } = await supabase
+                    .from('tenant_server_registry')
+                    .delete({ count: 'exact' })
+                    .eq('tenant_id', tenantId)
+                    .in('id', registryIds);
+                if (deleteError) throw deleteError;
+                count = deletedCount || 0;
+            }
 
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+                terminal_name: terminalDisplayCode,
                 old_device_id: clearedDeviceIds.join(', ') || null,
                 new_device_id: null,
                 action: 'CLEAR_TERMINAL_DEVICES',
@@ -417,10 +482,11 @@ Deno.serve(async (request) => {
                 reason,
                 result: 'SUCCESS',
                 metadata: {
-                    registry_ids: rows.map((row) => row.id).filter(Boolean),
+                    registry_ids: registryIds,
                     cleared_registry_count: count || 0,
                     cleared_device_ids: clearedDeviceIds,
                     public_terminal_preserved: Boolean(publicTerminal?.id),
+                    action_result: 'duplicate_ignored',
                     preserved: [
                         'public.terminals row',
                         'sales',
@@ -670,6 +736,8 @@ Deno.serve(async (request) => {
 
         if (registry?.id) {
             const registryUpdate: Record<string, unknown> = {
+                terminal_id: terminalId,
+                terminal_name: terminalDisplayCode,
                 device_id: newAuthorizedDeviceId,
                 current_device_id: newAuthorizedDeviceId,
                 authorized_device_id: newAuthorizedDeviceId,
@@ -693,10 +761,21 @@ Deno.serve(async (request) => {
             if (updateError) throw updateError;
         }
 
+        const archivedDuplicateRegistryIds = action === 'TAKEOVER'
+            ? await archiveDuplicateRegistriesForTerminal(
+                supabase,
+                tenantId,
+                terminalId,
+                terminalDisplayCode,
+                registry?.id,
+                previousDeviceId,
+            )
+            : [];
+
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
-            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            terminal_name: terminalDisplayCode,
             old_device_id: previousDeviceId,
             new_device_id: newAuthorizedDeviceId,
             action,
@@ -709,8 +788,31 @@ Deno.serve(async (request) => {
                 deviceTokenIssued,
                 deviceTokenStatus,
                 tokenPreview,
+                action_result: registry?.id ? 'updated_existing' : 'updated_existing_no_local_registry',
+                codeless_authorization: true,
+                archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
             },
         });
+
+        if (archivedDuplicateRegistryIds.length > 0) {
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalDisplayCode,
+                old_device_id: previousDeviceId,
+                new_device_id: newAuthorizedDeviceId,
+                action: 'DUPLICATE_PREVENTED',
+                performed_by: performedBy,
+                reason: 'Archive duplicate registry rows after POS+ERP terminal takeover.',
+                result: 'SUCCESS',
+                erp_response_status: erpResponse.status,
+                metadata: {
+                    archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
+                    canonical_erp_terminal_id: terminalId,
+                    authorized_device_id: newAuthorizedDeviceId,
+                },
+            });
+        }
 
         return json({
             status: 'success',

@@ -486,7 +486,7 @@ export const Tenants: React.FC = () => {
         }
 
         return registries.map((registry) => {
-            const terminalId = registry.terminal_id || getTerminalTakeoverId(terminal);
+            const terminalId = getTerminalTakeoverId(terminal) || registry.terminal_id || '';
             const deviceId = registry.current_device_id || registry.device_id || terminal.device_token || 'N/D';
             return {
                 key: getTakeoverSelectionKey(terminalId, registry.id),
