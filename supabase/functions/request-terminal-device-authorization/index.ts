@@ -13,7 +13,10 @@ type DeviceAction =
     | 'REVOKE_DEVICE'
     | 'SYNC_AUTHORIZED_DEVICE'
     | 'GENERATE_PAIRING_CODE'
-    | 'CLEAR_TERMINAL_DEVICES';
+    | 'CLEAR_TERMINAL_DEVICES'
+    | 'TAKEOVER_AUTHORIZED'
+    | 'DEVICE_REVOKED'
+    | 'DUPLICATE_PREVENTED';
 
 interface DeviceActionRequest {
     tenant_id?: string;
@@ -381,6 +384,50 @@ async function loadRegistry(
         .maybeSingle();
     if (error) throw error;
     return data as RegistryRecord | null;
+}
+
+async function archiveDuplicateRegistriesForTerminal(
+    supabase: ReturnType<typeof createClient>,
+    tenantId: string,
+    terminalId: string,
+    terminalCode: string | null,
+    keepRegistryId: string | null | undefined,
+    previousDeviceId: string | null | undefined,
+) {
+    const { data, error } = await supabase
+        .from('tenant_server_registry')
+        .select('id,terminal_id,terminal_name,device_id,current_device_id,authorized_device_id')
+        .eq('tenant_id', tenantId);
+    if (error) throw error;
+
+    const rows = (Array.isArray(data) ? data as RegistryRecord[] : []).filter((row) => {
+        if (!row.id || row.id === keepRegistryId) return false;
+        const rowTerminalId = row.terminal_id?.trim() || '';
+        const rowTerminalName = row.terminal_name?.trim() || '';
+        return rowTerminalId === terminalId
+            || Boolean(terminalCode && rowTerminalId.toUpperCase() === terminalCode.toUpperCase())
+            || Boolean(terminalCode && rowTerminalName.toUpperCase() === terminalCode.toUpperCase());
+    });
+
+    const ids = rows.map((row) => row.id).filter(Boolean);
+    if (ids.length === 0) return [];
+
+    const archivedAt = new Date().toISOString();
+    const { error: updateError } = await supabase
+        .from('tenant_server_registry')
+        .update({
+            status: 'OFFLINE',
+            auth_status: 'OLD_DEVICE_REVOKED',
+            is_revoked: true,
+            revocation_reason: 'POS_ERP_TERMINAL_TAKEOVER_SUPERSEDED',
+            requires_pos_reauth: true,
+            previous_device_id: previousDeviceId || null,
+            updated_at: archivedAt,
+        })
+        .in('id', ids);
+    if (updateError) throw updateError;
+
+    return ids;
 }
 
 Deno.serve(async (request) => {
@@ -996,10 +1043,21 @@ Deno.serve(async (request) => {
             if (updateError) throw updateError;
         }
 
+        const archivedDuplicateRegistryIds = action === 'TAKEOVER'
+            ? await archiveDuplicateRegistriesForTerminal(
+                supabase,
+                tenantId,
+                terminalId,
+                terminalDisplayCode,
+                registry?.id,
+                previousDeviceId,
+            )
+            : [];
+
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
-            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            terminal_name: terminalDisplayCode,
             old_device_id: previousDeviceId,
             new_device_id: newAuthorizedDeviceId,
             action,
@@ -1014,8 +1072,29 @@ Deno.serve(async (request) => {
                 tokenPreview,
                 action_result: registry?.id ? 'updated_existing' : 'updated_existing_no_local_registry',
                 pairing_code_validated: Boolean(pairingCode),
+                archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
             },
         });
+
+        if (archivedDuplicateRegistryIds.length > 0) {
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalDisplayCode,
+                old_device_id: previousDeviceId,
+                new_device_id: newAuthorizedDeviceId,
+                action: 'DUPLICATE_PREVENTED',
+                performed_by: performedBy,
+                reason: 'Archive duplicate registry rows after POS+ERP terminal takeover.',
+                result: 'SUCCESS',
+                erp_response_status: erpResponse.status,
+                metadata: {
+                    archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
+                    canonical_erp_terminal_id: terminalId,
+                    authorized_device_id: newAuthorizedDeviceId,
+                },
+            });
+        }
 
         return json({
             status: 'success',
