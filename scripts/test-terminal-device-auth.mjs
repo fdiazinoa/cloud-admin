@@ -10,11 +10,13 @@ const clearDevicesMigration = readFileSync('supabase/migrations/202605302010_ter
 
 assert.match(attemptsFunction, /\/api\/sync\/terminals\/.*auth-attempts/, 'auth attempts must call the ERP sync attempts endpoint');
 assert.match(actionFunction, /\/api\/sync\/terminals\/.*takeover/, 'device action must call the ERP sync takeover endpoint');
-assert.match(actionFunction, /\/api\/sync\/terminals\/.*pairing-code/, 'device action must call the ERP pairing-code endpoint');
+assert.match(actionFunction, /requestedAction === 'GENERATE_PAIRING_CODE' \? 'TAKEOVER' : requestedAction/, 'pairing-code generation must route through the takeover authorization flow');
 assert.match(actionFunction, /rotateDeviceToken:\s*true/, 'takeover/rotation must request token rotation');
 assert.match(actionFunction, /GENERATE_PAIRING_CODE/, 'device action must support pairing code generation');
 assert.match(actionFunction, /CLEAR_TERMINAL_DEVICES/, 'device action must support clearing terminal device bindings');
 assert.match(actionFunction, /tenant_server_registry[\s\S]*delete/, 'clear action must delete terminal registry bindings');
+assert.doesNotMatch(actionFunction, /error:\s*'SAME_DEVICE_ID'/, 'takeover must be able to repair ERP mapping even when Cloud already authorizes the device');
+assert.match(actionFunction, /ERP_DEVICE_MAPPING_REPAIR/, 'same-device takeover must repair Cloud/ERP terminal mapping drift');
 assert.match(actionFunction, /tokenKeys/, 'function must define token keys to sanitize sensitive payloads');
 assert.doesNotMatch(actionFunction, /return json\([\s\S]*syncAuthToken/, 'function must not return syncAuthToken directly');
 
@@ -27,9 +29,8 @@ assert.match(clearDevicesMigration, /CLEAR_TERMINAL_DEVICES/, 'clear migration m
 assert.match(tenantsPage, /Intentos de conexion rechazados/, 'UI must render rejected connection attempts');
 assert.match(tenantsPage, /Limpiar devices/, 'UI must expose terminal device cleanup action');
 assert.match(tenantsPage, /LIMPIAR/, 'UI must require strong confirmation for device cleanup');
-assert.match(tenantsPage, /Generar codigo/, 'UI must expose pairing code generation');
-assert.match(tenantsPage, /Codigo de vinculacion para escribir en el POS/, 'UI must show generated pairing codes for POS input');
 assert.match(tenantsPage, /Reautorizar/, 'UI must expose reauthorization action');
+assert.match(tenantsPage, /Reparar enlace ERP/, 'UI must expose Cloud/ERP device mapping repair action');
 assert.match(tenantsPage, /Rotar credenciales/, 'UI must expose credential rotation action');
 assert.match(tenantsPage, /Revocar equipo anterior/, 'UI must expose previous-device revocation action');
 

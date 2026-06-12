@@ -501,7 +501,6 @@ export const Tenants: React.FC = () => {
     const getTerminalKey = (terminal: TenantTerminalSnapshot) => `${terminal.id}-${terminal.registry?.id || 'catalog'}`;
 
     const getAttemptTime = (attempt: TerminalAuthAttempt) => attempt.attempted_at || attempt.created_at || null;
-
     const getAuthStatusLabel = (status: string) => {
         switch (status) {
             case 'AUTHORIZED': return 'Autorizado';
@@ -1073,6 +1072,37 @@ export const Tenants: React.FC = () => {
             return;
         }
         await handleAuthorizeDeviceForTerminal(terminal, requestedDeviceId, attempt.authorized_device_id);
+    };
+
+    const handleRepairErpDeviceMapping = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+        const terminalId = getTerminalTakeoverId(terminal);
+        const deviceId = getTerminalAuthorizedDeviceId(terminal);
+        if (!terminalId || !deviceId) {
+            alert('Esta terminal necesita terminal_id y device_id autorizado para reparar el enlace ERP.');
+            return;
+        }
+
+        const key = `${getTerminalKey(terminal)}-REPAIR-ERP`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                deviceId,
+                action: 'TAKEOVER',
+                reason: 'ERP_DEVICE_MAPPING_REPAIR',
+            });
+            alert(result.message || 'Terminal revalidada correctamente en Cloud y ERP. El POS debe reintentar conexion.');
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error repairing ERP terminal device mapping:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
     };
 
     const handleSyncAuthorizedDevice = async (terminal: TenantTerminalSnapshot) => {
@@ -2298,6 +2328,7 @@ export const Tenants: React.FC = () => {
                                         const posReportedDeviceId = identity.posReportedDeviceId !== 'N/D' ? identity.posReportedDeviceId : '';
                                         const erpCurrentDeviceId = identity.erpCurrentDeviceId !== 'N/D' ? identity.erpCurrentDeviceId : '';
                                         const deviceIdentityAligned = isDeviceIdentityAligned(authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId);
+                                        const hasCloudErpDeviceMismatch = Boolean(authorizedDeviceId && erpCurrentDeviceId && authorizedDeviceId !== erpCurrentDeviceId);
                                         const effectiveAuthStatus = getEffectiveAuthStatus(authStatus, authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId);
                                         const authStatusClasses = getAuthStatusClasses(effectiveAuthStatus);
                                         const actionableAuthAttempts = authAttempts.filter((attempt) => {
@@ -2314,6 +2345,7 @@ export const Tenants: React.FC = () => {
                                         const isAuthAttemptsLoading = authAttemptsLoadingKey === terminalKey;
                                         const rotateSubmittingKey = `${terminalKey}-ROTATE`;
                                         const syncAuthSubmittingKey = `${terminalKey}-SYNC-AUTH`;
+                                        const repairErpSubmittingKey = `${terminalKey}-REPAIR-ERP`;
                                         const persistedAuthorizedDeviceId = getTerminalPersistedAuthorizedDeviceId(terminal);
                                         const needsAuthorizedDeviceSync = Boolean(
                                             terminal.registry?.device_id?.trim()
@@ -2329,10 +2361,10 @@ export const Tenants: React.FC = () => {
                                         const fiscalStatus = fiscalDebug.fiscalReadiness;
                                         const fiscalStatusClasses = getFiscalStatusClasses(fiscalStatus);
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
-                                        const hasActionableAuthIssue = !deviceIdentityAligned && (
+                                        const hasActionableAuthIssue = hasCloudErpDeviceMismatch || (!deviceIdentityAligned && (
                                             !['AUTHORIZED', 'TAKEOVER_COMPLETED'].includes(effectiveAuthStatus)
                                             || actionableAuthAttempts.length > 0
-                                        );
+                                        ));
                                         const hasActionableErpIssue = profileIncomplete && (syncPending.summary.pending > 0 || erpReadinessStatus === 'error');
                                         const hasActionableSyncIssue = syncPending.summary.pending > 0 && (repairableSyncCount > 0 || functionalSyncErrorCount > 0);
                                         const hasActionableFiscalIssue = isFiscalEligibleTenant(selectedTenantForTerminals) && fiscalStatus === 'ERROR';
@@ -2524,6 +2556,17 @@ export const Tenants: React.FC = () => {
                                                                     {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
                                                                     Rotar credenciales
                                                                 </button>
+                                                                {hasCloudErpDeviceMismatch ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleRepairErpDeviceMapping(terminal)}
+                                                                        disabled={!authorizedDeviceId || deviceActionSubmittingKey === repairErpSubmittingKey}
+                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === repairErpSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                                                                        Reparar enlace ERP
+                                                                    </button>
+                                                                ) : null}
                                                             </div>
                                                             ) : null}
                                                         </div>
@@ -2560,7 +2603,7 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device actual en ERP</p>
-                                                                <p className="mt-1 font-mono break-all">{identity.erpCurrentDeviceId}</p>
+                                                                <p className={`mt-1 font-mono break-all ${hasCloudErpDeviceMismatch ? 'text-red-700' : ''}`}>{identity.erpCurrentDeviceId}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo device rechazado</p>
