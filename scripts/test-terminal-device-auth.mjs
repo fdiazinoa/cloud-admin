@@ -31,6 +31,7 @@ assert.match(tenantsPage, /Limpiar devices/, 'UI must expose terminal device cle
 assert.match(tenantsPage, /LIMPIAR/, 'UI must require strong confirmation for device cleanup');
 assert.match(tenantsPage, /Reautorizar/, 'UI must expose reauthorization action');
 assert.match(tenantsPage, /Reparar enlace ERP/, 'UI must expose Cloud/ERP device mapping repair action');
+assert.match(tenantsPage, /!erpCurrentDeviceId \|\| authorizedDeviceId !== erpCurrentDeviceId/, 'ERP repair action must appear when ERP device is missing or mismatched');
 assert.match(tenantsPage, /Rotar credenciales/, 'UI must expose credential rotation action');
 assert.match(tenantsPage, /Revocar equipo anterior/, 'UI must expose previous-device revocation action');
 
