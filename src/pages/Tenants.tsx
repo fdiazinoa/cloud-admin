@@ -2671,6 +2671,11 @@ export const Tenants: React.FC = () => {
                                                                         const releaseSubmittingKey = registry?.id
                                                                             ? `${terminalKey}-RELEASE-${deviceRow.deviceId}`
                                                                             : '';
+                                                                        const rowDeviceId = deviceRow.deviceId.trim();
+                                                                        const authorizeRowKey = rowDeviceId ? `${terminalKey}-TAKEOVER-${rowDeviceId}` : '';
+                                                                        const canAuthorizeDeviceRow = Boolean(rowDeviceId)
+                                                                            && !deviceRow.roles.includes('AUTHORIZED_CURRENT')
+                                                                            && !deviceRow.roles.includes('LICENSE_EXCEEDED');
 
                                                                         return (
                                                                             <tr key={`${deviceRow.deviceId}-${deviceIndex}`} className={`hover:bg-slate-50 transition-colors ${rIsOutOfVersion ? 'bg-amber-50/20' : ''}`}>
@@ -2727,28 +2732,45 @@ export const Tenants: React.FC = () => {
                                                                                     <p className="text-[10px] text-slate-500">{formatDateTime(deviceRow.lastSeenAt)}</p>
                                                                                 </td>
                                                                                 <td className="px-4 py-3 align-top text-right">
-                                                                                    {canReleaseLicenseSlot && registry?.id ? (
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            onClick={() => void handleReleaseTerminalLicenseSlot(
-                                                                                                terminal,
-                                                                                                registry.id,
-                                                                                                deviceRow.deviceId,
-                                                                                            )}
-                                                                                            disabled={deviceActionSubmittingKey === releaseSubmittingKey}
-                                                                                            title={selectedTenantForTerminals?.contracted_product === 'POS_ONLY'
-                                                                                ? 'Libera toda la caja (terminal) para reactivar otro Android'
-                                                                                : 'Libera el cupo de licencia para otro Android'}
-                                                                                            className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] font-bold uppercase text-amber-900 hover:bg-amber-100 transition-colors disabled:opacity-60"
-                                                                                        >
-                                                                                            {deviceActionSubmittingKey === releaseSubmittingKey
-                                                                                                ? <Loader2 size={12} className="animate-spin" />
-                                                                                                : <Unlink size={12} />}
-                                                                                            Liberar cupo
-                                                                                        </button>
-                                                                                    ) : (
-                                                                                        <span className="text-[10px] text-slate-400">—</span>
-                                                                                    )}
+                                                                                    <div className="flex flex-col items-end gap-1.5">
+                                                                                        {canAuthorizeDeviceRow ? (
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={() => void handleAuthorizeDeviceForManualInput(terminal, rowDeviceId)}
+                                                                                                disabled={deviceActionSubmittingKey === authorizeRowKey}
+                                                                                                title={`Autoriza ${rowDeviceId} para ${terminal.name} y revoca el device activo anterior.`}
+                                                                                                className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-bold uppercase text-emerald-900 hover:bg-emerald-100 transition-colors disabled:opacity-60"
+                                                                                            >
+                                                                                                {deviceActionSubmittingKey === authorizeRowKey
+                                                                                                    ? <Loader2 size={12} className="animate-spin" />
+                                                                                                    : <ShieldCheck size={12} />}
+                                                                                                Autorizar
+                                                                                            </button>
+                                                                                        ) : null}
+                                                                                        {canReleaseLicenseSlot && registry?.id ? (
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={() => void handleReleaseTerminalLicenseSlot(
+                                                                                                    terminal,
+                                                                                                    registry.id,
+                                                                                                    deviceRow.deviceId,
+                                                                                                )}
+                                                                                                disabled={deviceActionSubmittingKey === releaseSubmittingKey}
+                                                                                                title={selectedTenantForTerminals?.contracted_product === 'POS_ONLY'
+                                                                                    ? 'Libera toda la caja (terminal) para reactivar otro Android'
+                                                                                    : 'Libera el cupo de licencia para otro Android'}
+                                                                                                className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[10px] font-bold uppercase text-amber-900 hover:bg-amber-100 transition-colors disabled:opacity-60"
+                                                                                            >
+                                                                                                {deviceActionSubmittingKey === releaseSubmittingKey
+                                                                                                    ? <Loader2 size={12} className="animate-spin" />
+                                                                                                    : <Unlink size={12} />}
+                                                                                                Liberar cupo
+                                                                                            </button>
+                                                                                        ) : null}
+                                                                                        {!canAuthorizeDeviceRow && !(canReleaseLicenseSlot && registry?.id) ? (
+                                                                                            <span className="text-[10px] text-slate-400">—</span>
+                                                                                        ) : null}
+                                                                                    </div>
                                                                                 </td>
                                                                             </tr>
                                                                         );
