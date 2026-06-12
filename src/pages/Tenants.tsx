@@ -426,6 +426,11 @@ export const Tenants: React.FC = () => {
         || ''
     );
 
+    const getTerminalErpDeviceId = (terminal: TenantTerminalSnapshot) => (
+        terminal.erp_current_device_id
+        || ''
+    );
+
     const getAttemptDeviceId = (attempt: TerminalAuthAttempt) => (
         attempt.requested_device_id
         || attempt.device_id
@@ -457,6 +462,10 @@ export const Tenants: React.FC = () => {
 
     const isDeviceIdentityAligned = (authorizedDeviceId: string, lastSeenDeviceId: string) => (
         Boolean(authorizedDeviceId && lastSeenDeviceId && authorizedDeviceId === lastSeenDeviceId)
+    );
+
+    const isCloudErpDeviceAligned = (authorizedDeviceId: string, erpDeviceId: string) => (
+        Boolean(authorizedDeviceId && erpDeviceId && authorizedDeviceId === erpDeviceId)
     );
 
     const getEffectiveAuthStatus = (status: string, authorizedDeviceId: string, lastSeenDeviceId: string) => {
@@ -1174,6 +1183,38 @@ export const Tenants: React.FC = () => {
             await refreshTerminalModalData();
         } catch (err: unknown) {
             console.error('Error reauthorizing terminal device:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            setDeviceActionSubmittingKey(null);
+        }
+    };
+
+    const handleRepairErpDeviceMapping = async (terminal: TenantTerminalSnapshot) => {
+        if (!selectedTenantForTerminals) return;
+
+        const terminalId = getTerminalTakeoverId(terminal);
+        const deviceId = getTerminalAuthorizedDeviceId(terminal);
+        if (!terminalId || !deviceId) {
+            alert('Esta terminal necesita terminal_id y device_id autorizado para reparar el enlace ERP.');
+            return;
+        }
+
+        const key = `${getTerminalKey(terminal)}-REPAIR-ERP`;
+        setDeviceActionSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalDeviceAction({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                registryId: terminal.registry?.id || null,
+                terminalName: terminal.name,
+                deviceId,
+                action: 'TAKEOVER',
+                reason: 'ERP_DEVICE_MAPPING_REPAIR',
+            });
+            alert(result.message || 'Terminal revalidada correctamente en Cloud y ERP. El POS debe reintentar conexion.');
+            await refreshTerminalModalData();
+        } catch (err: unknown) {
+            console.error('Error repairing ERP terminal device mapping:', err);
             alert(getErrorMessage(err));
         } finally {
             setDeviceActionSubmittingKey(null);
@@ -2072,7 +2113,10 @@ export const Tenants: React.FC = () => {
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
                                         const authorizedDeviceId = getTerminalAuthorizedDeviceId(terminal);
                                         const lastSeenDeviceId = getTerminalLastSeenDeviceId(terminal);
+                                        const erpDeviceId = getTerminalErpDeviceId(terminal);
                                         const deviceIdentityAligned = isDeviceIdentityAligned(authorizedDeviceId, lastSeenDeviceId);
+                                        const cloudErpDeviceAligned = isCloudErpDeviceAligned(authorizedDeviceId, erpDeviceId);
+                                        const hasCloudErpDeviceMismatch = Boolean(authorizedDeviceId && erpDeviceId && !cloudErpDeviceAligned);
                                         const effectiveAuthStatus = getEffectiveAuthStatus(authStatus, authorizedDeviceId, lastSeenDeviceId);
                                         const authStatusClasses = getAuthStatusClasses(effectiveAuthStatus);
                                         const actionableAuthAttempts = authAttempts.filter((attempt) => {
@@ -2087,6 +2131,7 @@ export const Tenants: React.FC = () => {
                                         const lastAuthError = terminal.registry?.last_auth_error || lastAuthAttempt?.reason || lastAuthAttempt?.message || '';
                                         const isAuthAttemptsLoading = authAttemptsLoadingKey === terminalKey;
                                         const rotateSubmittingKey = `${terminalKey}-ROTATE`;
+                                        const repairErpSubmittingKey = `${terminalKey}-REPAIR-ERP`;
                                         const revokeDeviceId = terminal.registry?.previous_device_id || lastRejectedDeviceId;
                                         const revokeSubmittingKey = revokeDeviceId ? `${terminalKey}-REVOKE-${revokeDeviceId}` : '';
                                         const fiscalReadiness = getFiscalReadiness(terminal);
@@ -2102,10 +2147,10 @@ export const Tenants: React.FC = () => {
                                         const fiscalCheckedAt = fiscalReadiness?.checked_at || terminal.registry?.last_fiscal_readiness_at || null;
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
                                         const fiscalDemoSubmittingKey = `${terminalKey}-QA_DEMO`;
-                                        const hasActionableAuthIssue = !deviceIdentityAligned && (
+                                        const hasActionableAuthIssue = hasCloudErpDeviceMismatch || (!deviceIdentityAligned && (
                                             !['AUTHORIZED', 'TAKEOVER_COMPLETED'].includes(effectiveAuthStatus)
                                             || actionableAuthAttempts.length > 0
-                                        );
+                                        ));
                                         const hasActionableErpIssue = profileIncomplete && (syncPending.summary.pending > 0 || erpReadinessStatus === 'error');
                                         const hasActionableSyncIssue = syncPending.summary.pending > 0 && (repairableSyncCount > 0 || functionalSyncErrorCount > 0);
                                         const hasActionableFiscalIssue = isFiscalEligibleTenant(selectedTenantForTerminals) && fiscalStatus === 'ERROR';
@@ -2341,6 +2386,17 @@ export const Tenants: React.FC = () => {
                                                                     {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
                                                                     Rotar credenciales
                                                                 </button>
+                                                                {hasCloudErpDeviceMismatch ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => void handleRepairErpDeviceMapping(terminal)}
+                                                                        disabled={!authorizedDeviceId || deviceActionSubmittingKey === repairErpSubmittingKey}
+                                                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                                                                    >
+                                                                        {deviceActionSubmittingKey === repairErpSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                                                                        Reparar enlace ERP
+                                                                    </button>
+                                                                ) : null}
                                                             </div>
                                                         ) : null}
                                                     </div>
@@ -2353,6 +2409,10 @@ export const Tenants: React.FC = () => {
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo device visto</p>
                                                             <p className="mt-1 font-mono break-all">{lastSeenDeviceId || 'N/D'}</p>
+                                                        </div>
+                                                        <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                            <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device ERP</p>
+                                                            <p className={`mt-1 font-mono break-all ${hasCloudErpDeviceMismatch ? 'text-red-700' : ''}`}>{erpDeviceId || 'N/D'}</p>
                                                         </div>
                                                         <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                             <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo rechazado</p>

@@ -9,6 +9,8 @@ const migration = readFileSync('supabase/migrations/202605271015_terminal_device
 assert.match(attemptsFunction, /\/api\/sync\/terminals\/.*auth-attempts/, 'auth attempts must call the ERP sync attempts endpoint');
 assert.match(actionFunction, /\/api\/sync\/terminals\/.*takeover/, 'device action must call the ERP sync takeover endpoint');
 assert.match(actionFunction, /rotateDeviceToken:\s*true/, 'takeover/rotation must request token rotation');
+assert.doesNotMatch(actionFunction, /error:\s*'SAME_DEVICE_ID'/, 'takeover must be able to repair ERP mapping even when Cloud already authorizes the device');
+assert.match(actionFunction, /ERP_DEVICE_MAPPING_REPAIR/, 'same-device takeover must repair Cloud/ERP terminal mapping drift');
 assert.match(actionFunction, /tokenKeys/, 'function must define token keys to sanitize sensitive payloads');
 assert.doesNotMatch(actionFunction, /return json\([\s\S]*syncAuthToken/, 'function must not return syncAuthToken directly');
 
@@ -18,6 +20,7 @@ assert.match(migration, /OLD_DEVICE_REVOKED/, 'migration must allow OLD_DEVICE_R
 
 assert.match(tenantsPage, /Intentos de conexion rechazados/, 'UI must render rejected connection attempts');
 assert.match(tenantsPage, /Reautorizar/, 'UI must expose reauthorization action');
+assert.match(tenantsPage, /Reparar enlace ERP/, 'UI must expose Cloud/ERP device mapping repair action');
 assert.match(tenantsPage, /Rotar credenciales/, 'UI must expose credential rotation action');
 assert.match(tenantsPage, /Revocar equipo anterior/, 'UI must expose previous-device revocation action');
 
