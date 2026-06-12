@@ -208,6 +208,10 @@ function isPosTenant(tenant: TenantRecord) {
     return tenant.type === 'pos_only' || tenant.type === 'full';
 }
 
+function sameDeviceId(left?: string | null, right?: string | null) {
+    return Boolean(left?.trim() && right?.trim() && left.trim() === right.trim());
+}
+
 async function fetchFirstAvailableErpRoute(
     baseUrl: string,
     paths: string[],
@@ -730,6 +734,7 @@ Deno.serve(async (request) => {
             || registry?.current_device_id?.trim()
             || registry?.device_id?.trim()
             || null;
+        const alreadyAuthorizedDevice = action === 'TAKEOVER' && sameDeviceId(effectiveAuthorizedDeviceId, deviceId);
         const previousDeviceId = action === 'TAKEOVER'
             ? effectiveAuthorizedDeviceId
             : registry?.previous_device_id || effectiveAuthorizedDeviceId;
@@ -801,13 +806,6 @@ Deno.serve(async (request) => {
             });
         }
 
-        if (action === 'TAKEOVER' && persistedAuthorizedDeviceId === deviceId) {
-            return json({
-                error: 'SAME_DEVICE_ID',
-                message: 'Este equipo ya es el device autorizado para la terminal.',
-            }, 400);
-        }
-
         if (action === 'ROTATE_TOKEN' && effectiveAuthorizedDeviceId && effectiveAuthorizedDeviceId !== deviceId) {
             return json({
                 error: 'DEVICE_NOT_AUTHORIZED',
@@ -845,6 +843,7 @@ Deno.serve(async (request) => {
                 codeless_authorization: true,
                 requested_action: requestedAction,
                 pre_erp_consolidation: preErpConsolidation,
+                already_authorized_device: alreadyAuthorizedDevice,
             },
         });
 
@@ -893,7 +892,11 @@ Deno.serve(async (request) => {
         const erpPayloadBody: Record<string, unknown> = {
             deviceId,
             rotateDeviceToken: true,
-            reason: action === 'ROTATE_TOKEN' ? 'TOKEN_ROTATION_REQUIRED' : reason,
+            reason: action === 'ROTATE_TOKEN'
+                ? 'TOKEN_ROTATION_REQUIRED'
+                : alreadyAuthorizedDevice
+                    ? 'ERP_DEVICE_MAPPING_REPAIR'
+                    : reason,
             performedBy,
         };
 
@@ -1018,14 +1021,18 @@ Deno.serve(async (request) => {
                 device_id: newAuthorizedDeviceId,
                 current_device_id: newAuthorizedDeviceId,
                 authorized_device_id: newAuthorizedDeviceId,
-                previous_device_id: action === 'TAKEOVER' ? previousDeviceId : registry.previous_device_id || null,
+                previous_device_id: action === 'TAKEOVER' && !alreadyAuthorizedDevice ? previousDeviceId : registry.previous_device_id || null,
                 last_rejected_device_id: null,
                 auth_status: action === 'TAKEOVER' ? 'TAKEOVER_COMPLETED' : 'AUTHORIZED',
                 last_auth_error: null,
                 last_auth_attempt_at: completedAt,
                 device_token_status: deviceTokenStatus,
                 token_preview: tokenPreview,
-                revocation_reason: action === 'TAKEOVER' ? 'DEVICE_REINSTALL_OR_REPLACEMENT' : null,
+                revocation_reason: action === 'TAKEOVER'
+                    ? alreadyAuthorizedDevice
+                        ? 'ERP_DEVICE_MAPPING_REPAIR'
+                        : 'DEVICE_REINSTALL_OR_REPLACEMENT'
+                    : null,
                 requires_pos_reauth: true,
                 updated_at: completedAt,
             };
@@ -1070,6 +1077,7 @@ Deno.serve(async (request) => {
                 pre_erp_consolidation: preErpConsolidation,
                 post_erp_consolidation: postErpConsolidation,
                 archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
+                alreadyAuthorizedDevice,
             },
         });
 
@@ -1097,7 +1105,11 @@ Deno.serve(async (request) => {
         return json({
             status: 'success',
             success: true,
-            action: action === 'TAKEOVER' ? 'terminal_takeover_completed' : 'terminal_token_rotated',
+            action: action === 'TAKEOVER'
+                ? alreadyAuthorizedDevice
+                    ? 'terminal_authorization_refreshed'
+                    : 'terminal_takeover_completed'
+                : 'terminal_token_rotated',
             old_device_id: previousDeviceId,
             new_device_id: newAuthorizedDeviceId,
             authorized_device_id: newAuthorizedDeviceId,
@@ -1105,7 +1117,9 @@ Deno.serve(async (request) => {
             deviceTokenStatus,
             tokenPreview,
             message: action === 'TAKEOVER'
-                ? 'Terminal reautorizada correctamente. El POS debe reintentar autenticacion para recibir un nuevo syncToken.'
+                ? alreadyAuthorizedDevice
+                    ? 'Terminal revalidada correctamente en Cloud y ERP. El POS debe reintentar conexion.'
+                    : 'Terminal reautorizada correctamente. El POS debe reintentar autenticacion para recibir un nuevo syncToken.'
                 : 'Credenciales rotadas correctamente. El POS debe reintentar autenticacion para recibir un nuevo syncToken.',
         });
     } catch (error) {
