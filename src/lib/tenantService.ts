@@ -265,6 +265,20 @@ function asText(value: unknown): string {
     return typeof value === "string" ? value.trim() : "";
 }
 
+function isArchivedErpTerminalRow(terminal: Record<string, unknown>): boolean {
+    const config = asRecord(terminal.config);
+    const metadata = asRecord(config.metadata);
+    const terminalName = asText(terminal.name).toUpperCase();
+    const deviceId = asText(terminal.device_id).toUpperCase();
+
+    return terminalName.startsWith("ARCHIVED-")
+        || deviceId.startsWith("ARCHIVED-")
+        || config.active === false
+        || config.is_active === false
+        || config.archived === true
+        || metadata.archived === true;
+}
+
 function normalizeKey(value: unknown): string {
     return asText(value).toUpperCase();
 }
@@ -370,6 +384,8 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
 
         const bindings = new Map<string, ErpTerminalBinding>();
         for (const terminal of ((terminals as Array<Record<string, unknown>> | null) || [])) {
+            if (isArchivedErpTerminalRow(terminal)) continue;
+
             const deviceId = asText(terminal.device_id);
             const erpTerminalId = asText(terminal.id);
             if (!deviceId || !erpTerminalId) continue;

@@ -284,6 +284,20 @@ function getErpTerminalName(terminal: ErpTerminalRow): string {
     ) || 'Terminal ERP';
 }
 
+function isArchivedErpTerminal(terminal: ErpTerminalRow): boolean {
+    const config = getErpTerminalConfig(terminal);
+    const metadata = getErpTerminalMetadata(terminal);
+    const terminalName = asText(terminal.name).toUpperCase();
+    const deviceId = asText(terminal.device_id).toUpperCase();
+
+    return terminalName.startsWith('ARCHIVED-')
+        || deviceId.startsWith('ARCHIVED-')
+        || config.active === false
+        || config.is_active === false
+        || config.archived === true
+        || metadata.archived === true;
+}
+
 function getErpTerminalGroupKey(terminal: ErpTerminalRow): string {
     return normalizeStatus(getErpTerminalCode(terminal) || getErpTerminalName(terminal) || terminal.id);
 }
@@ -518,6 +532,8 @@ export async function getOperationalObservability(filters: ObservabilityFilters)
 
     const erpTerminalsByTenant = new Map<string, ErpTerminalRow[]>();
     for (const terminal of erpTerminals) {
+        if (isArchivedErpTerminal(terminal)) continue;
+
         const cloudTenantId = erpStoreToCloudTenant.get(terminal.store_id);
         if (!cloudTenantId) continue;
         const list = erpTerminalsByTenant.get(cloudTenantId) || [];
