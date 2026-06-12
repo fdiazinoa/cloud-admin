@@ -1,5 +1,23 @@
 BEGIN;
 
+ALTER TABLE landlord.terminal_device_audit
+    DROP CONSTRAINT IF EXISTS terminal_device_audit_action_check;
+
+ALTER TABLE landlord.terminal_device_audit
+    ADD CONSTRAINT terminal_device_audit_action_check CHECK (
+        action IN (
+            'TAKEOVER',
+            'ROTATE_TOKEN',
+            'REVOKE_DEVICE',
+            'SYNC_AUTHORIZED_DEVICE',
+            'GENERATE_PAIRING_CODE',
+            'CLEAR_TERMINAL_DEVICES',
+            'TAKEOVER_AUTHORIZED',
+            'DEVICE_REVOKED',
+            'DUPLICATE_PREVENTED'
+        )
+    );
+
 DO $$
 DECLARE
     v_tenant_id uuid := '03aa87fb-906a-46ca-a066-4c51bf080c4e'::uuid;
