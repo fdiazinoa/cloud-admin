@@ -158,6 +158,10 @@ function isPosTenant(tenant: TenantRecord) {
     return tenant.type === 'pos_only' || tenant.type === 'full';
 }
 
+function sameDeviceId(left?: string | null, right?: string | null) {
+    return Boolean(left?.trim() && right?.trim() && left.trim() === right.trim());
+}
+
 async function insertDeviceAudit(
     supabase: ReturnType<typeof createClient>,
     payload: {
@@ -308,16 +312,10 @@ Deno.serve(async (request) => {
             || registry?.device_id
             || publicTerminal?.device_token
             || null;
+        const alreadyAuthorizedDevice = action === 'TAKEOVER' && sameDeviceId(authorizedDeviceId, deviceId);
         const previousDeviceId = action === 'TAKEOVER'
             ? authorizedDeviceId
             : registry?.previous_device_id || authorizedDeviceId;
-
-        if (action === 'TAKEOVER' && authorizedDeviceId === deviceId) {
-            return json({
-                error: 'SAME_DEVICE_ID',
-                message: 'Este equipo ya es el device autorizado para la terminal.',
-            }, 400);
-        }
 
         if (action === 'ROTATE_TOKEN' && authorizedDeviceId && authorizedDeviceId !== deviceId) {
             return json({
@@ -340,6 +338,7 @@ Deno.serve(async (request) => {
                 registry_id: registry?.id || null,
                 source: 'cloud-admin',
                 pairing_code_provided: Boolean(pairingCode),
+                already_authorized_device: alreadyAuthorizedDevice,
             },
         });
 
@@ -388,7 +387,11 @@ Deno.serve(async (request) => {
         const erpPayloadBody: Record<string, unknown> = {
             deviceId,
             rotateDeviceToken: true,
-            reason: action === 'ROTATE_TOKEN' ? 'TOKEN_ROTATION_REQUIRED' : reason,
+            reason: action === 'ROTATE_TOKEN'
+                ? 'TOKEN_ROTATION_REQUIRED'
+                : alreadyAuthorizedDevice
+                    ? 'ERP_DEVICE_MAPPING_REPAIR'
+                    : reason,
             performedBy,
         };
         if (pairingCode) erpPayloadBody.pairingCode = pairingCode;
@@ -453,14 +456,18 @@ Deno.serve(async (request) => {
                 device_id: newAuthorizedDeviceId,
                 current_device_id: newAuthorizedDeviceId,
                 authorized_device_id: newAuthorizedDeviceId,
-                previous_device_id: action === 'TAKEOVER' ? previousDeviceId : registry.previous_device_id || null,
+                previous_device_id: action === 'TAKEOVER' && !alreadyAuthorizedDevice ? previousDeviceId : registry.previous_device_id || null,
                 last_rejected_device_id: null,
                 auth_status: action === 'TAKEOVER' ? 'TAKEOVER_COMPLETED' : 'AUTHORIZED',
                 last_auth_error: null,
                 last_auth_attempt_at: completedAt,
                 device_token_status: deviceTokenStatus,
                 token_preview: tokenPreview,
-                revocation_reason: action === 'TAKEOVER' ? 'DEVICE_REINSTALL_OR_REPLACEMENT' : null,
+                revocation_reason: action === 'TAKEOVER'
+                    ? alreadyAuthorizedDevice
+                        ? 'ERP_DEVICE_MAPPING_REPAIR'
+                        : 'DEVICE_REINSTALL_OR_REPLACEMENT'
+                    : null,
                 requires_pos_reauth: true,
                 updated_at: completedAt,
             };
@@ -489,13 +496,18 @@ Deno.serve(async (request) => {
                 deviceTokenIssued,
                 deviceTokenStatus,
                 tokenPreview,
+                alreadyAuthorizedDevice,
             },
         });
 
         return json({
             status: 'success',
             success: true,
-            action: action === 'TAKEOVER' ? 'terminal_takeover_completed' : 'terminal_token_rotated',
+            action: action === 'TAKEOVER'
+                ? alreadyAuthorizedDevice
+                    ? 'terminal_authorization_refreshed'
+                    : 'terminal_takeover_completed'
+                : 'terminal_token_rotated',
             old_device_id: previousDeviceId,
             new_device_id: newAuthorizedDeviceId,
             authorized_device_id: newAuthorizedDeviceId,
@@ -503,7 +515,9 @@ Deno.serve(async (request) => {
             deviceTokenStatus,
             tokenPreview,
             message: action === 'TAKEOVER'
-                ? 'Terminal reautorizada correctamente. El POS debe reintentar autenticacion para recibir un nuevo syncToken.'
+                ? alreadyAuthorizedDevice
+                    ? 'Terminal revalidada correctamente en Cloud y ERP. El POS debe reintentar conexion.'
+                    : 'Terminal reautorizada correctamente. El POS debe reintentar autenticacion para recibir un nuevo syncToken.'
                 : 'Credenciales rotadas correctamente. El POS debe reintentar autenticacion para recibir un nuevo syncToken.',
         });
     } catch (error) {
