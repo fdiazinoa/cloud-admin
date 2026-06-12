@@ -2328,7 +2328,10 @@ export const Tenants: React.FC = () => {
                                         const posReportedDeviceId = identity.posReportedDeviceId !== 'N/D' ? identity.posReportedDeviceId : '';
                                         const erpCurrentDeviceId = identity.erpCurrentDeviceId !== 'N/D' ? identity.erpCurrentDeviceId : '';
                                         const deviceIdentityAligned = isDeviceIdentityAligned(authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId);
-                                        const hasCloudErpDeviceMismatch = Boolean(authorizedDeviceId && erpCurrentDeviceId && authorizedDeviceId !== erpCurrentDeviceId);
+                                        const needsErpDeviceRepair = Boolean(
+                                            authorizedDeviceId
+                                            && (!erpCurrentDeviceId || authorizedDeviceId !== erpCurrentDeviceId)
+                                        );
                                         const effectiveAuthStatus = getEffectiveAuthStatus(authStatus, authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId);
                                         const authStatusClasses = getAuthStatusClasses(effectiveAuthStatus);
                                         const actionableAuthAttempts = authAttempts.filter((attempt) => {
@@ -2361,7 +2364,7 @@ export const Tenants: React.FC = () => {
                                         const fiscalStatus = fiscalDebug.fiscalReadiness;
                                         const fiscalStatusClasses = getFiscalStatusClasses(fiscalStatus);
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
-                                        const hasActionableAuthIssue = hasCloudErpDeviceMismatch || (!deviceIdentityAligned && (
+                                        const hasActionableAuthIssue = needsErpDeviceRepair || (!deviceIdentityAligned && (
                                             !['AUTHORIZED', 'TAKEOVER_COMPLETED'].includes(effectiveAuthStatus)
                                             || actionableAuthAttempts.length > 0
                                         ));
@@ -2556,7 +2559,7 @@ export const Tenants: React.FC = () => {
                                                                     {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
                                                                     Rotar credenciales
                                                                 </button>
-                                                                {hasCloudErpDeviceMismatch ? (
+                                                                {needsErpDeviceRepair ? (
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => void handleRepairErpDeviceMapping(terminal)}
@@ -2603,7 +2606,7 @@ export const Tenants: React.FC = () => {
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device actual en ERP</p>
-                                                                <p className={`mt-1 font-mono break-all ${hasCloudErpDeviceMismatch ? 'text-red-700' : ''}`}>{identity.erpCurrentDeviceId}</p>
+                                                                <p className={`mt-1 font-mono break-all ${needsErpDeviceRepair ? 'text-red-700' : ''}`}>{identity.erpCurrentDeviceId}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo device rechazado</p>
