@@ -64,6 +64,15 @@ interface ErpTenantRecord {
     id: string;
 }
 
+interface ErpTerminalRecord {
+    id: string;
+    name?: string | null;
+    device_id?: string | null;
+    config?: Record<string, unknown> | null;
+    last_seen?: string | null;
+    created_at?: string | null;
+}
+
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-actor-user-id, x-actor-email, x-actor-source',
@@ -182,6 +191,14 @@ function getUnknownErrorMessage(error: unknown) {
 
 function isUuid(value: string) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function getRecordChild(record: Record<string, unknown>, key: string): Record<string, unknown> {
+    return asRecord(record[key]);
 }
 
 function isPosTenant(tenant: TenantRecord) {
@@ -343,6 +360,201 @@ async function archiveDuplicateRegistriesForTerminal(
     if (updateError) throw updateError;
 
     return ids;
+}
+
+async function erpTerminalHasDependencies(
+    supabase: ReturnType<typeof createClient>,
+    terminalId: string,
+) {
+    const dependencyTables = [
+        'erp_terminal_profiles',
+        'erp_terminal_fiscal_allocations',
+        'erp_sync_inbox',
+        'erp_sync_outbox',
+        'sync_inbox',
+        'sync_dead_letter',
+        'terminal_auth_attempts',
+    ];
+
+    for (const table of dependencyTables) {
+        const { count, error } = await supabase
+            .schema('public')
+            .from(table)
+            .select('id', { count: 'exact', head: true })
+            .eq('terminal_id', terminalId);
+        if (error) {
+            console.error(`Failed to check terminal dependency table ${table}`, error);
+            return true;
+        }
+        if ((count || 0) > 0) return true;
+    }
+
+    return false;
+}
+
+async function archiveOrDeleteErpTerminal(
+    supabase: ReturnType<typeof createClient>,
+    duplicate: ErpTerminalRecord,
+    canonicalTerminalId: string,
+) {
+    const hasDependencies = await erpTerminalHasDependencies(supabase, duplicate.id);
+    if (!hasDependencies) {
+        const { error: deleteError } = await supabase
+            .schema('public')
+            .from('erp_terminals')
+            .delete()
+            .eq('id', duplicate.id);
+        if (deleteError) throw deleteError;
+        return { mode: 'deleted', id: duplicate.id };
+    }
+
+    const archivedDeviceId = `ARCHIVED-${duplicate.id.slice(0, 8)}`;
+    const archivedConfig = {
+        ...asRecord(duplicate.config),
+        active: false,
+        is_active: false,
+        metadata: {
+            ...getRecordChild(asRecord(duplicate.config), 'metadata'),
+            archived: true,
+            archived_at: new Date().toISOString(),
+            archived_reason: 'DUPLICATE_TERMINAL_MERGED_TO_CANONICAL',
+            canonical_erp_terminal_id: canonicalTerminalId,
+        },
+    };
+    const { error: updateError } = await supabase
+        .schema('public')
+        .from('erp_terminals')
+        .update({
+            device_id: archivedDeviceId,
+            name: `ARCHIVED-${duplicate.name || 'terminal'}-${duplicate.id.slice(0, 8)}`,
+            config: archivedConfig,
+        })
+        .eq('id', duplicate.id);
+    if (updateError) throw updateError;
+
+    return { mode: 'archived', id: duplicate.id };
+}
+
+async function consolidateErpTerminalDeviceDuplicates(
+    supabase: ReturnType<typeof createClient>,
+    input: {
+        tenantId: string;
+        erpTenantId: string;
+        terminalId: string;
+        terminalName: string | null;
+        deviceId: string;
+        copyAuthToCanonical: boolean;
+    },
+) {
+    const { data: canonicalData, error: canonicalError } = await supabase
+        .schema('public')
+        .from('erp_terminals')
+        .select('id,name,device_id,config,last_seen,created_at')
+        .eq('id', input.terminalId)
+        .maybeSingle();
+    if (canonicalError) throw canonicalError;
+    const canonical = canonicalData as ErpTerminalRecord | null;
+    if (!canonical) return { archived: [], deleted: [], copied_auth: false };
+
+    const { data: deviceMatches, error: deviceError } = await supabase
+        .schema('public')
+        .from('erp_terminals')
+        .select('id,name,device_id,config,last_seen,created_at')
+        .eq('device_id', input.deviceId);
+    if (deviceError) throw deviceError;
+
+    const expectedTerminalName = input.terminalName || canonical.name || '';
+    const { data: nameMatches, error: nameError } = expectedTerminalName
+        ? await supabase
+            .schema('public')
+            .from('erp_terminals')
+            .select('id,name,device_id,config,last_seen,created_at')
+            .eq('name', expectedTerminalName)
+        : { data: [], error: null };
+    if (nameError) throw nameError;
+
+    const candidates = new Map<string, ErpTerminalRecord>();
+    for (const row of [...(deviceMatches || []), ...(nameMatches || [])] as ErpTerminalRecord[]) {
+        if (!row.id || row.id === input.terminalId) continue;
+        const config = asRecord(row.config);
+        const metadata = getRecordChild(config, 'metadata');
+        const rowCanonicalId = String(metadata.erp_terminal_id || metadata.canonical_erp_terminal_id || '');
+        const rowCloudTenantId = String(metadata.cloud_admin_tenant_id || metadata.cloudAdminTenantId || '');
+        const rowName = (row.name || '').trim().toUpperCase();
+        const expectedName = (input.terminalName || canonical.name || '').trim().toUpperCase();
+        const isSameDevice = row.device_id === input.deviceId;
+        const pointsToCanonical = rowCanonicalId === input.terminalId;
+        const sameTenantAndName = Boolean(expectedName && rowName === expectedName && (rowCloudTenantId === input.tenantId || rowCloudTenantId === input.erpTenantId));
+        const isArchived = rowName.startsWith('ARCHIVED-') || metadata.archived === true || config.active === false || config.is_active === false;
+        if (isSameDevice || pointsToCanonical || sameTenantAndName || isArchived) candidates.set(row.id, row);
+    }
+
+    const duplicateRows = Array.from(candidates.values());
+    const authSource = duplicateRows.find((row) => row.device_id === input.deviceId);
+    const archived: string[] = [];
+    const deleted: string[] = [];
+
+    for (const duplicate of duplicateRows) {
+        const result = await archiveOrDeleteErpTerminal(supabase, duplicate, input.terminalId);
+        if (result.mode === 'deleted') deleted.push(result.id);
+        else archived.push(result.id);
+    }
+
+    let copiedAuth = false;
+    if (input.copyAuthToCanonical) {
+        const sourceConfig = asRecord(authSource?.config);
+        const sourceRuntime = getRecordChild(sourceConfig, 'runtime');
+        const sourceSecurity = getRecordChild(sourceConfig, 'security');
+        const canonicalConfig = asRecord(canonical.config);
+        const canonicalMetadata = getRecordChild(canonicalConfig, 'metadata');
+        const updatedConfig = {
+            ...canonicalConfig,
+            pairing: {
+                ...getRecordChild(canonicalConfig, 'pairing'),
+                status: 'NOT_REQUIRED',
+            },
+            metadata: {
+                ...canonicalMetadata,
+                erp_terminal_id: input.terminalId,
+                canonical_erp_terminal_id: input.terminalId,
+                cloud_admin_tenant_id: input.tenantId,
+                authorizedDeviceId: input.deviceId,
+                authorized_device_id: input.deviceId,
+                currentDeviceId: input.deviceId,
+                current_device_id: input.deviceId,
+                canonicalDeviceId: input.deviceId,
+                canonical_device_id: input.deviceId,
+                binding_status: 'BOUND',
+                ...(sourceSecurity.deviceTokenFingerprint ? { deviceTokenFingerprint: sourceSecurity.deviceTokenFingerprint } : {}),
+            },
+            runtime: {
+                ...getRecordChild(canonicalConfig, 'runtime'),
+                ...(sourceRuntime.syncAuthToken ? { syncAuthToken: sourceRuntime.syncAuthToken } : {}),
+                ...(sourceRuntime.tokenExpiresAt ? { tokenExpiresAt: sourceRuntime.tokenExpiresAt } : {}),
+                syncStatus: 'online',
+            },
+            security: {
+                ...getRecordChild(canonicalConfig, 'security'),
+                ...(sourceSecurity.deviceTokenFingerprint ? { deviceTokenFingerprint: sourceSecurity.deviceTokenFingerprint } : {}),
+                ...(sourceSecurity.deviceTokenIssuedAt ? { deviceTokenIssuedAt: sourceSecurity.deviceTokenIssuedAt } : {}),
+                ...(sourceSecurity.deviceBindingToken ? { deviceBindingToken: sourceSecurity.deviceBindingToken } : {}),
+            },
+        };
+
+        const { error: canonicalUpdateError } = await supabase
+            .schema('public')
+            .from('erp_terminals')
+            .update({
+                device_id: input.deviceId,
+                last_seen: new Date().toISOString(),
+                config: updatedConfig,
+            })
+            .eq('id', input.terminalId);
+        if (canonicalUpdateError) throw canonicalUpdateError;
+        copiedAuth = true;
+    }
+
+    return { archived, deleted, copied_auth: copiedAuth };
 }
 
 Deno.serve(async (request) => {
@@ -603,6 +815,20 @@ Deno.serve(async (request) => {
             }, 409);
         }
 
+        const erpTenantId = action === 'TAKEOVER' || action === 'ROTATE_TOKEN'
+            ? await resolveErpTenantId(supabase, tenantId)
+            : null;
+        const preErpConsolidation = action === 'TAKEOVER' && deviceId
+            ? await consolidateErpTerminalDeviceDuplicates(supabase, {
+                tenantId,
+                erpTenantId: erpTenantId || tenantId,
+                terminalId,
+                terminalName: terminalDisplayCode,
+                deviceId,
+                copyAuthToCanonical: false,
+            })
+            : { archived: [], deleted: [], copied_auth: false };
+
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
@@ -618,6 +844,7 @@ Deno.serve(async (request) => {
                 source: 'cloud-admin',
                 codeless_authorization: true,
                 requested_action: requestedAction,
+                pre_erp_consolidation: preErpConsolidation,
             },
         });
 
@@ -672,17 +899,17 @@ Deno.serve(async (request) => {
 
         const erpApiUrl = getEnv('ERP_API_URL', 'CLOUD_ADMIN_ERP_API_URL');
         const erpServiceToken = getEnv('ERP_TAKEOVER_SERVICE_TOKEN', 'ERP_SERVICE_TOKEN', 'CLOUD_ADMIN_ERP_SERVICE_TOKEN');
-        const erpTenantId = await resolveErpTenantId(supabase, tenantId);
         const terminalPathId = encodeURIComponent(terminalId);
-        const erpResponse = await fetchFirstAvailableErpRoute(erpApiUrl, [
+        const erpPaths = [
             `/api/sync/terminals/${terminalPathId}/takeover`,
             `/api/settings/terminals/${terminalPathId}/takeover`,
-        ], {
+        ];
+        const erpRequestInit = {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${erpServiceToken}`,
                 'Content-Type': 'application/json',
-                'X-Tenant-Id': erpTenantId,
+                'X-Tenant-Id': erpTenantId || tenantId,
                 'X-Cloud-Admin-Tenant-Id': tenantId,
             },
             body: JSON.stringify({
@@ -690,12 +917,52 @@ Deno.serve(async (request) => {
                 cloudAdminTenantId: tenantId,
                 erpTenantId,
             }),
-        });
+        };
+        let erpResponse = await fetchFirstAvailableErpRoute(erpApiUrl, erpPaths, erpRequestInit);
 
-        const erpPayload = await erpResponse.json().catch(async () => ({
+        let erpPayload = await erpResponse.json().catch(async () => ({
             message: await erpResponse.text().catch(() => ''),
         }));
-        const erpErrorCode = getErrorCode(erpPayload);
+        let erpErrorCode = getErrorCode(erpPayload);
+        const erpErrorMessage = getUnknownErrorMessage(erpPayload);
+
+        if (!erpResponse.ok && action === 'TAKEOVER' && deviceId && (
+            erpErrorCode === '23505'
+            || erpErrorMessage.includes('erp_terminals_device_id_key')
+            || erpErrorMessage.includes('duplicate key value')
+        )) {
+            const retryConsolidation = await consolidateErpTerminalDeviceDuplicates(supabase, {
+                tenantId,
+                erpTenantId: erpTenantId || tenantId,
+                terminalId,
+                terminalName: terminalDisplayCode,
+                deviceId,
+                copyAuthToCanonical: false,
+            });
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalDisplayCode,
+                old_device_id: previousDeviceId,
+                new_device_id: deviceId,
+                action: 'DUPLICATE_PREVENTED',
+                performed_by: performedBy,
+                reason: 'Retry takeover after freeing device_id from duplicate ERP terminal.',
+                result: 'SUCCESS',
+                erp_response_status: erpResponse.status,
+                erp_error_code: erpErrorCode || '23505',
+                metadata: {
+                    retry_consolidation: retryConsolidation,
+                    erp_payload: sanitizePayload(erpPayload),
+                },
+            });
+
+            erpResponse = await fetchFirstAvailableErpRoute(erpApiUrl, erpPaths, erpRequestInit);
+            erpPayload = await erpResponse.json().catch(async () => ({
+                message: await erpResponse.text().catch(() => ''),
+            }));
+            erpErrorCode = getErrorCode(erpPayload);
+        }
 
         if (!erpResponse.ok) {
             await insertDeviceAudit(supabase, {
@@ -733,6 +1000,16 @@ Deno.serve(async (request) => {
         const tokenPreview = getTokenPreview(sanitizedPayload);
         const completedAt = new Date().toISOString();
         const newAuthorizedDeviceId = action === 'ROTATE_TOKEN' ? effectiveAuthorizedDeviceId || deviceId : deviceId;
+        const postErpConsolidation = action === 'TAKEOVER' && newAuthorizedDeviceId
+            ? await consolidateErpTerminalDeviceDuplicates(supabase, {
+                tenantId,
+                erpTenantId: erpTenantId || tenantId,
+                terminalId,
+                terminalName: terminalDisplayCode,
+                deviceId: newAuthorizedDeviceId,
+                copyAuthToCanonical: true,
+            })
+            : { archived: [], deleted: [], copied_auth: false };
 
         if (registry?.id) {
             const registryUpdate: Record<string, unknown> = {
@@ -790,6 +1067,8 @@ Deno.serve(async (request) => {
                 tokenPreview,
                 action_result: registry?.id ? 'updated_existing' : 'updated_existing_no_local_registry',
                 codeless_authorization: true,
+                pre_erp_consolidation: preErpConsolidation,
+                post_erp_consolidation: postErpConsolidation,
                 archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
             },
         });
@@ -808,6 +1087,7 @@ Deno.serve(async (request) => {
                 erp_response_status: erpResponse.status,
                 metadata: {
                     archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
+                    post_erp_consolidation: postErpConsolidation,
                     canonical_erp_terminal_id: terminalId,
                     authorized_device_id: newAuthorizedDeviceId,
                 },
