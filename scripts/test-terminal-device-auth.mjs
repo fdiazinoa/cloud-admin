@@ -25,6 +25,8 @@ assert.match(actionFunction, /ERP_DEVICE_MAPPING_REPAIR/, 'same-device takeover 
 assert.match(actionFunction, /tokenKeys/, 'function must define token keys to sanitize sensitive payloads');
 assert.doesNotMatch(actionFunction, /return json\([\s\S]*syncAuthToken/, 'function must not return syncAuthToken directly');
 assert.match(actionFunction, /buildErpBindingConfirmation/, 'device action must verify ERP canonical binding before marking repair success');
+assert.match(actionFunction, /created_confirmed_registry/, 'device action must create a confirmed Cloud registry when ERP confirms after devices were cleared');
+assert.match(actionFunction, /updated_existing_after_insert_conflict/, 'device action must recover if a POS heartbeat creates the registry during ERP repair');
 assert.match(actionFunction, /WAITING_ERP_CONFIRMATION/, 'device action must keep repair pending when ERP does not confirm');
 assert.match(actionFunction, /BOUND_AUTH_MISMATCH/, 'device action must detect Cloud/ERP bound auth mismatch');
 assert.match(actionFunction, /CLOUD_ADMIN_REPAIR_REQUESTED/, 'device action must audit repair requests');
@@ -58,6 +60,8 @@ assert.match(tenantsPage, /LIMPIAR/, 'UI must require strong confirmation for de
 assert.match(tenantsPage, /Reautorizar/, 'UI must expose reauthorization action');
 assert.match(tenantsPage, /Reparar enlace ERP/, 'UI must expose Cloud/ERP device mapping repair action');
 assert.match(tenantsPage, /!erpCurrentDeviceId \|\| authorizedDeviceId !== erpCurrentDeviceId/, 'ERP repair action must appear when ERP device is missing or mismatched');
+assert.match(tenantsPage, /Tambien se vinculara inmediatamente en ERP/, 'manual device authorization must tell POS_ERP users it also binds ERP immediately');
+assert.match(tenantsPage, /requiresErpConfirmation \? 'ERP_DEVICE_MAPPING_REPAIR' : 'DEVICE_REINSTALL_OR_REPLACEMENT'/, 'manual POS_ERP authorization must request ERP repair on the first authorize action');
 assert.match(tenantsPage, /requiresErpConfirmation/, 'UI must require ERP confirmation for POS_ERP authorization success');
 assert.match(tenantsPage, /normalized === 'TAKEOVER_COMPLETED'\) return 'WAITING_ERP_CONFIRMATION'/, 'UI must keep legacy takeover completed waiting for ERP confirmation');
 assert.match(tenantsPage, /WAITING_ERP_CONFIRMATION/, 'UI must not show completed takeover while ERP confirmation is missing');
