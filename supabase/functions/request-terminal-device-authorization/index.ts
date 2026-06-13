@@ -16,7 +16,12 @@ type DeviceAction =
     | 'CLEAR_TERMINAL_DEVICES'
     | 'TAKEOVER_AUTHORIZED'
     | 'DEVICE_REVOKED'
-    | 'DUPLICATE_PREVENTED';
+    | 'DUPLICATE_PREVENTED'
+    | 'CLOUD_ADMIN_REPAIR_REQUESTED'
+    | 'CLOUD_ADMIN_ERP_REPAIR_CONFIRMED'
+    | 'CLOUD_ADMIN_ERP_REPAIR_FAILED'
+    | 'CLOUD_ADMIN_DEVICE_MISMATCH_DETECTED'
+    | 'CLOUD_ADMIN_CREDENTIALS_ROTATED';
 
 interface DeviceActionRequest {
     tenant_id?: string;
@@ -144,6 +149,13 @@ function getTokenPreview(payload: unknown): string | null {
     return null;
 }
 
+function firstText(...values: unknown[]): string | null {
+    for (const value of values) {
+        if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+}
+
 function getErrorCode(payload: unknown): string | null {
     if (!payload || typeof payload !== 'object') return null;
     const record = payload as Record<string, unknown>;
@@ -210,6 +222,132 @@ function isPosTenant(tenant: TenantRecord) {
 
 function sameDeviceId(left?: string | null, right?: string | null) {
     return Boolean(left?.trim() && right?.trim() && left.trim() === right.trim());
+}
+
+function getErpTerminalDeviceFields(terminal: ErpTerminalRecord | null) {
+    const config = asRecord(terminal?.config);
+    const metadata = getRecordChild(config, 'metadata');
+    const runtime = getRecordChild(config, 'runtime');
+    const security = getRecordChild(config, 'security');
+    const pairing = getRecordChild(config, 'pairing');
+
+    return {
+        terminalId: terminal?.id || null,
+        deviceId: terminal?.device_id || null,
+        authorizedDeviceId: firstText(
+            metadata.authorizedDeviceId,
+            metadata.authorized_device_id,
+            config.authorizedDeviceId,
+            config.authorized_device_id,
+        ),
+        currentDeviceId: firstText(
+            metadata.currentDeviceId,
+            metadata.current_device_id,
+            config.currentDeviceId,
+            config.current_device_id,
+        ),
+        canonicalDeviceId: firstText(
+            metadata.canonicalDeviceId,
+            metadata.canonical_device_id,
+            config.canonicalDeviceId,
+            config.canonical_device_id,
+        ),
+        pairingStatus: firstText(
+            pairing.status,
+            metadata.pairingStatus,
+            metadata.pairing_status,
+        ),
+        tokenFingerprint: firstText(
+            security.deviceTokenFingerprint,
+            security.device_token_fingerprint,
+            metadata.deviceTokenFingerprint,
+            metadata.device_token_fingerprint,
+        ),
+        tokenIssuedAt: firstText(
+            security.deviceTokenIssuedAt,
+            security.device_token_issued_at,
+            metadata.deviceTokenIssuedAt,
+            metadata.device_token_issued_at,
+        ),
+        hasRuntimeToken: Boolean(firstText(
+            runtime.syncAuthToken,
+            runtime.sync_auth_token,
+            runtime.token,
+        )),
+    };
+}
+
+function buildErpBindingConfirmation(input: {
+    terminal: ErpTerminalRecord | null;
+    expectedTerminalId: string;
+    expectedDeviceId: string;
+    deviceTokenIssued: boolean;
+    deviceTokenStatus: string | null;
+    tokenPreview: string | null;
+}) {
+    const fields = getErpTerminalDeviceFields(input.terminal);
+    const terminalMatches = fields.terminalId === input.expectedTerminalId;
+    const deviceIdMatches = sameDeviceId(fields.deviceId, input.expectedDeviceId);
+    const authorizedMatches = sameDeviceId(fields.authorizedDeviceId, input.expectedDeviceId);
+    const currentMatches = sameDeviceId(fields.currentDeviceId, input.expectedDeviceId);
+    const canonicalMatches = sameDeviceId(fields.canonicalDeviceId, input.expectedDeviceId);
+    const pairingNotRequired = (fields.pairingStatus || '').toUpperCase() === 'NOT_REQUIRED';
+    const tokenConfirmed = input.deviceTokenIssued
+        || Boolean(input.tokenPreview)
+        || Boolean(fields.tokenFingerprint)
+        || Boolean(fields.tokenIssuedAt)
+        || fields.hasRuntimeToken
+        || ['ROTATED', 'ISSUED', 'ACTIVE'].includes((input.deviceTokenStatus || '').toUpperCase());
+
+    const confirmed = Boolean(
+        terminalMatches
+        && deviceIdMatches
+        && authorizedMatches
+        && currentMatches
+        && canonicalMatches
+        && pairingNotRequired
+        && tokenConfirmed
+    );
+
+    let status = confirmed ? 'REAUTH_COMPLETED' : 'WAITING_ERP_CONFIRMATION';
+    if (!input.terminal || !terminalMatches) status = 'ERP_REPAIR_FAILED';
+    else if (
+        (fields.deviceId && !deviceIdMatches)
+        || (fields.authorizedDeviceId && !authorizedMatches)
+        || (fields.currentDeviceId && !currentMatches)
+        || (fields.canonicalDeviceId && !canonicalMatches)
+    ) {
+        status = 'BOUND_AUTH_MISMATCH';
+    }
+
+    return {
+        confirmed,
+        status,
+        checks: {
+            terminalMatches,
+            deviceIdMatches,
+            authorizedMatches,
+            currentMatches,
+            canonicalMatches,
+            pairingNotRequired,
+            tokenConfirmed,
+            fields,
+        },
+    };
+}
+
+async function loadCanonicalErpTerminal(
+    supabase: ReturnType<typeof createClient>,
+    terminalId: string,
+) {
+    const { data, error } = await supabase
+        .schema('public')
+        .from('erp_terminals')
+        .select('id,name,device_id,config,last_seen,created_at')
+        .eq('id', terminalId)
+        .maybeSingle();
+    if (error) throw error;
+    return data as ErpTerminalRecord | null;
 }
 
 async function fetchFirstAvailableErpRoute(
@@ -846,6 +984,25 @@ Deno.serve(async (request) => {
                 already_authorized_device: alreadyAuthorizedDevice,
             },
         });
+        if (action === 'TAKEOVER') {
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+                old_device_id: previousDeviceId,
+                new_device_id: deviceId,
+                action: 'CLOUD_ADMIN_REPAIR_REQUESTED',
+                performed_by: performedBy,
+                reason: alreadyAuthorizedDevice ? 'ERP_DEVICE_MAPPING_REPAIR' : reason,
+                result: 'REQUESTED',
+                metadata: {
+                    registry_id: registry?.id || null,
+                    canonical_erp_terminal_id: terminalId,
+                    already_authorized_device: alreadyAuthorizedDevice,
+                    requested_action: requestedAction,
+                },
+            });
+        }
 
         if (action === 'REVOKE_DEVICE') {
             const revokedAt = new Date().toISOString();
@@ -1013,6 +1170,99 @@ Deno.serve(async (request) => {
                 copyAuthToCanonical: true,
             })
             : { archived: [], deleted: [], copied_auth: false };
+        const confirmedErpTerminal = action === 'TAKEOVER' || action === 'ROTATE_TOKEN'
+            ? await loadCanonicalErpTerminal(supabase, terminalId)
+            : null;
+        const erpBindingConfirmation = action === 'TAKEOVER' || action === 'ROTATE_TOKEN'
+            ? buildErpBindingConfirmation({
+                terminal: confirmedErpTerminal,
+                expectedTerminalId: terminalId,
+                expectedDeviceId: newAuthorizedDeviceId || '',
+                deviceTokenIssued,
+                deviceTokenStatus,
+                tokenPreview,
+            })
+            : { confirmed: true, status: 'AUTHORIZED', checks: {} };
+
+        if (!erpBindingConfirmation.confirmed) {
+            const failedAt = new Date().toISOString();
+            if (registry?.id) {
+                const { error: updateError } = await supabase
+                    .from('tenant_server_registry')
+                    .update({
+                        terminal_id: terminalId,
+                        terminal_name: terminalDisplayCode,
+                        device_id: registry.device_id || newAuthorizedDeviceId,
+                        current_device_id: registry.current_device_id || null,
+                        authorized_device_id: registry.authorized_device_id || newAuthorizedDeviceId,
+                        auth_status: erpBindingConfirmation.status,
+                        last_auth_error: erpBindingConfirmation.status,
+                        last_auth_attempt_at: failedAt,
+                        device_token_status: deviceTokenStatus,
+                        token_preview: tokenPreview,
+                        requires_pos_reauth: true,
+                        revocation_reason: erpBindingConfirmation.status,
+                        updated_at: failedAt,
+                    })
+                    .eq('id', registry.id);
+                if (updateError) throw updateError;
+            }
+
+            if (erpBindingConfirmation.status === 'BOUND_AUTH_MISMATCH') {
+                await insertDeviceAudit(supabase, {
+                    tenant_id: tenantId,
+                    terminal_id: terminalId,
+                    terminal_name: terminalDisplayCode,
+                    old_device_id: previousDeviceId,
+                    new_device_id: newAuthorizedDeviceId,
+                    action: 'CLOUD_ADMIN_DEVICE_MISMATCH_DETECTED',
+                    performed_by: performedBy,
+                    reason: 'ERP persisted binding does not match Cloud-Admin requested device.',
+                    result: 'FAILED',
+                    erp_response_status: erpResponse.status,
+                    metadata: {
+                        erp_payload: sanitizedPayload,
+                        erp_binding_confirmation: erpBindingConfirmation,
+                    },
+                });
+            }
+
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalDisplayCode,
+                old_device_id: previousDeviceId,
+                new_device_id: newAuthorizedDeviceId,
+                action: 'CLOUD_ADMIN_ERP_REPAIR_FAILED',
+                performed_by: performedBy,
+                reason: 'ERP did not confirm canonical terminal binding after Cloud-Admin request.',
+                result: 'FAILED',
+                erp_response_status: erpResponse.status,
+                erp_error_code: erpBindingConfirmation.status,
+                metadata: {
+                    erp_payload: sanitizedPayload,
+                    deviceTokenIssued,
+                    deviceTokenStatus,
+                    tokenPreview,
+                    pre_erp_consolidation: preErpConsolidation,
+                    post_erp_consolidation: postErpConsolidation,
+                    erp_binding_confirmation: erpBindingConfirmation,
+                },
+            });
+
+            return json({
+                error: erpBindingConfirmation.status,
+                status: erpBindingConfirmation.status,
+                success: false,
+                action: action === 'ROTATE_TOKEN' ? 'terminal_token_rotation_pending' : 'terminal_erp_repair_pending',
+                authorized_device_id: newAuthorizedDeviceId,
+                deviceTokenIssued,
+                deviceTokenStatus,
+                tokenPreview,
+                erp_confirmation: erpBindingConfirmation.checks,
+                message: 'ERP no confirmo que el device quedara autorizado en la terminal canonica. Cloud-Admin no marcara takeover completado hasta que ERP confirme.',
+            }, 409);
+        }
 
         if (registry?.id) {
             const registryUpdate: Record<string, unknown> = {
@@ -1023,7 +1273,7 @@ Deno.serve(async (request) => {
                 authorized_device_id: newAuthorizedDeviceId,
                 previous_device_id: action === 'TAKEOVER' && !alreadyAuthorizedDevice ? previousDeviceId : registry.previous_device_id || null,
                 last_rejected_device_id: null,
-                auth_status: action === 'TAKEOVER' ? 'TAKEOVER_COMPLETED' : 'AUTHORIZED',
+                auth_status: action === 'TAKEOVER' ? 'REAUTH_COMPLETED' : 'AUTHORIZED',
                 last_auth_error: null,
                 last_auth_attempt_at: completedAt,
                 device_token_status: deviceTokenStatus,
@@ -1078,6 +1328,28 @@ Deno.serve(async (request) => {
                 post_erp_consolidation: postErpConsolidation,
                 archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
                 alreadyAuthorizedDevice,
+                erp_binding_confirmation: erpBindingConfirmation,
+            },
+        });
+
+        await insertDeviceAudit(supabase, {
+            tenant_id: tenantId,
+            terminal_id: terminalId,
+            terminal_name: terminalDisplayCode,
+            old_device_id: previousDeviceId,
+            new_device_id: newAuthorizedDeviceId,
+            action: action === 'ROTATE_TOKEN' ? 'CLOUD_ADMIN_CREDENTIALS_ROTATED' : 'CLOUD_ADMIN_ERP_REPAIR_CONFIRMED',
+            performed_by: performedBy,
+            reason: action === 'ROTATE_TOKEN'
+                ? 'ERP confirmed token rotation on canonical terminal.'
+                : 'ERP confirmed canonical terminal binding after Cloud-Admin repair.',
+            result: 'SUCCESS',
+            erp_response_status: erpResponse.status,
+            metadata: {
+                deviceTokenIssued,
+                deviceTokenStatus,
+                tokenPreview,
+                erp_binding_confirmation: erpBindingConfirmation,
             },
         });
 

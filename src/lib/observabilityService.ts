@@ -780,6 +780,8 @@ function buildTerminalRow(
     const status: ObservabilityStatus = authStatus === 'DEVICE_MISMATCH'
         || authStatus === 'ERP_AUTH_ERROR'
         || authStatus === 'TOKEN_ROTATION_REQUIRED'
+        || authStatus === 'ERP_REPAIR_FAILED'
+        || authStatus === 'BOUND_AUTH_MISMATCH'
         || normalizeStatus(readiness?.status) === 'ERROR'
         || errorDocuments > 0
         ? 'CRITICAL'
@@ -855,7 +857,7 @@ function buildTerminalSuggestions(input: {
 }) {
     const suggestions: string[] = [];
     if (!input.online) suggestions.push('Revisar heartbeat o red local');
-    if (['DEVICE_MISMATCH', 'ERP_AUTH_ERROR', 'TOKEN_ROTATION_REQUIRED', 'TAKEOVER_PENDING'].includes(input.authStatus)) {
+    if (['DEVICE_MISMATCH', 'ERP_AUTH_ERROR', 'TOKEN_ROTATION_REQUIRED', 'TAKEOVER_PENDING', 'ERP_REPAIR_PENDING', 'ERP_REPAIR_FAILED', 'WAITING_ERP_CONFIRMATION', 'BOUND_AUTH_MISMATCH'].includes(input.authStatus)) {
         suggestions.push('Revisar device token o pairing');
     }
     if (normalizeStatus(input.readiness?.status) !== 'READY' && input.readiness) {
