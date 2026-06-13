@@ -9,6 +9,7 @@ const pairingMigration = readFileSync('supabase/migrations/202605301845_terminal
 const clearDevicesMigration = readFileSync('supabase/migrations/202605302010_terminal_devices_clear_action.sql', 'utf8');
 const bar001CanonicalMigration = readFileSync('supabase/migrations/202606121620_pos_erp_bar001_canonical_device.sql', 'utf8');
 const erpRepairConfirmationMigration = readFileSync('supabase/migrations/202606130915_pos_erp_repair_confirmation.sql', 'utf8');
+const erpBindingMetadataMigration = readFileSync('supabase/migrations/202606131020_preserve_erp_terminal_binding_metadata.sql', 'utf8');
 const tenantService = readFileSync('src/lib/tenantService.ts', 'utf8');
 const observabilityService = readFileSync('src/lib/observabilityService.ts', 'utf8');
 
@@ -46,6 +47,10 @@ assert.match(erpRepairConfirmationMigration, /REAUTH_COMPLETED/, 'ERP repair mig
 assert.match(erpRepairConfirmationMigration, /WAITING_ERP_CONFIRMATION/, 'ERP repair migration must allow pending ERP confirmation status');
 assert.match(erpRepairConfirmationMigration, /BOUND_AUTH_MISMATCH/, 'ERP repair migration must allow bound auth mismatch status');
 assert.match(erpRepairConfirmationMigration, /CLOUD_ADMIN_CREDENTIALS_ROTATED/, 'ERP repair migration must allow credential rotation audit action');
+assert.match(erpBindingMetadataMigration, /preserve_erp_terminal_binding_metadata/, 'ERP binding migration must preserve canonical device metadata');
+assert.match(erpBindingMetadataMigration, /authorizedDeviceId/, 'ERP binding migration must persist authorizedDeviceId');
+assert.match(erpBindingMetadataMigration, /canonicalDeviceId/, 'ERP binding migration must persist canonicalDeviceId');
+assert.match(erpBindingMetadataMigration, /NOT_REQUIRED/, 'ERP binding migration must preserve pairing NOT_REQUIRED');
 
 assert.match(tenantsPage, /Intentos de conexion rechazados/, 'UI must render rejected connection attempts');
 assert.match(tenantsPage, /Limpiar devices/, 'UI must expose terminal device cleanup action');
