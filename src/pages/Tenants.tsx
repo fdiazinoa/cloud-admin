@@ -507,38 +507,64 @@ export const Tenants: React.FC = () => {
             case 'DEVICE_MISMATCH': return 'Device rechazado';
             case 'TAKEOVER_PENDING': return 'Takeover pendiente';
             case 'TAKEOVER_COMPLETED': return 'Takeover completado';
+            case 'REAUTH_COMPLETED': return 'Reauth completado';
             case 'OLD_DEVICE_REVOKED': return 'Equipo revocado';
             case 'TOKEN_ROTATION_REQUIRED': return 'Rotacion requerida';
             case 'ERP_AUTH_ERROR': return 'Error auth ERP';
+            case 'ERP_REPAIR_PENDING': return 'Reparacion ERP pendiente';
+            case 'ERP_REPAIR_FAILED': return 'Reparacion ERP fallida';
+            case 'WAITING_ERP_CONFIRMATION': return 'Esperando confirmacion ERP';
+            case 'BOUND_AUTH_MISMATCH': return 'Bound auth mismatch';
             case 'LICENSE_EXCEEDED': return 'Sin licencia POS';
             default: return status || 'N/D';
         }
     };
 
     const getAuthStatusClasses = (status: string) => {
-        if (status === 'AUTHORIZED' || status === 'TAKEOVER_COMPLETED') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-        if (status === 'DEVICE_MISMATCH' || status === 'ERP_AUTH_ERROR' || status === 'LICENSE_EXCEEDED') {
+        if (['AUTHORIZED', 'TAKEOVER_COMPLETED', 'REAUTH_COMPLETED'].includes(status)) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        if (['DEVICE_MISMATCH', 'ERP_AUTH_ERROR', 'LICENSE_EXCEEDED', 'ERP_REPAIR_FAILED', 'BOUND_AUTH_MISMATCH'].includes(status)) {
             return 'border-red-200 bg-red-50 text-red-700';
         }
-        if (status === 'TAKEOVER_PENDING' || status === 'TOKEN_ROTATION_REQUIRED') return 'border-amber-200 bg-amber-50 text-amber-700';
+        if (['TAKEOVER_PENDING', 'TOKEN_ROTATION_REQUIRED', 'ERP_REPAIR_PENDING', 'WAITING_ERP_CONFIRMATION'].includes(status)) return 'border-amber-200 bg-amber-50 text-amber-700';
         if (status === 'OLD_DEVICE_REVOKED') return 'border-slate-200 bg-slate-100 text-slate-700';
         return 'border-slate-200 bg-slate-50 text-slate-600';
     };
 
-    const isDeviceIdentityAligned = (authorizedDeviceId: string, reportedDeviceId: string, erpDeviceId?: string) => (
-        Boolean(authorizedDeviceId && (
-            (reportedDeviceId && authorizedDeviceId === reportedDeviceId)
-            || (erpDeviceId && erpDeviceId !== 'N/D' && authorizedDeviceId === erpDeviceId)
-        ))
-    );
+    const isDeviceIdentityAligned = (
+        authorizedDeviceId: string,
+        reportedDeviceId: string,
+        erpDeviceId?: string,
+        requireErpConfirmation = false,
+    ) => {
+        if (!authorizedDeviceId) return false;
+        const posMatches = Boolean(reportedDeviceId && authorizedDeviceId === reportedDeviceId);
+        const erpMatches = Boolean(erpDeviceId && erpDeviceId !== 'N/D' && authorizedDeviceId === erpDeviceId);
+        return requireErpConfirmation ? posMatches && erpMatches : posMatches || erpMatches;
+    };
 
-    const getEffectiveAuthStatus = (status: string, authorizedDeviceId: string, reportedDeviceId: string, erpDeviceId?: string) => {
+    const getEffectiveAuthStatus = (
+        status: string,
+        authorizedDeviceId: string,
+        reportedDeviceId: string,
+        erpDeviceId?: string,
+        requireErpConfirmation = false,
+    ) => {
         const normalized = status.toUpperCase();
+        if (authorizedDeviceId && requireErpConfirmation) {
+            if (!erpDeviceId || erpDeviceId === 'N/D') {
+                return ['AUTHORIZED', 'TAKEOVER_COMPLETED', 'REAUTH_COMPLETED'].includes(normalized)
+                    ? 'WAITING_ERP_CONFIRMATION'
+                    : normalized || 'ERP_REPAIR_PENDING';
+            }
+            if (authorizedDeviceId !== erpDeviceId) return 'BOUND_AUTH_MISMATCH';
+            if (reportedDeviceId && reportedDeviceId !== authorizedDeviceId) return 'DEVICE_MISMATCH';
+            if (['TAKEOVER_COMPLETED', 'REAUTH_COMPLETED'].includes(normalized)) return 'REAUTH_COMPLETED';
+        }
         if (
-            isDeviceIdentityAligned(authorizedDeviceId, reportedDeviceId, erpDeviceId)
+            isDeviceIdentityAligned(authorizedDeviceId, reportedDeviceId, erpDeviceId, requireErpConfirmation)
             && ['DEVICE_MISMATCH', 'TAKEOVER_PENDING', 'ERP_AUTH_ERROR'].includes(normalized)
         ) {
-            return 'AUTHORIZED';
+            return requireErpConfirmation ? 'REAUTH_COMPLETED' : 'AUTHORIZED';
         }
         return normalized || 'AUTHORIZED';
     };
@@ -2327,12 +2353,20 @@ export const Tenants: React.FC = () => {
                                         const authorizedDeviceId = identity.authorizedDeviceId !== 'N/D' ? identity.authorizedDeviceId : '';
                                         const posReportedDeviceId = identity.posReportedDeviceId !== 'N/D' ? identity.posReportedDeviceId : '';
                                         const erpCurrentDeviceId = identity.erpCurrentDeviceId !== 'N/D' ? identity.erpCurrentDeviceId : '';
-                                        const deviceIdentityAligned = isDeviceIdentityAligned(authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId);
+                                        const requiresErpConfirmation = selectedTenantForTerminals.contracted_product === 'POS_ERP';
+                                        const deviceIdentityAligned = isDeviceIdentityAligned(authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId, requiresErpConfirmation);
                                         const needsErpDeviceRepair = Boolean(
-                                            authorizedDeviceId
+                                            requiresErpConfirmation
+                                            && authorizedDeviceId
                                             && (!erpCurrentDeviceId || authorizedDeviceId !== erpCurrentDeviceId)
                                         );
-                                        const effectiveAuthStatus = getEffectiveAuthStatus(authStatus, authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId);
+                                        const effectiveAuthStatus = getEffectiveAuthStatus(
+                                            authStatus,
+                                            authorizedDeviceId,
+                                            posReportedDeviceId,
+                                            erpCurrentDeviceId,
+                                            requiresErpConfirmation,
+                                        );
                                         const authStatusClasses = getAuthStatusClasses(effectiveAuthStatus);
                                         const actionableAuthAttempts = authAttempts.filter((attempt) => {
                                             const requestedDeviceId = getAttemptDeviceId(attempt);
@@ -2365,7 +2399,7 @@ export const Tenants: React.FC = () => {
                                         const fiscalStatusClasses = getFiscalStatusClasses(fiscalStatus);
                                         const isFiscalLoading = fiscalReadinessLoadingKey === terminalKey;
                                         const hasActionableAuthIssue = needsErpDeviceRepair || (!deviceIdentityAligned && (
-                                            !['AUTHORIZED', 'TAKEOVER_COMPLETED'].includes(effectiveAuthStatus)
+                                            !['AUTHORIZED', 'TAKEOVER_COMPLETED', 'REAUTH_COMPLETED'].includes(effectiveAuthStatus)
                                             || actionableAuthAttempts.length > 0
                                         ));
                                         const hasActionableErpIssue = profileIncomplete && (syncPending.summary.pending > 0 || erpReadinessStatus === 'error');

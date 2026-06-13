@@ -8,6 +8,7 @@ const migration = readFileSync('supabase/migrations/202605271015_terminal_device
 const pairingMigration = readFileSync('supabase/migrations/202605301845_terminal_pairing_code_flow.sql', 'utf8');
 const clearDevicesMigration = readFileSync('supabase/migrations/202605302010_terminal_devices_clear_action.sql', 'utf8');
 const bar001CanonicalMigration = readFileSync('supabase/migrations/202606121620_pos_erp_bar001_canonical_device.sql', 'utf8');
+const erpRepairConfirmationMigration = readFileSync('supabase/migrations/202606130915_pos_erp_repair_confirmation.sql', 'utf8');
 const tenantService = readFileSync('src/lib/tenantService.ts', 'utf8');
 const observabilityService = readFileSync('src/lib/observabilityService.ts', 'utf8');
 
@@ -22,6 +23,14 @@ assert.doesNotMatch(actionFunction, /error:\s*'SAME_DEVICE_ID'/, 'takeover must 
 assert.match(actionFunction, /ERP_DEVICE_MAPPING_REPAIR/, 'same-device takeover must repair Cloud/ERP terminal mapping drift');
 assert.match(actionFunction, /tokenKeys/, 'function must define token keys to sanitize sensitive payloads');
 assert.doesNotMatch(actionFunction, /return json\([\s\S]*syncAuthToken/, 'function must not return syncAuthToken directly');
+assert.match(actionFunction, /buildErpBindingConfirmation/, 'device action must verify ERP canonical binding before marking repair success');
+assert.match(actionFunction, /WAITING_ERP_CONFIRMATION/, 'device action must keep repair pending when ERP does not confirm');
+assert.match(actionFunction, /BOUND_AUTH_MISMATCH/, 'device action must detect Cloud/ERP bound auth mismatch');
+assert.match(actionFunction, /CLOUD_ADMIN_REPAIR_REQUESTED/, 'device action must audit repair requests');
+assert.match(actionFunction, /CLOUD_ADMIN_ERP_REPAIR_CONFIRMED/, 'device action must audit ERP repair confirmation');
+assert.match(actionFunction, /CLOUD_ADMIN_ERP_REPAIR_FAILED/, 'device action must audit failed ERP repair confirmation');
+assert.match(actionFunction, /CLOUD_ADMIN_DEVICE_MISMATCH_DETECTED/, 'device action must audit Cloud/ERP device mismatch detection');
+assert.match(actionFunction, /CLOUD_ADMIN_CREDENTIALS_ROTATED/, 'device action must audit confirmed credential rotations');
 
 assert.match(migration, /terminal_device_audit/, 'migration must create terminal device audit');
 assert.match(migration, /DEVICE_MISMATCH/, 'migration must allow DEVICE_MISMATCH state');
@@ -33,6 +42,10 @@ assert.match(bar001CanonicalMigration, /62fd00ca-c204-4dd4-9eb4-c35c933affa8/, '
 assert.match(bar001CanonicalMigration, /DEV-XZ96929V/, 'Bar-001 migration must authorize the current POS device');
 assert.match(bar001CanonicalMigration, /POS_ERP_GHOST_TERMINAL_CANONICALIZED/, 'Bar-001 migration must mark the ghost terminal as archived');
 assert.match(bar001CanonicalMigration, /POS_ERP_CANONICAL_TERMINAL_ENFORCED/, 'Bar-001 migration must revoke duplicate registry rows');
+assert.match(erpRepairConfirmationMigration, /REAUTH_COMPLETED/, 'ERP repair migration must allow confirmed reauth status');
+assert.match(erpRepairConfirmationMigration, /WAITING_ERP_CONFIRMATION/, 'ERP repair migration must allow pending ERP confirmation status');
+assert.match(erpRepairConfirmationMigration, /BOUND_AUTH_MISMATCH/, 'ERP repair migration must allow bound auth mismatch status');
+assert.match(erpRepairConfirmationMigration, /CLOUD_ADMIN_CREDENTIALS_ROTATED/, 'ERP repair migration must allow credential rotation audit action');
 
 assert.match(tenantsPage, /Intentos de conexion rechazados/, 'UI must render rejected connection attempts');
 assert.match(tenantsPage, /Limpiar devices/, 'UI must expose terminal device cleanup action');
@@ -40,6 +53,9 @@ assert.match(tenantsPage, /LIMPIAR/, 'UI must require strong confirmation for de
 assert.match(tenantsPage, /Reautorizar/, 'UI must expose reauthorization action');
 assert.match(tenantsPage, /Reparar enlace ERP/, 'UI must expose Cloud/ERP device mapping repair action');
 assert.match(tenantsPage, /!erpCurrentDeviceId \|\| authorizedDeviceId !== erpCurrentDeviceId/, 'ERP repair action must appear when ERP device is missing or mismatched');
+assert.match(tenantsPage, /requiresErpConfirmation/, 'UI must require ERP confirmation for POS_ERP authorization success');
+assert.match(tenantsPage, /WAITING_ERP_CONFIRMATION/, 'UI must not show completed takeover while ERP confirmation is missing');
+assert.match(tenantsPage, /BOUND_AUTH_MISMATCH/, 'UI must show Cloud/ERP bound auth mismatch');
 assert.match(tenantsPage, /Rotar credenciales/, 'UI must expose credential rotation action');
 assert.match(tenantsPage, /Revocar equipo anterior/, 'UI must expose previous-device revocation action');
 assert.match(tenantService, /isArchivedErpTerminalRow/, 'tenant service must filter archived ERP terminals from canonical bindings');

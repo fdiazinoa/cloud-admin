@@ -228,9 +228,14 @@ export type TerminalAuthorizationStatus =
     | 'DEVICE_MISMATCH'
     | 'TAKEOVER_PENDING'
     | 'TAKEOVER_COMPLETED'
+    | 'REAUTH_COMPLETED'
     | 'OLD_DEVICE_REVOKED'
     | 'TOKEN_ROTATION_REQUIRED'
-    | 'ERP_AUTH_ERROR';
+    | 'ERP_AUTH_ERROR'
+    | 'ERP_REPAIR_PENDING'
+    | 'ERP_REPAIR_FAILED'
+    | 'WAITING_ERP_CONFIRMATION'
+    | 'BOUND_AUTH_MISMATCH';
 
 export interface TerminalAuthAttempt {
     id?: string | null;

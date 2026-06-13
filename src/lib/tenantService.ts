@@ -1230,7 +1230,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         const activeRegistries = registries.filter((registry) => !isRegistryRevoked(registry));
         const candidates = activeRegistries.length ? activeRegistries : registries;
         const preferred = candidates.find((registry) => registryDeviceMatches(registry, binding?.deviceId))
-            || candidates.find((registry) => ["AUTHORIZED", "TAKEOVER_COMPLETED"].includes(normalizeKey(registry.auth_status)))
+            || candidates.find((registry) => ["AUTHORIZED", "TAKEOVER_COMPLETED", "REAUTH_COMPLETED"].includes(normalizeKey(registry.auth_status)))
             || candidates[0];
 
         return preferred ? [preferred] : [];
