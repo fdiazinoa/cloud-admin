@@ -54,6 +54,7 @@ assert.match(tenantsPage, /Reautorizar/, 'UI must expose reauthorization action'
 assert.match(tenantsPage, /Reparar enlace ERP/, 'UI must expose Cloud/ERP device mapping repair action');
 assert.match(tenantsPage, /!erpCurrentDeviceId \|\| authorizedDeviceId !== erpCurrentDeviceId/, 'ERP repair action must appear when ERP device is missing or mismatched');
 assert.match(tenantsPage, /requiresErpConfirmation/, 'UI must require ERP confirmation for POS_ERP authorization success');
+assert.match(tenantsPage, /normalized === 'TAKEOVER_COMPLETED'\) return 'WAITING_ERP_CONFIRMATION'/, 'UI must keep legacy takeover completed waiting for ERP confirmation');
 assert.match(tenantsPage, /WAITING_ERP_CONFIRMATION/, 'UI must not show completed takeover while ERP confirmation is missing');
 assert.match(tenantsPage, /BOUND_AUTH_MISMATCH/, 'UI must show Cloud/ERP bound auth mismatch');
 assert.match(tenantsPage, /Rotar credenciales/, 'UI must expose credential rotation action');

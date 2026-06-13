@@ -551,14 +551,15 @@ export const Tenants: React.FC = () => {
     ) => {
         const normalized = status.toUpperCase();
         if (authorizedDeviceId && requireErpConfirmation) {
+            if (normalized === 'TAKEOVER_COMPLETED') return 'WAITING_ERP_CONFIRMATION';
             if (!erpDeviceId || erpDeviceId === 'N/D') {
-                return ['AUTHORIZED', 'TAKEOVER_COMPLETED', 'REAUTH_COMPLETED'].includes(normalized)
+                return ['AUTHORIZED', 'REAUTH_COMPLETED'].includes(normalized)
                     ? 'WAITING_ERP_CONFIRMATION'
                     : normalized || 'ERP_REPAIR_PENDING';
             }
             if (authorizedDeviceId !== erpDeviceId) return 'BOUND_AUTH_MISMATCH';
             if (reportedDeviceId && reportedDeviceId !== authorizedDeviceId) return 'DEVICE_MISMATCH';
-            if (['TAKEOVER_COMPLETED', 'REAUTH_COMPLETED'].includes(normalized)) return 'REAUTH_COMPLETED';
+            if (normalized === 'REAUTH_COMPLETED') return 'REAUTH_COMPLETED';
         }
         if (
             isDeviceIdentityAligned(authorizedDeviceId, reportedDeviceId, erpDeviceId, requireErpConfirmation)
