@@ -1264,35 +1264,71 @@ Deno.serve(async (request) => {
             }, 409);
         }
 
-        if (registry?.id) {
-            const registryUpdate: Record<string, unknown> = {
-                terminal_id: terminalId,
-                terminal_name: terminalDisplayCode,
-                device_id: newAuthorizedDeviceId,
-                current_device_id: newAuthorizedDeviceId,
-                authorized_device_id: newAuthorizedDeviceId,
-                previous_device_id: action === 'TAKEOVER' && !alreadyAuthorizedDevice ? previousDeviceId : registry.previous_device_id || null,
-                last_rejected_device_id: null,
-                auth_status: action === 'TAKEOVER' ? 'REAUTH_COMPLETED' : 'AUTHORIZED',
-                last_auth_error: null,
-                last_auth_attempt_at: completedAt,
-                device_token_status: deviceTokenStatus,
-                token_preview: tokenPreview,
-                revocation_reason: action === 'TAKEOVER'
-                    ? alreadyAuthorizedDevice
-                        ? 'ERP_DEVICE_MAPPING_REPAIR'
-                        : 'DEVICE_REINSTALL_OR_REPLACEMENT'
-                    : null,
-                requires_pos_reauth: true,
-                updated_at: completedAt,
-            };
-            if (action === 'TAKEOVER') registryUpdate.last_takeover_at = completedAt;
+        const registryUpdate: Record<string, unknown> = {
+            terminal_id: terminalId,
+            terminal_name: terminalDisplayCode,
+            device_id: newAuthorizedDeviceId,
+            current_device_id: newAuthorizedDeviceId,
+            authorized_device_id: newAuthorizedDeviceId,
+            previous_device_id: action === 'TAKEOVER' && !alreadyAuthorizedDevice ? previousDeviceId : registry?.previous_device_id || null,
+            last_rejected_device_id: null,
+            auth_status: action === 'TAKEOVER' ? 'REAUTH_COMPLETED' : 'AUTHORIZED',
+            last_auth_error: null,
+            last_auth_attempt_at: completedAt,
+            device_token_status: deviceTokenStatus,
+            token_preview: tokenPreview,
+            revocation_reason: action === 'TAKEOVER'
+                ? alreadyAuthorizedDevice
+                    ? 'ERP_DEVICE_MAPPING_REPAIR'
+                    : 'DEVICE_REINSTALL_OR_REPLACEMENT'
+                : null,
+            requires_pos_reauth: true,
+            is_revoked: false,
+            status: 'ONLINE',
+            updated_at: completedAt,
+        };
+        if (action === 'TAKEOVER') registryUpdate.last_takeover_at = completedAt;
 
+        let registryActionResult = 'updated_existing_no_local_registry';
+        let confirmedRegistryId = registry?.id || null;
+        if (registry?.id) {
             const { error: updateError } = await supabase
                 .from('tenant_server_registry')
                 .update(registryUpdate)
                 .eq('id', registry.id);
             if (updateError) throw updateError;
+            registryActionResult = 'updated_existing';
+        } else {
+            const insertPayload = {
+                tenant_id: tenantId,
+                ...registryUpdate,
+                last_seen_at: completedAt,
+            };
+            const { data: insertedRegistry, error: insertError } = await supabase
+                .from('tenant_server_registry')
+                .insert(insertPayload)
+                .select('id')
+                .maybeSingle();
+            if (insertError) {
+                const { data: existingRegistry, error: existingError } = await supabase
+                    .from('tenant_server_registry')
+                    .select('id')
+                    .eq('tenant_id', tenantId)
+                    .eq('device_id', newAuthorizedDeviceId)
+                    .maybeSingle();
+                if (existingError || !existingRegistry?.id) throw insertError;
+
+                const { error: fallbackUpdateError } = await supabase
+                    .from('tenant_server_registry')
+                    .update(registryUpdate)
+                    .eq('id', existingRegistry.id);
+                if (fallbackUpdateError) throw fallbackUpdateError;
+                confirmedRegistryId = existingRegistry.id;
+                registryActionResult = 'updated_existing_after_insert_conflict';
+            } else {
+                confirmedRegistryId = (insertedRegistry as { id?: string } | null)?.id || null;
+                registryActionResult = 'created_confirmed_registry';
+            }
         }
 
         const archivedDuplicateRegistryIds = action === 'TAKEOVER'
@@ -1322,7 +1358,8 @@ Deno.serve(async (request) => {
                 deviceTokenIssued,
                 deviceTokenStatus,
                 tokenPreview,
-                action_result: registry?.id ? 'updated_existing' : 'updated_existing_no_local_registry',
+                action_result: registryActionResult,
+                registry_id: confirmedRegistryId,
                 codeless_authorization: true,
                 pre_erp_consolidation: preErpConsolidation,
                 post_erp_consolidation: postErpConsolidation,

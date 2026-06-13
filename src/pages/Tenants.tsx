@@ -1058,10 +1058,14 @@ export const Tenants: React.FC = () => {
             return;
         }
 
+        const requiresErpConfirmation = selectedTenantForTerminals.contracted_product === 'POS_ERP';
         const authorizedDeviceId = authorizedDeviceIdInput || getTerminalAuthorizedDeviceId(terminal) || 'N/D';
         const confirmed = confirm(
             `Esta accion autorizara ${requestedDeviceId} para usar ${terminal.name} / ${terminalId}. `
             + `El equipo anterior (${authorizedDeviceId}) dejara de poder sincronizar como esta terminal. `
+            + (requiresErpConfirmation
+                ? 'Tambien se vinculara inmediatamente en ERP; si ERP no confirma, Cloud-Admin dejara la reparacion pendiente. '
+                : '')
             + 'No se borraran ventas, productos ni datos operativos. El POS solo debe reintentar conexion.',
         );
         if (!confirmed) return;
@@ -1076,7 +1080,7 @@ export const Tenants: React.FC = () => {
                 terminalName: terminal.name,
                 deviceId: requestedDeviceId,
                 action: 'TAKEOVER',
-                reason: 'DEVICE_REINSTALL_OR_REPLACEMENT',
+                reason: requiresErpConfirmation ? 'ERP_DEVICE_MAPPING_REPAIR' : 'DEVICE_REINSTALL_OR_REPLACEMENT',
             });
             alert(result.message || 'Device autorizado. Reintenta conexion desde el POS.');
             await refreshTerminalModalData();
