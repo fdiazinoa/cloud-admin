@@ -33,6 +33,9 @@ import {
 
 type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'sync' | 'fiscal' | 'attempts';
 
+const buildTenantSlug = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+
 export const Tenants: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [tenants, setTenants] = useState<Tenant[]>([]);
@@ -81,6 +84,7 @@ export const Tenants: React.FC = () => {
 
     const [formData, setFormData] = useState({
         name: '',
+        slug: '',
         email: '',
         taxId: '',
         contactName: '',
@@ -90,6 +94,7 @@ export const Tenants: React.FC = () => {
         servicedByDistributorId: '',
         products: getDefaultTenantProducts() as TenantProductSelection,
     });
+    const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
     const [editFormData, setEditFormData] = useState({
         name: '',
         legalName: '',
@@ -270,7 +275,10 @@ export const Tenants: React.FC = () => {
         e.preventDefault();
         setIsSubmitting(true);
         try {
-            const slug = formData.name.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+            const slug = buildTenantSlug(formData.slug || formData.name);
+            if (!slug) {
+                throw new Error('El identificador tecnico del tenant es requerido.');
+            }
             const products = normalizeTenantProductSelection(formData.products);
             const productConfig = deriveTenantConfigFromProducts(products);
             const semanticConfig = deriveTenantSemanticsFromProducts(products);
@@ -315,6 +323,7 @@ export const Tenants: React.FC = () => {
 
             setFormData({
                 name: '',
+                slug: '',
                 email: '',
                 taxId: '',
                 contactName: '',
@@ -324,6 +333,7 @@ export const Tenants: React.FC = () => {
                 servicedByDistributorId: '',
                 products: getDefaultTenantProducts(),
             });
+            setIsSlugManuallyEdited(false);
             closeCreateModal();
             await fetchTenants();
         } catch (err: unknown) {
@@ -2036,11 +2046,34 @@ export const Tenants: React.FC = () => {
                                     required
                                     type="text"
                                     value={formData.name}
-                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                    onChange={e => {
+                                        const name = e.target.value;
+                                        setFormData({
+                                            ...formData,
+                                            name,
+                                            slug: isSlugManuallyEdited ? formData.slug : buildTenantSlug(name),
+                                        });
+                                    }}
                                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                     placeholder="Ej. Supermercado El Sol"
                                 />
-                                <p className="text-xs text-slate-500 mt-1">El nombre se usará para generar el slug del esquema de base de datos.</p>
+                                <p className="text-xs text-slate-500 mt-1">El nombre comercial puede repetirse; el identificador tecnico debe ser unico.</p>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Identificador técnico <span className="text-red-500">*</span></label>
+                                <input
+                                    required
+                                    type="text"
+                                    value={formData.slug}
+                                    onChange={e => {
+                                        setIsSlugManuallyEdited(true);
+                                        setFormData({ ...formData, slug: buildTenantSlug(e.target.value) });
+                                    }}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800 font-mono"
+                                    placeholder="mercasend_srl_prod"
+                                />
+                                <p className="text-xs text-slate-500 mt-1">Usa letras, numeros y guion bajo. Ej.: mercasend_srl_prod.</p>
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
