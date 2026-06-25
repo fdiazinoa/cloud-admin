@@ -25,10 +25,10 @@ assert.match(actionFunction, /ERP_DEVICE_MAPPING_REPAIR/, 'same-device takeover 
 assert.match(actionFunction, /tokenKeys/, 'function must define token keys to sanitize sensitive payloads');
 assert.doesNotMatch(actionFunction, /return json\([\s\S]*syncAuthToken/, 'function must not return syncAuthToken directly');
 assert.match(actionFunction, /buildErpBindingConfirmation/, 'device action must verify ERP canonical binding before marking repair success');
-assert.match(actionFunction, /created_confirmed_registry/, 'device action must create a confirmed Cloud registry when ERP confirms after devices were cleared');
-assert.match(actionFunction, /updated_existing_after_insert_conflict/, 'device action must recover if a POS heartbeat creates the registry during ERP repair');
-assert.match(actionFunction, /tenant_slug/, 'confirmed registry creation must include required tenant slug');
-assert.match(actionFunction, /tenant_email/, 'confirmed registry creation must include required tenant email');
+assert.match(actionFunction, /erp_confirmed_waiting_terminal_heartbeat/, 'device action must wait for real POS heartbeat instead of creating a fake endpoint registry');
+assert.match(actionFunction, /updated_existing_after_heartbeat_race/, 'device action must recover if a POS heartbeat creates the registry during ERP repair');
+assert.doesNotMatch(actionFunction, /registryLocalIp\s*=\s*'127\.0\.0\.1'/, 'device action must not create registry endpoints with localhost');
+assert.doesNotMatch(actionFunction, /endpoint_url:\s*`https:\/\/\$\{registryLocalIp\}:3001`/, 'device action must not persist fake endpoint_url values');
 assert.match(actionFunction, /requires_pos_reauth:\s*false/, 'confirmed ERP repair must not leave POS reauth required');
 assert.match(actionFunction, /auth_status:\s*'AUTHORIZED'/, 'confirmed ERP repair must use POS-compatible authorized status');
 assert.match(actionFunction, /runtime:\s*\{\}/, 'archived duplicate ERP terminals must not keep runtime tokens');

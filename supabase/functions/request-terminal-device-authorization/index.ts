@@ -1375,47 +1375,24 @@ Deno.serve(async (request) => {
             if (updateError) throw updateError;
             registryActionResult = 'updated_existing';
         } else {
-            const registryLocalIp = '127.0.0.1';
-            const tenantSlug = (tenant.slug || tenant.name || tenantId).trim();
-            const tenantEmail = (tenant.email || `${tenantId}@unknown.local`).trim().toLowerCase();
-            const insertPayload = {
-                tenant_id: tenantId,
-                tenant_slug: tenantSlug,
-                tenant_email: tenantEmail,
-                hostname: 'localhost',
-                protocol: 'https',
-                port: 3001,
-                local_ip: registryLocalIp,
-                local_ips: [registryLocalIp],
-                endpoint_url: `https://${registryLocalIp}:3001`,
-                is_primary: true,
-                ...registryUpdate,
-                last_seen_at: completedAt,
-            };
-            const { data: insertedRegistry, error: insertError } = await supabase
+            const { data: existingRegistry, error: existingError } = await supabase
                 .from('tenant_server_registry')
-                .insert(insertPayload)
                 .select('id')
+                .eq('tenant_id', tenantId)
+                .eq('device_id', newAuthorizedDeviceId)
                 .maybeSingle();
-            if (insertError) {
-                const { data: existingRegistry, error: existingError } = await supabase
-                    .from('tenant_server_registry')
-                    .select('id')
-                    .eq('tenant_id', tenantId)
-                    .eq('device_id', newAuthorizedDeviceId)
-                    .maybeSingle();
-                if (existingError || !existingRegistry?.id) throw insertError;
+            if (existingError) throw existingError;
 
+            if (existingRegistry?.id) {
                 const { error: fallbackUpdateError } = await supabase
                     .from('tenant_server_registry')
                     .update(registryUpdate)
                     .eq('id', existingRegistry.id);
                 if (fallbackUpdateError) throw fallbackUpdateError;
                 confirmedRegistryId = existingRegistry.id;
-                registryActionResult = 'updated_existing_after_insert_conflict';
+                registryActionResult = 'updated_existing_after_heartbeat_race';
             } else {
-                confirmedRegistryId = (insertedRegistry as { id?: string } | null)?.id || null;
-                registryActionResult = 'created_confirmed_registry';
+                registryActionResult = 'erp_confirmed_waiting_terminal_heartbeat';
             }
         }
 
