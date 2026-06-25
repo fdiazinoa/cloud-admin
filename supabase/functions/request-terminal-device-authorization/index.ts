@@ -232,7 +232,14 @@ function getErpTerminalDeviceFields(terminal: ErpTerminalRecord | null) {
     const pairing = getRecordChild(config, 'pairing');
 
     return {
-        terminalId: terminal?.id || null,
+        terminalId: firstText(
+            metadata.terminal_id,
+            metadata.terminalId,
+            metadata.pos_terminal_id,
+            metadata.posTerminalId,
+            terminal?.id,
+        ),
+        erpTerminalId: terminal?.id || null,
         deviceId: terminal?.device_id || null,
         authorizedDeviceId: firstText(
             metadata.authorizedDeviceId,
@@ -286,7 +293,8 @@ function buildErpBindingConfirmation(input: {
     tokenPreview: string | null;
 }) {
     const fields = getErpTerminalDeviceFields(input.terminal);
-    const terminalMatches = fields.terminalId === input.expectedTerminalId;
+    const terminalMatches = fields.terminalId === input.expectedTerminalId
+        || fields.erpTerminalId === input.expectedTerminalId;
     const deviceIdMatches = sameDeviceId(fields.deviceId, input.expectedDeviceId);
     const authorizedMatches = sameDeviceId(fields.authorizedDeviceId, input.expectedDeviceId);
     const currentMatches = sameDeviceId(fields.currentDeviceId, input.expectedDeviceId);
@@ -347,7 +355,18 @@ async function loadCanonicalErpTerminal(
         .eq('id', terminalId)
         .maybeSingle();
     if (error) throw error;
-    return data as ErpTerminalRecord | null;
+    if (data) return data as ErpTerminalRecord;
+
+    const { data: metadataMatch, error: metadataError } = await supabase
+        .schema('public')
+        .from('erp_terminals')
+        .select('id,name,device_id,config,last_seen,created_at')
+        .or(`config->metadata->>terminal_id.eq.${terminalId},config->metadata->>terminalId.eq.${terminalId}`)
+        .order('last_seen', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    if (metadataError) throw metadataError;
+    return metadataMatch as ErpTerminalRecord | null;
 }
 
 async function fetchFirstAvailableErpRoute(
