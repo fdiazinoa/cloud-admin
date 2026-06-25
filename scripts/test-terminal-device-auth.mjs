@@ -27,6 +27,12 @@ assert.doesNotMatch(actionFunction, /return json\([\s\S]*syncAuthToken/, 'functi
 assert.match(actionFunction, /buildErpBindingConfirmation/, 'device action must verify ERP canonical binding before marking repair success');
 assert.match(actionFunction, /created_confirmed_registry/, 'device action must create a confirmed Cloud registry when ERP confirms after devices were cleared');
 assert.match(actionFunction, /updated_existing_after_insert_conflict/, 'device action must recover if a POS heartbeat creates the registry during ERP repair');
+assert.match(actionFunction, /tenant_slug/, 'confirmed registry creation must include required tenant slug');
+assert.match(actionFunction, /tenant_email/, 'confirmed registry creation must include required tenant email');
+assert.match(actionFunction, /requires_pos_reauth:\s*false/, 'confirmed ERP repair must not leave POS reauth required');
+assert.match(actionFunction, /auth_status:\s*'AUTHORIZED'/, 'confirmed ERP repair must use POS-compatible authorized status');
+assert.match(actionFunction, /runtime:\s*\{\}/, 'archived duplicate ERP terminals must not keep runtime tokens');
+assert.match(actionFunction, /terminal_id:\s*null/, 'archived duplicate ERP terminals must not keep operational terminal_id metadata');
 assert.match(actionFunction, /WAITING_ERP_CONFIRMATION/, 'device action must keep repair pending when ERP does not confirm');
 assert.match(actionFunction, /BOUND_AUTH_MISMATCH/, 'device action must detect Cloud/ERP bound auth mismatch');
 assert.match(actionFunction, /CLOUD_ADMIN_REPAIR_REQUESTED/, 'device action must audit repair requests');
