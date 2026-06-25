@@ -76,11 +76,27 @@ export interface Distributor {
 export interface Terminal {
     id: string;
     tenant_id: string;
-    device_token: string;
-    name: string;
-    is_active: boolean;
-    last_checkin_at?: string;
+    store_id?: string | null;
+    device_token?: string | null;
+    device_id?: string | null;
+    current_device_id?: string | null;
+    code?: string | null;
+    name?: string | null;
+    terminal_name?: string | null;
+    terminal_type?: string | null;
+    platform?: string | null;
+    app_version?: string | null;
+    is_active?: boolean | null;
+    active?: boolean | null;
+    last_checkin_at?: string | null;
+    last_seen_at?: string | null;
+    last_heartbeat_at?: string | null;
     created_at: string;
+    updated_at?: string | null;
+    config?: {
+        is_active?: boolean;
+        [key: string]: unknown;
+    } | null;
 }
 
 export interface TenantTerminalRegistryEntry {
