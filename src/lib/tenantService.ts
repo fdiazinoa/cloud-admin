@@ -374,7 +374,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
         const { data: terminals, error: terminalsError } = await supabaseAdmin
             .schema("public")
             .from("erp_terminals")
-            .select("id,device_id,name,code,config,last_seen,created_at")
+            .select("id,device_id,name,config,last_seen,created_at")
             .in("store_id", storeIds);
 
         if (terminalsError) {
@@ -1151,10 +1151,11 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             arr.push(row);
             registriesByTerminalId.set(row.terminal_id, arr);
         }
-        if (row.device_id) {
-            const arr = registriesByDeviceId.get(row.device_id) || [];
+        const registryDeviceId = row.authorized_device_id || row.current_device_id || row.device_id;
+        if (registryDeviceId) {
+            const arr = registriesByDeviceId.get(registryDeviceId) || [];
             arr.push(row);
-            registriesByDeviceId.set(row.device_id, arr);
+            registriesByDeviceId.set(registryDeviceId, arr);
         }
     }
 
@@ -1304,11 +1305,11 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             name: terminalName,
             device_token: deviceToken,
             is_active: primaryTerminal.config?.is_active ?? primaryTerminal.is_active ?? primaryTerminal.active ?? true,
-            last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.updated_at || null,
+            last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.last_heartbeat_at || primaryTerminal.updated_at || null,
             created_at: primaryTerminal.created_at || null,
             erp_terminal_uuid: erpBinding?.erpTerminalId || null,
             erp_current_device_id: erpBinding?.deviceId || null,
-            erp_app_version: erpBinding?.appVersion || null,
+            erp_app_version: erpBinding?.appVersion || primaryTerminal.app_version || null,
             erp_app_version_code: erpBinding?.appVersionCode || null,
             registry: visibleRegistries[0] || registry,
             registries: visibleRegistries,
