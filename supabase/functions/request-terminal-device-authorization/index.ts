@@ -37,6 +37,8 @@ interface DeviceActionRequest {
 interface TenantRecord {
     id: string;
     name: string;
+    slug?: string | null;
+    email?: string | null;
     status: string;
     type?: string | null;
     contracted_product?: string | null;
@@ -570,15 +572,27 @@ async function archiveOrDeleteErpTerminal(
     }
 
     const archivedDeviceId = `ARCHIVED-${duplicate.id.slice(0, 8)}`;
+    const duplicateConfig = asRecord(duplicate.config);
+    const duplicateMetadata = getRecordChild(duplicateConfig, 'metadata');
     const archivedConfig = {
-        ...asRecord(duplicate.config),
+        ...duplicateConfig,
         active: false,
         is_active: false,
+        runtime: {},
+        pairing: {
+            ...getRecordChild(duplicateConfig, 'pairing'),
+            status: 'ARCHIVED',
+        },
         metadata: {
-            ...getRecordChild(asRecord(duplicate.config), 'metadata'),
+            ...duplicateMetadata,
             archived: true,
             archived_at: new Date().toISOString(),
             archived_reason: 'DUPLICATE_TERMINAL_MERGED_TO_CANONICAL',
+            terminal_id: null,
+            terminalId: null,
+            pos_terminal_id: null,
+            posTerminalId: null,
+            erp_terminal_id: null,
             canonical_erp_terminal_id: canonicalTerminalId,
         },
     };
@@ -588,6 +602,7 @@ async function archiveOrDeleteErpTerminal(
         .update({
             device_id: archivedDeviceId,
             name: `ARCHIVED-${duplicate.name || 'terminal'}-${duplicate.id.slice(0, 8)}`,
+            last_seen: null,
             config: archivedConfig,
         })
         .eq('id', duplicate.id);
@@ -773,7 +788,7 @@ Deno.serve(async (request) => {
 
         const { data: tenantData, error: tenantError } = await supabase
             .from('tenants')
-            .select('id,name,status,type,contracted_product,pos_runtime')
+            .select('id,name,slug,email,status,type,contracted_product,pos_runtime')
             .eq('id', tenantId)
             .maybeSingle();
 
@@ -1312,7 +1327,7 @@ Deno.serve(async (request) => {
             authorized_device_id: newAuthorizedDeviceId,
             previous_device_id: action === 'TAKEOVER' && !alreadyAuthorizedDevice ? previousDeviceId : registry?.previous_device_id || null,
             last_rejected_device_id: null,
-            auth_status: action === 'TAKEOVER' ? 'REAUTH_COMPLETED' : 'AUTHORIZED',
+            auth_status: 'AUTHORIZED',
             last_auth_error: null,
             last_auth_attempt_at: completedAt,
             device_token_status: deviceTokenStatus,
@@ -1322,7 +1337,7 @@ Deno.serve(async (request) => {
                     ? 'ERP_DEVICE_MAPPING_REPAIR'
                     : 'DEVICE_REINSTALL_OR_REPLACEMENT'
                 : null,
-            requires_pos_reauth: true,
+            requires_pos_reauth: false,
             is_revoked: false,
             status: 'ONLINE',
             updated_at: completedAt,
@@ -1339,8 +1354,20 @@ Deno.serve(async (request) => {
             if (updateError) throw updateError;
             registryActionResult = 'updated_existing';
         } else {
+            const registryLocalIp = '127.0.0.1';
+            const tenantSlug = (tenant.slug || tenant.name || tenantId).trim();
+            const tenantEmail = (tenant.email || `${tenantId}@unknown.local`).trim().toLowerCase();
             const insertPayload = {
                 tenant_id: tenantId,
+                tenant_slug: tenantSlug,
+                tenant_email: tenantEmail,
+                hostname: 'localhost',
+                protocol: 'https',
+                port: 3001,
+                local_ip: registryLocalIp,
+                local_ips: [registryLocalIp],
+                endpoint_url: `https://${registryLocalIp}:3001`,
+                is_primary: true,
                 ...registryUpdate,
                 last_seen_at: completedAt,
             };
