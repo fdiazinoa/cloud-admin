@@ -44,8 +44,7 @@ interface RegistryRecord {
 interface PublicTerminalRecord {
     id: string;
     tenant_id: string;
-    device_token?: string | null;
-    name?: string | null;
+    code?: string | null;
     is_active?: boolean | null;
 }
 
@@ -292,7 +291,7 @@ Deno.serve(async (request) => {
         const { data: terminalData, error: terminalError } = await supabase
             .schema('public')
             .from('terminals')
-            .select('id,tenant_id,device_token,name,is_active')
+            .select('id,tenant_id,code,is_active')
             .eq('tenant_id', tenantId)
             .eq('id', terminalId)
             .maybeSingle();
@@ -310,7 +309,6 @@ Deno.serve(async (request) => {
         const authorizedDeviceId = registry?.authorized_device_id
             || registry?.current_device_id
             || registry?.device_id
-            || publicTerminal?.device_token
             || null;
         const alreadyAuthorizedDevice = action === 'TAKEOVER' && sameDeviceId(authorizedDeviceId, deviceId);
         const previousDeviceId = action === 'TAKEOVER'
@@ -327,7 +325,7 @@ Deno.serve(async (request) => {
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
-            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             old_device_id: previousDeviceId,
             new_device_id: action === 'REVOKE_DEVICE' ? authorizedDeviceId : deviceId,
             action,
@@ -361,7 +359,7 @@ Deno.serve(async (request) => {
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                 old_device_id: deviceId,
                 new_device_id: authorizedDeviceId,
                 action,
@@ -385,8 +383,14 @@ Deno.serve(async (request) => {
         }
 
         const erpPayloadBody: Record<string, unknown> = {
+            terminalId,
+            terminal_id: terminalId,
+            terminalName: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             deviceId,
+            device_id: deviceId,
             rotateDeviceToken: true,
+            rotate_device_token: true,
             reason: action === 'ROTATE_TOKEN'
                 ? 'TOKEN_ROTATION_REQUIRED'
                 : alreadyAuthorizedDevice
@@ -418,7 +422,7 @@ Deno.serve(async (request) => {
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                 old_device_id: previousDeviceId,
                 new_device_id: deviceId,
                 action,
@@ -483,7 +487,7 @@ Deno.serve(async (request) => {
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
-            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             old_device_id: previousDeviceId,
             new_device_id: newAuthorizedDeviceId,
             action,
