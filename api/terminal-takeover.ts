@@ -619,8 +619,12 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                     last_takeover_at: new Date().toISOString(),
                     previous_device_id: previousDeviceId,
                     current_device_id: newDeviceId,
+                    authorized_device_id: newDeviceId,
+                    auth_status: "AUTHORIZED",
                     revocation_reason: "TERMINAL_TAKEOVER",
-                    requires_pos_reauth: true,
+                    requires_pos_reauth: false,
+                    is_revoked: false,
+                    last_auth_error: null,
                     updated_at: new Date().toISOString(),
                 })
                 .eq("id", registry.id);

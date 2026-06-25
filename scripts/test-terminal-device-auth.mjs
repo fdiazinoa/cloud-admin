@@ -33,6 +33,10 @@ assert.match(actionFunction, /requires_pos_reauth:\s*false/, 'confirmed ERP repa
 assert.match(actionFunction, /auth_status:\s*'AUTHORIZED'/, 'confirmed ERP repair must use POS-compatible authorized status');
 assert.match(actionFunction, /runtime:\s*\{\}/, 'archived duplicate ERP terminals must not keep runtime tokens');
 assert.match(actionFunction, /terminal_id:\s*null/, 'archived duplicate ERP terminals must not keep operational terminal_id metadata');
+assert.match(actionFunction, /permissivePosErpAuth/, 'POS_ERP device mismatch must be audited without blocking the repair flow');
+assert.match(actionFunction, /result:\s*'BYPASSED'/, 'permissive POS_ERP auth must audit bypassed device mismatch');
+assert.match(attemptsFunction, /permissivePosErpAuth/, 'auth attempts must not re-block POS_ERP registries');
+assert.match(attemptsFunction, /auth_status:\s*permissivePosErpAuth \? 'AUTHORIZED' : 'DEVICE_MISMATCH'/, 'POS_ERP rejected attempts must stay authorized');
 assert.match(actionFunction, /WAITING_ERP_CONFIRMATION/, 'device action must keep repair pending when ERP does not confirm');
 assert.match(actionFunction, /BOUND_AUTH_MISMATCH/, 'device action must detect Cloud/ERP bound auth mismatch');
 assert.match(actionFunction, /CLOUD_ADMIN_REPAIR_REQUESTED/, 'device action must audit repair requests');

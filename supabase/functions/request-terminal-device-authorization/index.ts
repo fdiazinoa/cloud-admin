@@ -1238,8 +1238,9 @@ Deno.serve(async (request) => {
                 tokenPreview,
             })
             : { confirmed: true, status: 'AUTHORIZED', checks: {} };
+        const permissivePosErpAuth = tenant.contracted_product === 'POS_ERP';
 
-        if (!erpBindingConfirmation.confirmed) {
+        if (!erpBindingConfirmation.confirmed && !permissivePosErpAuth) {
             const failedAt = new Date().toISOString();
             if (registry?.id) {
                 const { error: updateError } = await supabase
@@ -1317,6 +1318,26 @@ Deno.serve(async (request) => {
                 erp_confirmation: erpBindingConfirmation.checks,
                 message: 'ERP no confirmo que el device quedara autorizado en la terminal canonica. Cloud-Admin no marcara takeover completado hasta que ERP confirme.',
             }, 409);
+        }
+        if (!erpBindingConfirmation.confirmed && permissivePosErpAuth) {
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalDisplayCode,
+                old_device_id: previousDeviceId,
+                new_device_id: newAuthorizedDeviceId,
+                action: 'CLOUD_ADMIN_DEVICE_MISMATCH_DETECTED',
+                performed_by: performedBy,
+                reason: 'POS_ERP permissive device mode bypassed blocking mismatch after ERP response.',
+                result: 'BYPASSED',
+                erp_response_status: erpResponse.status,
+                erp_error_code: erpBindingConfirmation.status,
+                metadata: {
+                    erp_payload: sanitizedPayload,
+                    erp_binding_confirmation: erpBindingConfirmation,
+                    permissive_pos_erp_auth: true,
+                },
+            });
         }
 
         const registryUpdate: Record<string, unknown> = {
