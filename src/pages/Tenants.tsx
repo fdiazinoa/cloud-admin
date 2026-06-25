@@ -470,7 +470,11 @@ export const Tenants: React.FC = () => {
     };
 
     const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => (
-        terminal.erp_terminal_uuid || terminal.terminal_id || terminal.id
+        terminal.registry?.terminal_id?.trim()
+        || terminal.id
+        || terminal.terminal_id
+        || terminal.erp_terminal_uuid
+        || ''
     );
 
     const getTakeoverSelectionKey = (terminalId: string, registryId?: string | null) => (
