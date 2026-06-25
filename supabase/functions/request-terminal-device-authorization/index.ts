@@ -44,8 +44,7 @@ interface RegistryRecord {
 interface PublicTerminalRecord {
     id: string;
     tenant_id: string;
-    device_token?: string | null;
-    name?: string | null;
+    code?: string | null;
     is_active?: boolean | null;
 }
 
@@ -257,15 +256,22 @@ Deno.serve(async (request) => {
             || request.headers.get('x-actor-source')
             || 'cloud-admin';
 
-        if (!tenantId || !terminalId || !deviceId || !action) {
+        if (!tenantId || !terminalId || !action) {
             return json({
                 error: 'VALIDATION_ERROR',
-                message: 'Selecciona tenant, terminal, device_id y accion.',
+                message: 'Selecciona tenant, terminal y accion.',
             }, 400);
         }
 
         if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE'].includes(action)) {
             return json({ error: 'INVALID_ACTION', message: 'Accion de autorizacion no soportada.' }, 400);
+        }
+
+        if (action !== 'REVOKE_DEVICE' && !deviceId) {
+            return json({
+                error: 'VALIDATION_ERROR',
+                message: 'Selecciona tenant, terminal, device_id y accion.',
+            }, 400);
         }
 
         if (!body.confirm_action) {
@@ -292,7 +298,7 @@ Deno.serve(async (request) => {
         const { data: terminalData, error: terminalError } = await supabase
             .schema('public')
             .from('terminals')
-            .select('id,tenant_id,device_token,name,is_active')
+            .select('id,tenant_id,code,is_active')
             .eq('tenant_id', tenantId)
             .eq('id', terminalId)
             .maybeSingle();
@@ -310,14 +316,21 @@ Deno.serve(async (request) => {
         const authorizedDeviceId = registry?.authorized_device_id
             || registry?.current_device_id
             || registry?.device_id
-            || publicTerminal?.device_token
             || null;
-        const alreadyAuthorizedDevice = action === 'TAKEOVER' && sameDeviceId(authorizedDeviceId, deviceId);
+        const effectiveDeviceId = deviceId || (action === 'REVOKE_DEVICE' ? authorizedDeviceId : null);
+        if (!effectiveDeviceId) {
+            return json({
+                error: 'DEVICE_ID_NOT_FOUND',
+                message: 'La terminal no tiene device_id autorizado para limpiar o revocar.',
+            }, 400);
+        }
+
+        const alreadyAuthorizedDevice = action === 'TAKEOVER' && sameDeviceId(authorizedDeviceId, effectiveDeviceId);
         const previousDeviceId = action === 'TAKEOVER'
             ? authorizedDeviceId
             : registry?.previous_device_id || authorizedDeviceId;
 
-        if (action === 'ROTATE_TOKEN' && authorizedDeviceId && authorizedDeviceId !== deviceId) {
+        if (action === 'ROTATE_TOKEN' && authorizedDeviceId && authorizedDeviceId !== effectiveDeviceId) {
             return json({
                 error: 'DEVICE_NOT_AUTHORIZED',
                 message: 'Solo puedes rotar credenciales del device autorizado actual.',
@@ -327,9 +340,9 @@ Deno.serve(async (request) => {
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
-            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             old_device_id: previousDeviceId,
-            new_device_id: action === 'REVOKE_DEVICE' ? authorizedDeviceId : deviceId,
+            new_device_id: action === 'REVOKE_DEVICE' ? authorizedDeviceId : effectiveDeviceId,
             action,
             performed_by: performedBy,
             reason,
@@ -344,7 +357,7 @@ Deno.serve(async (request) => {
 
         if (action === 'REVOKE_DEVICE') {
             const revokedAt = new Date().toISOString();
-            if (registry?.id && registry.device_id === deviceId) {
+            if (registry?.id && sameDeviceId(registry.device_id || registry.current_device_id || registry.authorized_device_id, effectiveDeviceId)) {
                 const { error: revokeError } = await supabase
                     .from('tenant_server_registry')
                     .update({
@@ -361,8 +374,8 @@ Deno.serve(async (request) => {
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
-                old_device_id: deviceId,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+                old_device_id: effectiveDeviceId,
                 new_device_id: authorizedDeviceId,
                 action,
                 performed_by: performedBy,
@@ -378,15 +391,21 @@ Deno.serve(async (request) => {
                 status: 'success',
                 success: true,
                 action: 'device_revoked',
-                revoked_device_id: deviceId,
+                revoked_device_id: effectiveDeviceId,
                 authorized_device_id: authorizedDeviceId,
                 message: 'Equipo anterior marcado como revocado en Cloud-Admin.',
             });
         }
 
         const erpPayloadBody: Record<string, unknown> = {
-            deviceId,
+            terminalId,
+            terminal_id: terminalId,
+            terminalName: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            deviceId: effectiveDeviceId,
+            device_id: effectiveDeviceId,
             rotateDeviceToken: true,
+            rotate_device_token: true,
             reason: action === 'ROTATE_TOKEN'
                 ? 'TOKEN_ROTATION_REQUIRED'
                 : alreadyAuthorizedDevice
@@ -418,9 +437,9 @@ Deno.serve(async (request) => {
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+                terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                 old_device_id: previousDeviceId,
-                new_device_id: deviceId,
+                new_device_id: effectiveDeviceId,
                 action,
                 performed_by: performedBy,
                 reason,
@@ -449,7 +468,7 @@ Deno.serve(async (request) => {
                     : null;
         const tokenPreview = getTokenPreview(sanitizedPayload);
         const completedAt = new Date().toISOString();
-        const newAuthorizedDeviceId = action === 'ROTATE_TOKEN' ? authorizedDeviceId || deviceId : deviceId;
+        const newAuthorizedDeviceId = action === 'ROTATE_TOKEN' ? authorizedDeviceId || effectiveDeviceId : effectiveDeviceId;
 
         if (registry?.id) {
             const registryUpdate: Record<string, unknown> = {
@@ -483,7 +502,7 @@ Deno.serve(async (request) => {
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
             terminal_id: terminalId,
-            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.name || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             old_device_id: previousDeviceId,
             new_device_id: newAuthorizedDeviceId,
             action,
