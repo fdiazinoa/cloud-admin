@@ -681,7 +681,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         supabaseAdmin
             .schema("public")
             .from("terminals")
-            .select("id,tenant_id,device_token,name,is_active,last_checkin_at,created_at")
+            .select("id,tenant_id,store_id,code,terminal_type,platform,app_version,last_heartbeat_at,is_active,created_at")
             .eq("tenant_id", tenantId)
             .order("created_at", { ascending: true }),
         supabaseAdmin
@@ -714,20 +714,28 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         if (row.terminal_id && !registryByTerminalId.has(row.terminal_id)) {
             registryByTerminalId.set(row.terminal_id, row);
         }
-        if (row.device_id && !registryByDeviceId.has(row.device_id)) {
-            registryByDeviceId.set(row.device_id, row);
+        const registryDeviceId = row.authorized_device_id || row.current_device_id || row.device_id;
+        if (registryDeviceId && !registryByDeviceId.has(registryDeviceId)) {
+            registryByDeviceId.set(registryDeviceId, row);
         }
     }
 
     const snapshots: TenantTerminalSnapshot[] = ((terminalsRes.data as Terminal[]) || []).map((terminal) => {
-        const registry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminal.device_token) || null;
+        const terminalDeviceId = terminal.device_token || terminal.device_id || terminal.current_device_id || null;
+        const registry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminalDeviceId || "") || null;
         const erpBinding = resolveErpTerminalBinding(
             erpBindings,
             terminal.id,
             terminal.name,
+            terminal.code,
+            terminal.terminal_name,
             terminal.device_token,
+            terminal.device_id,
+            terminal.current_device_id,
             registry?.terminal_id,
             registry?.terminal_name,
+            registry?.authorized_device_id,
+            registry?.current_device_id,
             registry?.device_id,
         );
         if (registry?.id) {
@@ -738,14 +746,14 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             id: terminal.id,
             tenant_id: terminal.tenant_id,
             terminal_id: terminal.id,
-            name: terminal.name || terminal.id,
-            device_token: terminal.device_token,
-            is_active: Boolean(terminal.is_active),
-            last_checkin_at: terminal.last_checkin_at || null,
+            name: terminal.name || terminal.terminal_name || terminal.code || terminal.id,
+            device_token: terminalDeviceId || registry?.device_id || null,
+            is_active: terminal.is_active ?? terminal.active ?? true,
+            last_checkin_at: terminal.last_checkin_at || terminal.last_seen_at || terminal.last_heartbeat_at || null,
             created_at: terminal.created_at || null,
             erp_terminal_uuid: erpBinding?.erpTerminalId || null,
             erp_current_device_id: erpBinding?.deviceId || null,
-            erp_app_version: erpBinding?.appVersion || null,
+            erp_app_version: erpBinding?.appVersion || terminal.app_version || null,
             erp_app_version_code: erpBinding?.appVersionCode || null,
             registry,
         };
@@ -1249,7 +1257,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
         const { data: terminals, error: terminalsError } = await supabaseAdmin
             .schema("public")
             .from("erp_terminals")
-            .select("id,device_id,name,code,config,last_seen,created_at")
+            .select("id,device_id,name,config,last_seen,created_at")
             .in("store_id", storeIds);
 
         if (terminalsError) {
@@ -1323,9 +1331,10 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
             [
                 terminal.id,
                 terminal.name,
-                terminal.code,
                 terminal.device_id,
                 metadata.terminal_id,
+                metadata.terminal_name,
+                metadata.terminalName,
                 metadata.erp_terminal_id,
             ].forEach((candidate) => {
                 const key = normalizeKey(candidate);
