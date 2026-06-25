@@ -1804,7 +1804,7 @@ export async function requestTerminalDeviceAction(
             throw new Error("registry_id requerido para sincronizar device autorizado.");
         }
         if (!input.deviceId) {
-            throw new Error("device_id requerido para sincronizar device autorizado.");
+            throw new Error("DEVICE_ID_REQUIRED: device_id requerido para sincronizar device autorizado.");
         }
         return syncTerminalAuthorizedDevice({
             tenantId: input.tenantId,

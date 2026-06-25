@@ -22,6 +22,8 @@ assert.match(actionFunction, /CLEAR_TERMINAL_DEVICES/, 'device action must suppo
 assert.match(actionFunction, /tenant_server_registry[\s\S]*delete/, 'clear action must delete terminal registry bindings');
 assert.match(actionFunction, /clearErpTerminalDeviceBinding/, 'clear action must also clear canonical ERP terminal device bindings');
 assert.match(actionFunction, /erp_terminal_cleared/, 'clear action must report whether the ERP terminal binding was cleared');
+assert.match(actionFunction, /`ARCHIVED-\$\{terminalName\}`/, 'clear action must scrub archived ERP duplicates for the terminal name');
+assert.doesNotMatch(actionFunction, /return Array\\.from\\(matches\\.values\\(\\)\\)\\.filter\\(\\(terminal\\) => !isArchivedErpTerminal\\(terminal\\)\\)/, 'clear action must not skip archived duplicates before scrubbing tokens');
 assert.doesNotMatch(actionFunction, /error:\s*'SAME_DEVICE_ID'/, 'takeover must be able to repair ERP mapping even when Cloud already authorizes the device');
 assert.match(actionFunction, /ERP_DEVICE_MAPPING_REPAIR/, 'same-device takeover must repair Cloud/ERP terminal mapping drift');
 assert.match(actionFunction, /tokenKeys/, 'function must define token keys to sanitize sensitive payloads');
@@ -46,6 +48,16 @@ assert.match(actionFunction, /CLOUD_ADMIN_ERP_REPAIR_CONFIRMED/, 'device action 
 assert.match(actionFunction, /CLOUD_ADMIN_ERP_REPAIR_FAILED/, 'device action must audit failed ERP repair confirmation');
 assert.match(actionFunction, /CLOUD_ADMIN_DEVICE_MISMATCH_DETECTED/, 'device action must audit Cloud/ERP device mismatch detection');
 assert.match(actionFunction, /CLOUD_ADMIN_CREDENTIALS_ROTATED/, 'device action must audit confirmed credential rotations');
+assert.match(actionFunction, /DEVICE_ID_REQUIRED/, 'device action must block ERP calls when device_id is missing');
+assert.match(actionFunction, /cloud_admin_device_authorization_started/, 'device action must log authorization start');
+assert.match(actionFunction, /cloud_admin_device_id_missing/, 'device action must log missing device_id');
+assert.match(actionFunction, /cloud_admin_erp_repair_payload/, 'device action must log ERP repair payload');
+assert.match(actionFunction, /cloud_admin_erp_repair_skipped_missing_device/, 'device action must log skipped ERP repair without device_id');
+assert.match(actionFunction, /cloud_admin_authorized_device_persisted/, 'device action must log authorized device persistence');
+assert.match(actionFunction, /cloud_admin_terminal_device_synced_to_erp/, 'device action must log ERP terminal-device sync');
+assert.match(actionFunction, /erp_terminal_id:\s*canonicalErpTerminalId/, 'ERP payload must include canonical erp_terminal_id');
+assert.match(actionFunction, /cloud_admin_tenant_id:\s*cloudAdminTenantId/, 'ERP payload must include cloud_admin_tenant_id');
+assert.match(actionFunction, /device_id:\s*effectiveDeviceId/, 'ERP payload must include authorized device_id');
 
 assert.match(migration, /terminal_device_audit/, 'migration must create terminal device audit');
 assert.match(migration, /DEVICE_MISMATCH/, 'migration must allow DEVICE_MISMATCH state');
@@ -80,7 +92,9 @@ assert.match(tenantsPage, /WAITING_ERP_CONFIRMATION/, 'UI must not show complete
 assert.match(tenantsPage, /BOUND_AUTH_MISMATCH/, 'UI must show Cloud/ERP bound auth mismatch');
 assert.match(tenantsPage, /Rotar credenciales/, 'UI must expose credential rotation action');
 assert.match(tenantsPage, /Revocar equipo anterior/, 'UI must expose previous-device revocation action');
+assert.match(tenantsPage, /DEVICE_ID_REQUIRED/, 'UI must surface DEVICE_ID_REQUIRED before device actions');
 assert.match(tenantService, /isArchivedErpTerminalRow/, 'tenant service must filter archived ERP terminals from canonical bindings');
+assert.match(tenantService, /DEVICE_ID_REQUIRED/, 'tenant service must block local device sync without device_id');
 assert.match(tenantService, /metadata\.archived === true/, 'tenant service must ignore archived ERP terminal metadata');
 assert.match(observabilityService, /isArchivedErpTerminal/, 'observability must filter archived ERP terminals from operational rows');
 assert.match(observabilityService, /metadata\.archived === true/, 'observability must ignore archived ERP terminal metadata');
