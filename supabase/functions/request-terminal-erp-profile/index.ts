@@ -19,6 +19,8 @@ interface RegistryRecord {
     terminal_id?: string | null;
     terminal_name?: string | null;
     device_id?: string | null;
+    current_device_id?: string | null;
+    authorized_device_id?: string | null;
 }
 
 const corsHeaders = {
@@ -130,7 +132,7 @@ Deno.serve(async (request) => {
         if (registryId) {
             const { data, error } = await supabase
                 .from('tenant_server_registry')
-                .select('id,tenant_id,terminal_id,terminal_name,device_id')
+                .select('id,tenant_id,terminal_id,terminal_name,device_id,current_device_id,authorized_device_id')
                 .eq('tenant_id', tenantId)
                 .eq('id', registryId)
                 .maybeSingle();
@@ -141,7 +143,7 @@ Deno.serve(async (request) => {
         if (!registry) {
             const { data, error } = await supabase
                 .from('tenant_server_registry')
-                .select('id,tenant_id,terminal_id,terminal_name,device_id')
+                .select('id,tenant_id,terminal_id,terminal_name,device_id,current_device_id,authorized_device_id')
                 .eq('tenant_id', tenantId)
                 .eq('terminal_id', terminalId)
                 .order('last_seen_at', { ascending: false })
@@ -149,6 +151,20 @@ Deno.serve(async (request) => {
                 .maybeSingle();
             if (error) throw error;
             registry = (data as RegistryRecord | null) || null;
+        }
+
+        const effectiveDeviceId = body.device_id
+            || registry?.authorized_device_id
+            || registry?.current_device_id
+            || registry?.device_id
+            || null;
+        const effectiveTerminalName = body.terminal_name || registry?.terminal_name || null;
+
+        if (!effectiveDeviceId) {
+            return json({
+                error: 'DEVICE_ID_NOT_FOUND',
+                message: 'La terminal no tiene device_id suficiente para preparar el perfil ERP.',
+            }, 400);
         }
 
         const erpResponse = await fetch(`${erpApiUrl.replace(/\/$/, '')}/api/sync/terminals/${encodeURIComponent(terminalId)}/prepare-profile`, {
@@ -161,9 +177,13 @@ Deno.serve(async (request) => {
             },
             body: JSON.stringify({
                 cloudAdminTenantId: tenantId,
+                cloud_admin_tenant_id: tenantId,
                 terminalId,
-                deviceId: body.device_id || registry?.device_id || null,
-                terminalName: body.terminal_name || registry?.terminal_name || null,
+                terminal_id: terminalId,
+                deviceId: effectiveDeviceId,
+                device_id: effectiveDeviceId,
+                terminalName: effectiveTerminalName,
+                terminal_name: effectiveTerminalName,
             }),
         });
 

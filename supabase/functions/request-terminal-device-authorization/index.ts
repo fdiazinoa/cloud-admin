@@ -1047,8 +1047,14 @@ Deno.serve(async (request) => {
         }
 
         const erpPayloadBody: Record<string, unknown> = {
+            terminalId,
+            terminal_id: terminalId,
+            terminalName: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             deviceId,
+            device_id: deviceId,
             rotateDeviceToken: true,
+            rotate_device_token: true,
             reason: action === 'ROTATE_TOKEN'
                 ? 'TOKEN_ROTATION_REQUIRED'
                 : alreadyAuthorizedDevice
