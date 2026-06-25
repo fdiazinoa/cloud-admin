@@ -123,6 +123,14 @@ export const Tenants: React.FC = () => {
         if (
             typeof error === 'object'
             && error !== null
+            && 'error' in error
+            && (error as { error?: unknown }).error === 'DEVICE_ID_REQUIRED'
+        ) {
+            return 'DEVICE_ID_REQUIRED: selecciona o confirma el device_id autorizado actual antes de llamar ERP.';
+        }
+        if (
+            typeof error === 'object'
+            && error !== null
             && 'message' in error
             && typeof (error as { message?: unknown }).message === 'string'
         ) {
@@ -1068,7 +1076,7 @@ export const Tenants: React.FC = () => {
         const requestedDeviceId = requestedDeviceIdInput.trim();
         const terminalId = getTerminalTakeoverId(terminal);
         if (!terminalId || !requestedDeviceId) {
-            alert('Esta terminal no tiene terminal_id o device_id suficiente para autorizar.');
+            alert('DEVICE_ID_REQUIRED: esta terminal necesita terminal_id y device_id del POS autorizado para autorizar.');
             return;
         }
 
@@ -1124,7 +1132,7 @@ export const Tenants: React.FC = () => {
         const terminalId = getTerminalTakeoverId(terminal);
         const deviceId = getTerminalAuthorizedDeviceId(terminal);
         if (!terminalId || !deviceId) {
-            alert('Esta terminal necesita terminal_id y device_id autorizado para reparar el enlace ERP.');
+            alert('DEVICE_ID_REQUIRED: esta terminal necesita terminal_id y device_id autorizado actual para reparar el enlace ERP.');
             return;
         }
 
@@ -1155,7 +1163,7 @@ export const Tenants: React.FC = () => {
         const terminalId = getTerminalTakeoverId(terminal);
         const deviceId = terminal.registry?.device_id?.trim() || getTerminalAuthorizedDeviceId(terminal);
         if (!terminalId || !deviceId) {
-            alert('Esta terminal necesita terminal_id y device_id en el registro para sincronizar autorizacion.');
+            alert('DEVICE_ID_REQUIRED: esta terminal necesita terminal_id y device_id en el registro para sincronizar autorizacion.');
             return;
         }
 
@@ -1223,7 +1231,7 @@ export const Tenants: React.FC = () => {
         const terminalId = getTerminalTakeoverId(terminal);
         const deviceId = getTerminalAuthorizedDeviceId(terminal);
         if (!terminalId || !deviceId) {
-            alert('Esta terminal necesita terminal_id y device_id autorizado para rotar credenciales.');
+            alert('DEVICE_ID_REQUIRED: esta terminal necesita terminal_id y device_id autorizado actual para rotar credenciales.');
             return;
         }
 
