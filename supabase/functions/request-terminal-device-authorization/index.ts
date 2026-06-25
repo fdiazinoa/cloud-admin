@@ -730,15 +730,22 @@ Deno.serve(async (request) => {
             || request.headers.get('x-actor-source')
             || 'cloud-admin';
 
-        if (!tenantId || !terminalId || !requestedAction || (!deviceId && requestedAction !== 'CLEAR_TERMINAL_DEVICES')) {
+        if (!tenantId || !terminalId || !requestedAction) {
             return json({
                 error: 'VALIDATION_ERROR',
-                message: 'Selecciona tenant, terminal, accion y device_id cuando aplique.',
+                message: 'Selecciona tenant, terminal y accion.',
             }, 400);
         }
 
         if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE', 'GENERATE_PAIRING_CODE', 'CLEAR_TERMINAL_DEVICES'].includes(requestedAction)) {
             return json({ error: 'INVALID_ACTION', message: 'Accion de autorizacion no soportada.' }, 400);
+        }
+
+        if (['TAKEOVER', 'ROTATE_TOKEN', 'SYNC_AUTHORIZED_DEVICE'].includes(action) && !deviceId) {
+            return json({
+                error: 'VALIDATION_ERROR',
+                message: 'Selecciona tenant, terminal, device_id y accion.',
+            }, 400);
         }
 
         if (!body.confirm_action) {
@@ -872,7 +879,15 @@ Deno.serve(async (request) => {
             || registry?.current_device_id?.trim()
             || registry?.device_id?.trim()
             || null;
-        const alreadyAuthorizedDevice = action === 'TAKEOVER' && sameDeviceId(effectiveAuthorizedDeviceId, deviceId);
+        const effectiveDeviceId = deviceId || (action === 'REVOKE_DEVICE' ? effectiveAuthorizedDeviceId : null);
+        if (!effectiveDeviceId) {
+            return json({
+                error: 'DEVICE_ID_NOT_FOUND',
+                message: 'La terminal no tiene device_id autorizado para limpiar o revocar.',
+            }, 400);
+        }
+
+        const alreadyAuthorizedDevice = action === 'TAKEOVER' && sameDeviceId(effectiveAuthorizedDeviceId, effectiveDeviceId);
         const previousDeviceId = action === 'TAKEOVER'
             ? effectiveAuthorizedDeviceId
             : registry?.previous_device_id || effectiveAuthorizedDeviceId;
@@ -944,7 +959,7 @@ Deno.serve(async (request) => {
             });
         }
 
-        if (action === 'ROTATE_TOKEN' && effectiveAuthorizedDeviceId && effectiveAuthorizedDeviceId !== deviceId) {
+        if (action === 'ROTATE_TOKEN' && effectiveAuthorizedDeviceId && effectiveAuthorizedDeviceId !== effectiveDeviceId) {
             return json({
                 error: 'DEVICE_NOT_AUTHORIZED',
                 message: 'Solo puedes rotar credenciales del device autorizado actual.',
@@ -970,7 +985,7 @@ Deno.serve(async (request) => {
             terminal_id: terminalId,
             terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             old_device_id: previousDeviceId,
-            new_device_id: action === 'REVOKE_DEVICE' ? effectiveAuthorizedDeviceId : deviceId,
+            new_device_id: action === 'REVOKE_DEVICE' ? effectiveAuthorizedDeviceId : effectiveDeviceId,
             action,
             performed_by: performedBy,
             reason,
@@ -1006,7 +1021,7 @@ Deno.serve(async (request) => {
 
         if (action === 'REVOKE_DEVICE') {
             const revokedAt = new Date().toISOString();
-            if (registry?.id && registry.device_id === deviceId) {
+            if (registry?.id && sameDeviceId(registry.device_id || registry.current_device_id || registry.authorized_device_id, effectiveDeviceId)) {
                 const { error: revokeError } = await supabase
                     .from('tenant_server_registry')
                     .update({
@@ -1024,7 +1039,7 @@ Deno.serve(async (request) => {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
                 terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
-                old_device_id: deviceId,
+                old_device_id: effectiveDeviceId,
                 new_device_id: effectiveAuthorizedDeviceId,
                 action,
                 performed_by: performedBy,
@@ -1040,15 +1055,21 @@ Deno.serve(async (request) => {
                 status: 'success',
                 success: true,
                 action: 'device_revoked',
-                revoked_device_id: deviceId,
+                revoked_device_id: effectiveDeviceId,
                 authorized_device_id: effectiveAuthorizedDeviceId,
                 message: 'Equipo anterior marcado como revocado en Cloud-Admin.',
             });
         }
 
         const erpPayloadBody: Record<string, unknown> = {
-            deviceId,
+            terminalId,
+            terminal_id: terminalId,
+            terminalName: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            deviceId: effectiveDeviceId,
+            device_id: effectiveDeviceId,
             rotateDeviceToken: true,
+            rotate_device_token: true,
             reason: action === 'ROTATE_TOKEN'
                 ? 'TOKEN_ROTATION_REQUIRED'
                 : alreadyAuthorizedDevice
@@ -1130,7 +1151,7 @@ Deno.serve(async (request) => {
                 terminal_id: terminalId,
                 terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
                 old_device_id: previousDeviceId,
-                new_device_id: deviceId,
+                new_device_id: effectiveDeviceId,
                 action,
                 performed_by: performedBy,
                 reason,
@@ -1159,7 +1180,7 @@ Deno.serve(async (request) => {
                     : null;
         const tokenPreview = getTokenPreview(sanitizedPayload);
         const completedAt = new Date().toISOString();
-        const newAuthorizedDeviceId = action === 'ROTATE_TOKEN' ? effectiveAuthorizedDeviceId || deviceId : deviceId;
+        const newAuthorizedDeviceId = action === 'ROTATE_TOKEN' ? effectiveAuthorizedDeviceId || effectiveDeviceId : effectiveDeviceId;
         const postErpConsolidation = action === 'TAKEOVER' && newAuthorizedDeviceId
             ? await consolidateErpTerminalDeviceDuplicates(supabase, {
                 tenantId,
