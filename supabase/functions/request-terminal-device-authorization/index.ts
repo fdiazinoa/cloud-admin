@@ -322,28 +322,138 @@ function buildClearedErpTerminalConfig(terminal: ErpTerminalRecord, clearedAt: s
     };
 }
 
-async function clearErpTerminalDeviceBinding(
+function isArchivedErpTerminal(terminal: ErpTerminalRecord) {
+    const config = asRecord(terminal.config);
+    const metadata = getRecordChild(config, 'metadata');
+    const name = firstText(terminal.name)?.toUpperCase() || '';
+    return name.startsWith('ARCHIVED-') || metadata.archived === true || config.active === false || config.is_active === false;
+}
+
+function erpTerminalMatchesClearTarget(
+    terminal: ErpTerminalRecord,
+    terminalId: string,
+    terminalName?: string | null,
+) {
+    if (terminal.id === terminalId) return true;
+    const config = asRecord(terminal.config);
+    const metadata = getRecordChild(config, 'metadata');
+    const normalizedName = firstText(terminalName)?.toUpperCase();
+    if (!normalizedName) return false;
+
+    return [
+        terminal.name,
+        metadata.terminal_name,
+        metadata.terminalName,
+        metadata.terminal_code,
+        metadata.terminalCode,
+        metadata.terminal_id,
+        metadata.terminalId,
+    ]
+        .map((value) => firstText(value)?.toUpperCase())
+        .some((value) => value === normalizedName);
+}
+
+async function loadErpTerminalsForClear(
     supabase: ReturnType<typeof createClient>,
     terminalId: string,
+    terminalName?: string | null,
 ) {
-    const terminal = await loadCanonicalErpTerminal(supabase, terminalId);
-    if (!terminal?.id) return { cleared: false, erpTerminalId: null, previousDeviceId: null };
+    const direct = await loadCanonicalErpTerminal(supabase, terminalId);
+    const matches = new Map<string, ErpTerminalRecord>();
+    if (direct?.id) matches.set(direct.id, direct);
+
+    if (terminalName) {
+        const { data, error } = await supabase
+            .schema('public')
+            .from('erp_terminals')
+            .select('id,name,device_id,config,last_seen,created_at')
+            .eq('name', terminalName)
+            .order('last_seen', { ascending: false });
+        if (error) throw error;
+        for (const row of ((data as ErpTerminalRecord[] | null) || [])) {
+            if (erpTerminalMatchesClearTarget(row, terminalId, terminalName)) {
+                matches.set(row.id, row);
+            }
+        }
+    }
+
+    return Array.from(matches.values()).filter((terminal) => !isArchivedErpTerminal(terminal));
+}
+
+function buildArchivedDuplicateErpTerminalConfig(terminal: ErpTerminalRecord, canonicalTerminalId: string, archivedAt: string) {
+    const config = asRecord(terminal.config);
+    const metadata = getRecordChild(config, 'metadata');
+    return {
+        ...buildClearedErpTerminalConfig(terminal, archivedAt),
+        active: false,
+        is_active: false,
+        pairing: {
+            ...getRecordChild(config, 'pairing'),
+            status: 'ARCHIVED',
+        },
+        metadata: {
+            ...metadata,
+            archived: true,
+            archived_at: archivedAt,
+            archived_reason: 'DUPLICATE_TERMINAL_CLEARED_BY_CLOUD_ADMIN',
+            canonical_erp_terminal_id: canonicalTerminalId,
+            terminal_id: null,
+            terminalId: null,
+            erp_terminal_id: null,
+            erpTerminalId: null,
+            binding_status: 'ARCHIVED',
+            device_id: null,
+            deviceId: null,
+            currentDeviceId: null,
+            current_device_id: null,
+            authorizedDeviceId: null,
+            authorized_device_id: null,
+            canonicalDeviceId: null,
+            canonical_device_id: null,
+            deviceBindingToken: null,
+            deviceTokenFingerprint: null,
+            deviceTokenIssuedAt: null,
+            syncAuthToken: null,
+            tokenExpiresAt: null,
+        },
+    };
+}
+
+async function clearErpTerminalDeviceBindings(
+    supabase: ReturnType<typeof createClient>,
+    terminalId: string,
+    terminalName?: string | null,
+) {
+    const terminals = await loadErpTerminalsForClear(supabase, terminalId, terminalName);
+    if (terminals.length === 0) return { cleared: false, erpTerminalIds: [], previousDeviceIds: [] };
 
     const clearedAt = new Date().toISOString();
-    const { error } = await supabase
-        .schema('public')
-        .from('erp_terminals')
-        .update({
-            device_id: '',
-            config: buildClearedErpTerminalConfig(terminal, clearedAt),
-        })
-        .eq('id', terminal.id);
-    if (error) throw error;
+    const erpTerminalIds: string[] = [];
+    const previousDeviceIds: string[] = [];
+
+    for (const [index, terminal] of terminals.entries()) {
+        const isPrimary = index === 0 || terminal.id === terminalId;
+        const { error } = await supabase
+            .schema('public')
+            .from('erp_terminals')
+            .update(isPrimary ? {
+                device_id: '',
+                config: buildClearedErpTerminalConfig(terminal, clearedAt),
+            } : {
+                device_id: `ARCHIVED-${terminal.id.slice(0, 8)}`,
+                name: `ARCHIVED-${terminal.name || terminal.id.slice(0, 8)}`,
+                config: buildArchivedDuplicateErpTerminalConfig(terminal, terminals[0]?.id || terminalId, clearedAt),
+            })
+            .eq('id', terminal.id);
+        if (error) throw error;
+        erpTerminalIds.push(terminal.id);
+        if (terminal.device_id) previousDeviceIds.push(terminal.device_id);
+    }
 
     return {
         cleared: true,
-        erpTerminalId: terminal.id,
-        previousDeviceId: terminal.device_id || null,
+        erpTerminalIds,
+        previousDeviceIds,
     };
 }
 
@@ -927,10 +1037,10 @@ Deno.serve(async (request) => {
                 count = deletedCount || 0;
             }
 
-            const erpClearResult = await clearErpTerminalDeviceBinding(supabase, terminalId);
+            const erpClearResult = await clearErpTerminalDeviceBindings(supabase, terminalId, terminalDisplayCode);
             const uniqueClearedDeviceIds = Array.from(new Set([
                 ...clearedDeviceIds,
-                ...(erpClearResult.previousDeviceId ? [erpClearResult.previousDeviceId] : []),
+                ...erpClearResult.previousDeviceIds,
             ]));
 
             await insertDeviceAudit(supabase, {
@@ -948,7 +1058,7 @@ Deno.serve(async (request) => {
                     cleared_registry_count: count || 0,
                     cleared_device_ids: uniqueClearedDeviceIds,
                     erp_terminal_cleared: erpClearResult.cleared,
-                    erp_terminal_id: erpClearResult.erpTerminalId,
+                    erp_terminal_ids: erpClearResult.erpTerminalIds,
                     public_terminal_preserved: Boolean(publicTerminal?.id),
                     action_result: 'duplicate_ignored',
                     preserved: [
