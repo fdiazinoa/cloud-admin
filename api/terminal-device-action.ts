@@ -11,6 +11,7 @@ type DeviceActionPayload = {
     tenant_id?: unknown;
     terminal_id?: unknown;
     terminal_name?: unknown;
+    device_id?: unknown;
     action?: unknown;
     reason?: unknown;
 };
@@ -69,6 +70,13 @@ function getHeader(headers: IncomingHttpHeaders, name: string) {
 
 function stringValue(value: unknown) {
     return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function requiresDeviceId(action: unknown) {
+    return action === "TAKEOVER"
+        || action === "ROTATE_TOKEN"
+        || action === "SYNC_AUTHORIZED_DEVICE"
+        || action === "GENERATE_PAIRING_CODE";
 }
 
 function isUuid(value: string) {
@@ -467,6 +475,28 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         const body = await readBody(request) as DeviceActionPayload;
         const supabaseUrl = getEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/$/, "");
         const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
+
+        if (requiresDeviceId(body.action) && !stringValue(body.device_id)) {
+            console.warn("cloud_admin_device_id_missing", {
+                action: body.action,
+                tenant_id: stringValue(body.tenant_id),
+                terminal_id: stringValue(body.terminal_id),
+                terminal_name: stringValue(body.terminal_name),
+                source: "terminal-device-action-proxy",
+            });
+            console.warn("cloud_admin_erp_repair_skipped_missing_device", {
+                action: body.action,
+                tenant_id: stringValue(body.tenant_id),
+                terminal_id: stringValue(body.terminal_id),
+                source: "terminal-device-action-proxy",
+            });
+            sendJson(response, 400, {
+                error: "DEVICE_ID_REQUIRED",
+                message: "DEVICE_ID_REQUIRED: Cloud-Admin necesita un device_id autorizado antes de llamar ERP.",
+            });
+            return;
+        }
+
         const edgeResponse = await fetch(`${supabaseUrl}/functions/v1/request-terminal-device-authorization`, {
             method: "POST",
             headers: {

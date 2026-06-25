@@ -226,6 +226,21 @@ function sameDeviceId(left?: string | null, right?: string | null) {
     return Boolean(left?.trim() && right?.trim() && left.trim() === right.trim());
 }
 
+function normalizeRequiredDeviceId(value?: string | null) {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function requiresRequestDeviceId(action: DeviceAction | undefined) {
+    return action === 'TAKEOVER'
+        || action === 'ROTATE_TOKEN'
+        || action === 'SYNC_AUTHORIZED_DEVICE'
+        || action === 'GENERATE_PAIRING_CODE';
+}
+
+function logCloudAdminDeviceEvent(event: string, metadata: Record<string, unknown>) {
+    console.info(event, sanitizePayload(metadata));
+}
+
 function getErpTerminalDeviceFields(terminal: ErpTerminalRecord | null) {
     const config = asRecord(terminal?.config);
     const metadata = getRecordChild(config, 'metadata');
@@ -926,7 +941,7 @@ Deno.serve(async (request) => {
         let terminalId = body.terminal_id?.trim();
         const registryId = body.registry_id?.trim() || null;
         const terminalName = body.terminal_name?.trim() || null;
-        const deviceId = body.device_id?.trim();
+        const deviceId = normalizeRequiredDeviceId(body.device_id);
         const requestedAction = body.action;
         const action = requestedAction === 'GENERATE_PAIRING_CODE' ? 'TAKEOVER' : requestedAction;
         const reason = body.reason?.trim() || 'DEVICE_REINSTALL_OR_REPLACEMENT';
@@ -946,10 +961,25 @@ Deno.serve(async (request) => {
             return json({ error: 'INVALID_ACTION', message: 'Accion de autorizacion no soportada.' }, 400);
         }
 
-        if (['TAKEOVER', 'ROTATE_TOKEN', 'SYNC_AUTHORIZED_DEVICE'].includes(action) && !deviceId) {
+        if (requiresRequestDeviceId(requestedAction) && !deviceId) {
+            logCloudAdminDeviceEvent('cloud_admin_device_id_missing', {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                registry_id: registryId,
+                terminal_name: terminalName,
+                requested_action: requestedAction,
+                normalized_action: action,
+                source: 'request-terminal-device-authorization',
+            });
+            logCloudAdminDeviceEvent('cloud_admin_erp_repair_skipped_missing_device', {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                requested_action: requestedAction,
+                reason: 'missing_request_device_id',
+            });
             return json({
-                error: 'VALIDATION_ERROR',
-                message: 'Selecciona tenant, terminal, device_id y accion.',
+                error: 'DEVICE_ID_REQUIRED',
+                message: 'DEVICE_ID_REQUIRED: Cloud-Admin necesita un device_id autorizado antes de llamar ERP.',
             }, 400);
         }
 
@@ -1095,9 +1125,46 @@ Deno.serve(async (request) => {
             || null;
         const effectiveDeviceId = deviceId || (action === 'REVOKE_DEVICE' ? effectiveAuthorizedDeviceId : null);
         if (!effectiveDeviceId) {
+            logCloudAdminDeviceEvent('cloud_admin_device_id_missing', {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                registry_id: registry?.id || registryId,
+                terminal_name: terminalDisplayCode,
+                requested_action: requestedAction,
+                normalized_action: action,
+                persisted_authorized_device_id: persistedAuthorizedDeviceId,
+                registry_device_id: registry?.device_id || null,
+                registry_current_device_id: registry?.current_device_id || null,
+            });
+            logCloudAdminDeviceEvent('cloud_admin_erp_repair_skipped_missing_device', {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                registry_id: registry?.id || registryId,
+                requested_action: requestedAction,
+                reason: 'missing_effective_device_id',
+            });
+            await insertDeviceAudit(supabase, {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                terminal_name: terminalDisplayCode,
+                old_device_id: effectiveAuthorizedDeviceId,
+                new_device_id: null,
+                action,
+                performed_by: performedBy,
+                reason,
+                result: 'FAILED',
+                erp_error_code: 'DEVICE_ID_REQUIRED',
+                metadata: {
+                    log: 'cloud_admin_erp_repair_skipped_missing_device',
+                    requested_action: requestedAction,
+                    registry_id: registry?.id || registryId,
+                    missing: 'effective_device_id',
+                    no_erp_call: true,
+                },
+            });
             return json({
-                error: 'DEVICE_ID_NOT_FOUND',
-                message: 'La terminal no tiene device_id autorizado para limpiar o revocar.',
+                error: 'DEVICE_ID_REQUIRED',
+                message: 'DEVICE_ID_REQUIRED: La terminal no tiene device_id autorizado para ejecutar esta accion.',
             }, 400);
         }
 
@@ -1147,6 +1214,14 @@ Deno.serve(async (request) => {
                 })
                 .eq('id', registry.id);
             if (syncError) throw syncError;
+
+            logCloudAdminDeviceEvent('cloud_admin_authorized_device_persisted', {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                registry_id: registry.id,
+                device_id: deviceId,
+                action: 'SYNC_AUTHORIZED_DEVICE',
+            });
 
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
@@ -1275,13 +1350,23 @@ Deno.serve(async (request) => {
             });
         }
 
+        const canonicalErpTerminalId = terminalId;
+        const cloudAdminTenantId = tenantId;
         const erpPayloadBody: Record<string, unknown> = {
             terminalId,
             terminal_id: terminalId,
+            erpTerminalId: canonicalErpTerminalId,
+            erp_terminal_id: canonicalErpTerminalId,
             terminalName: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             deviceId: effectiveDeviceId,
             device_id: effectiveDeviceId,
+            tenantId: erpTenantId || tenantId,
+            tenant_id: erpTenantId || tenantId,
+            erpTenantId,
+            erp_tenant_id: erpTenantId,
+            cloudAdminTenantId,
+            cloud_admin_tenant_id: cloudAdminTenantId,
             rotateDeviceToken: true,
             rotate_device_token: true,
             reason: action === 'ROTATE_TOKEN'
@@ -1291,6 +1376,28 @@ Deno.serve(async (request) => {
                     : reason,
             performedBy,
         };
+
+        logCloudAdminDeviceEvent('cloud_admin_device_authorization_started', {
+            tenant_id: tenantId,
+            erp_tenant_id: erpTenantId,
+            cloud_admin_tenant_id: cloudAdminTenantId,
+            terminal_id: terminalId,
+            erp_terminal_id: canonicalErpTerminalId,
+            device_id: effectiveDeviceId,
+            registry_id: registry?.id || null,
+            action,
+            requested_action: requestedAction,
+        });
+        logCloudAdminDeviceEvent('cloud_admin_erp_repair_payload', {
+            tenant_id: tenantId,
+            erp_tenant_id: erpTenantId,
+            cloud_admin_tenant_id: cloudAdminTenantId,
+            terminal_id: terminalId,
+            erp_terminal_id: canonicalErpTerminalId,
+            device_id: effectiveDeviceId,
+            action,
+            has_device_id: Boolean(effectiveDeviceId),
+        });
 
         const erpApiUrl = getEnv('ERP_API_URL', 'CLOUD_ADMIN_ERP_API_URL');
         const erpServiceToken = getEnv('ERP_TAKEOVER_SERVICE_TOKEN', 'ERP_SERVICE_TOKEN', 'CLOUD_ADMIN_ERP_SERVICE_TOKEN');
@@ -1309,8 +1416,10 @@ Deno.serve(async (request) => {
             },
             body: JSON.stringify({
                 ...erpPayloadBody,
-                cloudAdminTenantId: tenantId,
+                cloudAdminTenantId,
+                cloud_admin_tenant_id: cloudAdminTenantId,
                 erpTenantId,
+                erp_tenant_id: erpTenantId,
             }),
         };
         let erpResponse = await fetchFirstAvailableErpRoute(erpApiUrl, erpPaths, erpRequestInit);
@@ -1554,6 +1663,13 @@ Deno.serve(async (request) => {
                 .eq('id', registry.id);
             if (updateError) throw updateError;
             registryActionResult = 'updated_existing';
+            logCloudAdminDeviceEvent('cloud_admin_authorized_device_persisted', {
+                tenant_id: tenantId,
+                terminal_id: terminalId,
+                registry_id: registry.id,
+                device_id: newAuthorizedDeviceId,
+                action,
+            });
         } else {
             const { data: existingRegistry, error: existingError } = await supabase
                 .from('tenant_server_registry')
@@ -1571,10 +1687,30 @@ Deno.serve(async (request) => {
                 if (fallbackUpdateError) throw fallbackUpdateError;
                 confirmedRegistryId = existingRegistry.id;
                 registryActionResult = 'updated_existing_after_heartbeat_race';
+                logCloudAdminDeviceEvent('cloud_admin_authorized_device_persisted', {
+                    tenant_id: tenantId,
+                    terminal_id: terminalId,
+                    registry_id: existingRegistry.id,
+                    device_id: newAuthorizedDeviceId,
+                    action,
+                });
             } else {
                 registryActionResult = 'erp_confirmed_waiting_terminal_heartbeat';
             }
         }
+
+        logCloudAdminDeviceEvent('cloud_admin_terminal_device_synced_to_erp', {
+            tenant_id: tenantId,
+            erp_tenant_id: erpTenantId,
+            cloud_admin_tenant_id: tenantId,
+            terminal_id: terminalId,
+            erp_terminal_id: terminalId,
+            registry_id: confirmedRegistryId,
+            device_id: newAuthorizedDeviceId,
+            action,
+            erp_response_status: erpResponse.status,
+            erp_confirmation_status: erpBindingConfirmation.status,
+        });
 
         const archivedDuplicateRegistryIds = action === 'TAKEOVER'
             ? await archiveDuplicateRegistriesForTerminal(
