@@ -382,7 +382,7 @@ async function loadErpTerminalsForClear(
             .schema('public')
             .from('erp_terminals')
             .select('id,name,device_id,config,last_seen,created_at')
-            .eq('name', terminalName)
+            .in('name', [terminalName, `ARCHIVED-${terminalName}`])
             .order('last_seen', { ascending: false });
         if (error) throw error;
         for (const row of ((data as ErpTerminalRecord[] | null) || [])) {
@@ -392,7 +392,13 @@ async function loadErpTerminalsForClear(
         }
     }
 
-    return Array.from(matches.values()).filter((terminal) => !isArchivedErpTerminal(terminal));
+    return Array.from(matches.values()).sort((left, right) => {
+        if (left.id === terminalId) return -1;
+        if (right.id === terminalId) return 1;
+        if (!isArchivedErpTerminal(left) && isArchivedErpTerminal(right)) return -1;
+        if (isArchivedErpTerminal(left) && !isArchivedErpTerminal(right)) return 1;
+        return 0;
+    });
 }
 
 function buildArchivedDuplicateErpTerminalConfig(terminal: ErpTerminalRecord, canonicalTerminalId: string, archivedAt: string) {

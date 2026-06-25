@@ -22,6 +22,8 @@ assert.match(actionFunction, /CLEAR_TERMINAL_DEVICES/, 'device action must suppo
 assert.match(actionFunction, /tenant_server_registry[\s\S]*delete/, 'clear action must delete terminal registry bindings');
 assert.match(actionFunction, /clearErpTerminalDeviceBinding/, 'clear action must also clear canonical ERP terminal device bindings');
 assert.match(actionFunction, /erp_terminal_cleared/, 'clear action must report whether the ERP terminal binding was cleared');
+assert.match(actionFunction, /`ARCHIVED-\$\{terminalName\}`/, 'clear action must scrub archived ERP duplicates for the terminal name');
+assert.doesNotMatch(actionFunction, /return Array\\.from\\(matches\\.values\\(\\)\\)\\.filter\\(\\(terminal\\) => !isArchivedErpTerminal\\(terminal\\)\\)/, 'clear action must not skip archived duplicates before scrubbing tokens');
 assert.doesNotMatch(actionFunction, /error:\s*'SAME_DEVICE_ID'/, 'takeover must be able to repair ERP mapping even when Cloud already authorizes the device');
 assert.match(actionFunction, /ERP_DEVICE_MAPPING_REPAIR/, 'same-device takeover must repair Cloud/ERP terminal mapping drift');
 assert.match(actionFunction, /tokenKeys/, 'function must define token keys to sanitize sensitive payloads');
