@@ -44,6 +44,8 @@ interface RegistryRecord {
     id: string;
     tenant_id: string;
     device_id?: string | null;
+    current_device_id?: string | null;
+    authorized_device_id?: string | null;
     terminal_id?: string | null;
     terminal_name?: string | null;
 }
@@ -51,8 +53,7 @@ interface RegistryRecord {
 interface PublicTerminalRecord {
     id: string;
     tenant_id: string;
-    device_token?: string | null;
-    name?: string | null;
+    code?: string | null;
 }
 
 interface ReadinessPayload {
@@ -300,7 +301,7 @@ Deno.serve(async (request) => {
         if (registryId) {
             const { data, error } = await supabase
                 .from('tenant_server_registry')
-                .select('id,tenant_id,device_id,terminal_id,terminal_name')
+                .select('id,tenant_id,device_id,current_device_id,authorized_device_id,terminal_id,terminal_name')
                 .eq('tenant_id', tenantId)
                 .eq('id', registryId)
                 .maybeSingle();
@@ -311,7 +312,7 @@ Deno.serve(async (request) => {
         if (!registry && requestedTerminalId) {
             const { data, error } = await supabase
                 .from('tenant_server_registry')
-                .select('id,tenant_id,device_id,terminal_id,terminal_name')
+                .select('id,tenant_id,device_id,current_device_id,authorized_device_id,terminal_id,terminal_name')
                 .eq('tenant_id', tenantId)
                 .eq('terminal_id', requestedTerminalId)
                 .maybeSingle();
@@ -324,7 +325,7 @@ Deno.serve(async (request) => {
             ? await supabase
                 .schema('public')
                 .from('terminals')
-                .select('id,tenant_id,device_token,name')
+                .select('id,tenant_id,code')
                 .eq('tenant_id', tenantId)
                 .eq('id', terminalId)
                 .maybeSingle()
@@ -338,8 +339,12 @@ Deno.serve(async (request) => {
         }
 
         const effectiveTerminalId = terminalId || publicTerminal?.id || registry?.id || '';
-        const effectiveDeviceId = requestedDeviceId || registry?.device_id || publicTerminal?.device_token || null;
-        const effectiveTerminalName = requestedTerminalName || registry?.terminal_name || publicTerminal?.name || effectiveTerminalId;
+        const effectiveDeviceId = requestedDeviceId
+            || registry?.authorized_device_id
+            || registry?.current_device_id
+            || registry?.device_id
+            || null;
+        const effectiveTerminalName = requestedTerminalName || registry?.terminal_name || publicTerminal?.code || effectiveTerminalId;
 
         if (!effectiveTerminalId || !effectiveDeviceId) {
             return json({
@@ -400,8 +405,11 @@ Deno.serve(async (request) => {
                 lifecycle_status: tenant.lifecycle_status || null,
                 provisioning_status: tenant.provisioning_status || null,
                 deviceId: effectiveDeviceId,
+                device_id: effectiveDeviceId,
                 terminalId: effectiveTerminalId,
+                terminal_id: effectiveTerminalId,
                 terminalName: effectiveTerminalName,
+                terminal_name: effectiveTerminalName,
             }),
         });
 
