@@ -286,6 +286,67 @@ function getErpTerminalDeviceFields(terminal: ErpTerminalRecord | null) {
     };
 }
 
+function buildClearedErpTerminalConfig(terminal: ErpTerminalRecord, clearedAt: string) {
+    const config = asRecord(terminal.config);
+    const metadata = getRecordChild(config, 'metadata');
+
+    return {
+        ...config,
+        runtime: {},
+        security: {},
+        pairing: {
+            ...getRecordChild(config, 'pairing'),
+            status: 'RETRY_READY',
+        },
+        metadata: {
+            ...metadata,
+            device_id: null,
+            deviceId: null,
+            currentDeviceId: null,
+            current_device_id: null,
+            authorizedDeviceId: null,
+            authorized_device_id: null,
+            canonicalDeviceId: null,
+            canonical_device_id: null,
+            deviceBindingToken: null,
+            deviceTokenFingerprint: null,
+            deviceTokenIssuedAt: null,
+            syncAuthToken: null,
+            tokenExpiresAt: null,
+            binding_status: 'UNBOUND',
+            device_cleared_at: clearedAt,
+            device_cleared_by: 'cloud-admin',
+        },
+        deviceBindingToken: null,
+        deviceTokenFingerprint: null,
+    };
+}
+
+async function clearErpTerminalDeviceBinding(
+    supabase: ReturnType<typeof createClient>,
+    terminalId: string,
+) {
+    const terminal = await loadCanonicalErpTerminal(supabase, terminalId);
+    if (!terminal?.id) return { cleared: false, erpTerminalId: null, previousDeviceId: null };
+
+    const clearedAt = new Date().toISOString();
+    const { error } = await supabase
+        .schema('public')
+        .from('erp_terminals')
+        .update({
+            device_id: '',
+            config: buildClearedErpTerminalConfig(terminal, clearedAt),
+        })
+        .eq('id', terminal.id);
+    if (error) throw error;
+
+    return {
+        cleared: true,
+        erpTerminalId: terminal.id,
+        previousDeviceId: terminal.device_id || null,
+    };
+}
+
 function buildErpBindingConfirmation(input: {
     terminal: ErpTerminalRecord | null;
     expectedTerminalId: string;
@@ -866,11 +927,17 @@ Deno.serve(async (request) => {
                 count = deletedCount || 0;
             }
 
+            const erpClearResult = await clearErpTerminalDeviceBinding(supabase, terminalId);
+            const uniqueClearedDeviceIds = Array.from(new Set([
+                ...clearedDeviceIds,
+                ...(erpClearResult.previousDeviceId ? [erpClearResult.previousDeviceId] : []),
+            ]));
+
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
                 terminal_name: terminalDisplayCode,
-                old_device_id: clearedDeviceIds.join(', ') || null,
+                old_device_id: uniqueClearedDeviceIds.join(', ') || null,
                 new_device_id: null,
                 action: 'CLEAR_TERMINAL_DEVICES',
                 performed_by: performedBy,
@@ -879,7 +946,9 @@ Deno.serve(async (request) => {
                 metadata: {
                     registry_ids: registryIds,
                     cleared_registry_count: count || 0,
-                    cleared_device_ids: clearedDeviceIds,
+                    cleared_device_ids: uniqueClearedDeviceIds,
+                    erp_terminal_cleared: erpClearResult.cleared,
+                    erp_terminal_id: erpClearResult.erpTerminalId,
                     public_terminal_preserved: Boolean(publicTerminal?.id),
                     action_result: 'duplicate_ignored',
                     preserved: [
@@ -899,7 +968,8 @@ Deno.serve(async (request) => {
                 success: true,
                 action: 'terminal_devices_cleared',
                 cleared_registry_count: count || 0,
-                cleared_device_ids: clearedDeviceIds,
+                cleared_device_ids: uniqueClearedDeviceIds,
+                erp_terminal_cleared: erpClearResult.cleared,
                 message: 'Devices de la terminal limpiados. La terminal conserva su configuracion y puede vincularse nuevamente.',
             });
         }
