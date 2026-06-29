@@ -487,7 +487,7 @@ Deno.serve(async (request) => {
                         ? 'ERP_DEVICE_MAPPING_REPAIR'
                         : 'DEVICE_REINSTALL_OR_REPLACEMENT'
                     : null,
-                requires_pos_reauth: true,
+                requires_pos_reauth: false,
                 updated_at: completedAt,
             };
             if (action === 'TAKEOVER') registryUpdate.last_takeover_at = completedAt;
