@@ -74,6 +74,7 @@ interface ErpTenantRecord {
 interface ErpTerminalRecord {
     id: string;
     name?: string | null;
+    store_id?: string | null;
     device_id?: string | null;
     config?: Record<string, unknown> | null;
     last_seen?: string | null;
@@ -224,6 +225,23 @@ function isPosTenant(tenant: TenantRecord) {
 
 function sameDeviceId(left?: string | null, right?: string | null) {
     return Boolean(left?.trim() && right?.trim() && left.trim() === right.trim());
+}
+
+function getTextCandidate(...values: unknown[]) {
+    for (const value of values) {
+        const text = typeof value === 'string' && value.trim() ? value.trim() : null;
+        if (text) return text;
+    }
+    return null;
+}
+
+function buildCatalogCode(value: string | null, fallback: string) {
+    return (value || fallback)
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64) || fallback;
 }
 
 function normalizeRequiredDeviceId(value?: string | null) {
@@ -545,7 +563,7 @@ async function loadCanonicalErpTerminal(
     const { data, error } = await supabase
         .schema('public')
         .from('erp_terminals')
-        .select('id,name,device_id,config,last_seen,created_at')
+        .select('id,name,store_id,device_id,config,last_seen,created_at')
         .eq('id', terminalId)
         .maybeSingle();
     if (error) throw error;
@@ -554,13 +572,84 @@ async function loadCanonicalErpTerminal(
     const { data: metadataMatch, error: metadataError } = await supabase
         .schema('public')
         .from('erp_terminals')
-        .select('id,name,device_id,config,last_seen,created_at')
+        .select('id,name,store_id,device_id,config,last_seen,created_at')
         .or(`config->metadata->>terminal_id.eq.${terminalId},config->metadata->>terminalId.eq.${terminalId}`)
         .order('last_seen', { ascending: false })
         .limit(1)
         .maybeSingle();
     if (metadataError) throw metadataError;
     return metadataMatch as ErpTerminalRecord | null;
+}
+
+async function preservePublicTerminalCatalog(
+    supabase: ReturnType<typeof createClient>,
+    tenant: TenantRecord,
+    terminal: ErpTerminalRecord | null,
+    fallbackTerminalName?: string | null,
+) {
+    if (!terminal?.id || !terminal.store_id) {
+        return { preserved: false, reason: terminal?.id ? 'missing_store_id' : 'missing_erp_terminal' };
+    }
+
+    const config = asRecord(terminal.config);
+    const metadata = getRecordChild(config, 'metadata');
+    const runtime = getRecordChild(config, 'runtime');
+    const terminalCode = getTextCandidate(
+        metadata.terminal_code,
+        metadata.terminalCode,
+        metadata.station_number,
+        metadata.stationNumber,
+        config.station_number,
+        config.stationNumber,
+        fallbackTerminalName,
+        terminal.name,
+        terminal.id,
+    ) || terminal.id;
+    const tenantName = getTextCandidate(tenant.name, tenant.id) || tenant.id;
+    const tenantCode = buildCatalogCode(getTextCandidate(tenant.slug, tenantName), tenant.id.slice(0, 8).toUpperCase());
+    const storeName = getTextCandidate(metadata.store_name, metadata.storeName, config.store_name, config.storeName, tenantName) || tenantName;
+
+    const { error: tenantError } = await supabase
+        .schema('public')
+        .from('tenants')
+        .upsert({
+            id: tenant.id,
+            code: tenantCode,
+            name: tenantName,
+            is_active: true,
+        }, { onConflict: 'id' });
+    if (tenantError) throw tenantError;
+
+    const { error: storeError } = await supabase
+        .schema('public')
+        .from('stores')
+        .upsert({
+            id: terminal.store_id,
+            tenant_id: tenant.id,
+            code: 'MAIN',
+            name: storeName,
+            timezone: 'America/Santo_Domingo',
+            is_active: true,
+        }, { onConflict: 'id' });
+    if (storeError) throw storeError;
+
+    const { error: terminalError } = await supabase
+        .schema('public')
+        .from('terminals')
+        .upsert({
+            id: terminal.id,
+            tenant_id: tenant.id,
+            store_id: terminal.store_id,
+            code: terminalCode,
+            terminal_type: 'POS',
+            platform: 'ANDROID',
+            app_version: getTextCandidate(config.app_version, config.appVersion, runtime.appVersion),
+            last_heartbeat_at: new Date().toISOString(),
+            is_active: true,
+        }, { onConflict: 'id' });
+    if (terminalError) throw terminalError;
+
+    return { preserved: true, terminal_id: terminal.id, terminal_code: terminalCode, store_id: terminal.store_id };
 }
 
 async function fetchFirstAvailableErpRoute(
@@ -1073,6 +1162,13 @@ Deno.serve(async (request) => {
                 count = deletedCount || 0;
             }
 
+            const canonicalErpTerminal = await loadCanonicalErpTerminal(supabase, terminalId);
+            const catalogPreserveResult = await preservePublicTerminalCatalog(
+                supabase,
+                tenant,
+                canonicalErpTerminal,
+                terminalDisplayCode,
+            );
             const erpClearResult = await clearErpTerminalDeviceBindings(supabase, terminalId, terminalDisplayCode);
             const uniqueClearedDeviceIds = Array.from(new Set([
                 ...clearedDeviceIds,
@@ -1095,7 +1191,8 @@ Deno.serve(async (request) => {
                     cleared_device_ids: uniqueClearedDeviceIds,
                     erp_terminal_cleared: erpClearResult.cleared,
                     erp_terminal_ids: erpClearResult.erpTerminalIds,
-                    public_terminal_preserved: Boolean(publicTerminal?.id),
+                    public_terminal_preserved: Boolean(publicTerminal?.id) || catalogPreserveResult.preserved,
+                    public_catalog_preserve_result: catalogPreserveResult,
                     action_result: 'duplicate_ignored',
                     preserved: [
                         'public.terminals row',
