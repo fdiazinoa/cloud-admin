@@ -32,8 +32,16 @@ type PublicTerminalRecord = {
     code?: string | null;
 };
 
+type TenantRecord = {
+    id: string;
+    name?: string | null;
+    slug?: string | null;
+};
+
 type ErpTerminalRecord = {
     id: string;
+    name?: string | null;
+    store_id?: string | null;
     device_id?: string | null;
     config?: Record<string, unknown> | null;
 };
@@ -112,7 +120,7 @@ async function loadCanonicalErpTerminal(
     const { data, error } = await supabase
         .schema("public")
         .from("erp_terminals")
-        .select("id,device_id,config")
+        .select("id,name,store_id,device_id,config")
         .eq("id", terminalId)
         .maybeSingle();
     if (error) throw error;
@@ -121,12 +129,112 @@ async function loadCanonicalErpTerminal(
     const { data: metadataMatch, error: metadataError } = await supabase
         .schema("public")
         .from("erp_terminals")
-        .select("id,device_id,config")
+        .select("id,name,store_id,device_id,config")
         .or(`config->metadata->>terminal_id.eq.${terminalId},config->metadata->>terminalId.eq.${terminalId}`)
         .limit(1)
         .maybeSingle();
     if (metadataError) throw metadataError;
     return metadataMatch as ErpTerminalRecord | null;
+}
+
+function getTextCandidate(...values: unknown[]) {
+    for (const value of values) {
+        const text = stringValue(value);
+        if (text) return text;
+    }
+    return null;
+}
+
+function buildCatalogCode(value: string | null, fallback: string) {
+    return (value || fallback)
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 64) || fallback;
+}
+
+async function loadTenantForCatalog(
+    supabase: ReturnType<typeof createClient>,
+    tenantId: string,
+) {
+    const { data, error } = await supabase
+        .from("tenants")
+        .select("id,name,slug")
+        .eq("id", tenantId)
+        .maybeSingle();
+    if (error) throw error;
+    return data as TenantRecord | null;
+}
+
+async function preservePublicTerminalCatalog(
+    supabase: ReturnType<typeof createClient>,
+    tenant: TenantRecord,
+    terminal: ErpTerminalRecord | null,
+    fallbackTerminalName?: string | null,
+) {
+    if (!terminal?.id || !terminal.store_id) {
+        return { preserved: false, reason: terminal?.id ? "missing_store_id" : "missing_erp_terminal" };
+    }
+
+    const config = asRecord(terminal.config);
+    const metadata = getRecordChild(config, "metadata");
+    const terminalCode = getTextCandidate(
+        metadata.terminal_code,
+        metadata.terminalCode,
+        metadata.station_number,
+        metadata.stationNumber,
+        config.station_number,
+        config.stationNumber,
+        fallbackTerminalName,
+        terminal.name,
+        terminal.id,
+    ) || terminal.id;
+    const tenantName = stringValue(tenant.name) || tenant.id;
+    const tenantCode = buildCatalogCode(stringValue(tenant.slug) || tenantName, tenant.id.slice(0, 8).toUpperCase());
+    const storeName = getTextCandidate(metadata.store_name, metadata.storeName, config.store_name, config.storeName, tenantName) || tenantName;
+
+    const { error: tenantError } = await supabase
+        .schema("public")
+        .from("tenants")
+        .upsert({
+            id: tenant.id,
+            code: tenantCode,
+            name: tenantName,
+            is_active: true,
+        }, { onConflict: "id" });
+    if (tenantError) throw tenantError;
+
+    const { error: storeError } = await supabase
+        .schema("public")
+        .from("stores")
+        .upsert({
+            id: terminal.store_id,
+            tenant_id: tenant.id,
+            code: "MAIN",
+            name: storeName,
+            timezone: "America/Santo_Domingo",
+            is_active: true,
+        }, { onConflict: "id" });
+    if (storeError) throw storeError;
+
+    const { error: terminalError } = await supabase
+        .schema("public")
+        .from("terminals")
+        .upsert({
+            id: terminal.id,
+            tenant_id: tenant.id,
+            store_id: terminal.store_id,
+            code: terminalCode,
+            terminal_type: "POS",
+            platform: "ANDROID",
+            app_version: getTextCandidate(config.app_version, config.appVersion, getRecordChild(config, "runtime").appVersion),
+            last_heartbeat_at: new Date().toISOString(),
+            is_active: true,
+        }, { onConflict: "id" });
+    if (terminalError) throw terminalError;
+
+    return { preserved: true, terminal_id: terminal.id, terminal_code: terminalCode, store_id: terminal.store_id };
 }
 
 function buildClearedErpTerminalConfig(terminal: ErpTerminalRecord, clearedAt: string) {
@@ -331,6 +439,13 @@ async function fallbackClearTerminalDevices(
         auth: { autoRefreshToken: false, persistSession: false },
         db: { schema: "landlord" },
     });
+    const tenant = await loadTenantForCatalog(supabase, tenantId);
+    if (!tenant) {
+        return {
+            statusCode: 404,
+            body: { error: "TENANT_NOT_FOUND", message: "Tenant no encontrado." },
+        };
+    }
 
     let terminalId = requestedTerminalId;
     let terminalQuery = supabase
@@ -400,6 +515,13 @@ async function fallbackClearTerminalDevices(
         count = deletedCount || 0;
     }
 
+    const canonicalErpTerminal = await loadCanonicalErpTerminal(supabase, terminalId);
+    const catalogPreserveResult = await preservePublicTerminalCatalog(
+        supabase,
+        tenant,
+        canonicalErpTerminal,
+        terminalDisplayCode,
+    );
     const erpClearResult = await clearErpTerminalDeviceBindings(supabase, terminalId, terminalDisplayCode);
     const uniqueClearedDeviceIds = Array.from(new Set([
         ...clearedDeviceIds,
@@ -426,7 +548,8 @@ async function fallbackClearTerminalDevices(
                 erp_terminal_cleared: erpClearResult.cleared,
                 erp_terminal_ids: erpClearResult.erpTerminalIds,
                 first_activation_noop: registryIds.length === 0,
-                public_terminal_preserved: Boolean(publicTerminal?.id),
+                public_terminal_preserved: Boolean(publicTerminal?.id) || catalogPreserveResult.preserved,
+                public_catalog_preserve_result: catalogPreserveResult,
             },
         });
     if (auditError) {
