@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const actionFunction = readFileSync('supabase/functions/request-terminal-device-authorization/index.ts', 'utf8');
 const attemptsFunction = readFileSync('supabase/functions/request-terminal-auth-attempts/index.ts', 'utf8');
+const deviceActionProxy = readFileSync('api/terminal-device-action.ts', 'utf8');
 const tenantsPage = readFileSync('src/pages/Tenants.tsx', 'utf8');
 const migration = readFileSync('supabase/migrations/202605271015_terminal_device_authorization.sql', 'utf8');
 const pairingMigration = readFileSync('supabase/migrations/202605301845_terminal_pairing_code_flow.sql', 'utf8');
@@ -64,6 +65,8 @@ assert.match(actionFunction, /record\.message[\s\S]*status === 401 \|\| status =
 assert.doesNotMatch(actionFunction, /No tienes permiso para ejecutar esta accion de autorizacion/, 'device authorization must not hide ERP 401/403 causes behind a generic permission message');
 assert.match(actionFunction, /ERP rechazo la autorizacion del device \(HTTP \$\{status\}\) sin detalle/, 'device authorization must return an actionable ERP rejection fallback');
 assert.match(actionFunction, /erp_status:\s*erpResponse\.status/, 'device authorization failures must expose ERP HTTP status');
+assert.match(deviceActionProxy, /legacyDeviceAuthorizationPermissionMessage/, 'Vercel proxy must recognize legacy device authorization permission errors');
+assert.match(deviceActionProxy, /legacy_message_rewritten:\s*true/, 'Vercel proxy must rewrite legacy device authorization permission errors while old Edge Functions are still deployed');
 
 assert.match(migration, /terminal_device_audit/, 'migration must create terminal device audit');
 assert.match(migration, /DEVICE_MISMATCH/, 'migration must allow DEVICE_MISMATCH state');
