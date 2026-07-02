@@ -184,6 +184,19 @@ function getSupabaseErrorHaystack(error: unknown): string {
         .join(" ");
 }
 
+function getTerminalEdgeErrorMessage(
+    payload: { message?: string; error?: string } | null | undefined,
+    fallback: string,
+    context: string,
+) {
+    const message = payload?.message || payload?.error || "";
+    if (message && !message.toLowerCase().includes("no tienes permiso")) return message;
+    if (message) {
+        return `${context}: el servicio rechazo la solicitud con permisos insuficientes. Verifica el token de servicio ERP/Supabase y la configuracion del tenant.`;
+    }
+    return fallback;
+}
+
 function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | null {
     const haystack = getSupabaseErrorHaystack(error);
     if (!haystack) return null;
@@ -1488,7 +1501,11 @@ export async function requestTerminalLocalRebuild(input: RequestTerminalLocalReb
     const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
 
     if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "No se pudo preparar la reconstruccion local del POS.");
+        throw new Error(getTerminalEdgeErrorMessage(
+            payload,
+            "No se pudo preparar la reconstruccion local del POS.",
+            "Reconstruccion local POS",
+        ));
     }
 
     return (payload || { status: "success" }) as TerminalLocalRebuildResult;
@@ -2025,7 +2042,11 @@ export async function getTerminalFiscalDebug(
     const payload = await response.json().catch(() => null) as TerminalFiscalReadinessResult & { error?: string } | null;
 
     if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "No se pudo verificar el mapping fiscal de la terminal.");
+        throw new Error(getTerminalEdgeErrorMessage(
+            payload,
+            "No se pudo verificar el mapping fiscal de la terminal.",
+            "Mapping fiscal de terminal",
+        ));
     }
 
     return payload?.readiness || payload?.fiscal_readiness || { status: "MISSING" };
@@ -2052,7 +2073,11 @@ export async function getTerminalFiscalReadiness(
     const payload = await response.json().catch(() => null) as TerminalFiscalReadinessResult & { error?: string } | null;
 
     if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "No se pudo cargar la configuracion fiscal de la terminal.");
+        throw new Error(getTerminalEdgeErrorMessage(
+            payload,
+            "No se pudo cargar la configuracion fiscal de la terminal.",
+            "Configuracion fiscal de terminal",
+        ));
     }
 
     return payload?.readiness || payload?.fiscal_readiness || { status: "MISSING" };
@@ -2082,7 +2107,11 @@ export async function requestTerminalFiscalConfig(
     const payload = await response.json().catch(() => null) as TerminalFiscalConfigResult & { error?: string } | null;
 
     if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "No se pudo configurar fiscalmente la terminal.");
+        throw new Error(getTerminalEdgeErrorMessage(
+            payload,
+            "No se pudo configurar fiscalmente la terminal.",
+            "Configuracion fiscal de terminal",
+        ));
     }
 
     return payload || { status: "success", mode: input.mode };

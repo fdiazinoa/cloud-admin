@@ -78,6 +78,7 @@ assert.match(authAttemptsProxy, /\/api\/sync\/terminals\/.*auth-attempts/, 'auth
 assert.match(authAttemptsProxy, /requestedDeviceId[\s\S]*authorizedDeviceId[\s\S]*resolutionStatus[\s\S]*createdAt/, 'auth attempts proxy must normalize ERP camelCase attempt fields for the UI');
 assert.match(tenantService, /fetch\("\/api\/terminal-auth-attempts"/, 'tenant service must use the Vercel auth attempts proxy instead of the Edge Function directly');
 assert.doesNotMatch(tenantService, /functions\/v1\/request-terminal-auth-attempts/, 'tenant service must not call the legacy auth attempts Edge Function directly');
+assert.match(tenantService, /getTerminalEdgeErrorMessage[\s\S]*Reconstruccion local POS[\s\S]*Mapping fiscal de terminal[\s\S]*Configuracion fiscal de terminal/, 'tenant service must rewrite legacy terminal Edge Function permission messages');
 assert.doesNotMatch(terminalTakeoverProxy, /No tienes permiso para ejecutar recuperacion de terminal/, 'terminal takeover proxy must not hide ERP 401/403 causes behind a generic permission message');
 assert.doesNotMatch(terminalTakeoverFunction, /No tienes permiso para ejecutar recuperacion de terminal/, 'terminal takeover Edge Function must not hide ERP 401/403 causes behind a generic permission message');
 assert.match(terminalTakeoverProxy, /ERP rechazo la recuperacion de terminal \(HTTP \$\{status\}\) sin detalle/, 'terminal takeover proxy must return an actionable ERP rejection fallback');
