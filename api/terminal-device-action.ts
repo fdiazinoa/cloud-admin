@@ -10,6 +10,7 @@ type ApiRequest = IncomingMessage & {
 type DeviceActionPayload = {
     tenant_id?: unknown;
     terminal_id?: unknown;
+    registry_id?: unknown;
     terminal_name?: unknown;
     device_id?: unknown;
     action?: unknown;
@@ -92,6 +93,27 @@ const legacyDeviceAuthorizationPermissionMessage = "No tienes permiso para ejecu
 function isLegacyDeviceAuthorizationPermissionPayload(payload: unknown) {
     const record = asRecord(payload);
     return stringValue(record.message) === legacyDeviceAuthorizationPermissionMessage;
+}
+
+function isTenantDeviceUniqueConflict(payload: unknown) {
+    if (typeof payload === "string") {
+        return payload.includes("23505")
+            || payload.includes("idx_tenant_server_registry_tenant_device")
+            || payload.includes("tenant_server_registry_tenant_device");
+    }
+
+    const record = asRecord(payload);
+    const haystack = [
+        record.code,
+        record.error,
+        record.message,
+        record.details,
+        record.hint,
+    ].filter((value) => typeof value === "string").join(" ");
+
+    return haystack.includes("23505")
+        || haystack.includes("idx_tenant_server_registry_tenant_device")
+        || haystack.includes("tenant_server_registry_tenant_device");
 }
 
 function isUuid(value: string) {
@@ -580,6 +602,191 @@ async function fallbackClearTerminalDevices(
     };
 }
 
+async function repairDuplicateTenantDeviceRegistry(
+    payload: DeviceActionPayload,
+    headers: IncomingHttpHeaders,
+    supabaseUrl: string,
+    serviceRoleKey: string,
+) {
+    const tenantId = stringValue(payload.tenant_id);
+    const requestedTerminalId = stringValue(payload.terminal_id);
+    const registryId = stringValue(payload.registry_id);
+    const terminalName = stringValue(payload.terminal_name);
+    const deviceId = stringValue(payload.device_id);
+    const action = stringValue(payload.action) || "TAKEOVER";
+    const reason = stringValue(payload.reason) || "TENANT_DEVICE_UNIQUE_CONFLICT_REPAIR";
+    const performedBy = getHeader(headers, "x-actor-email")
+        || getHeader(headers, "x-actor-user-id")
+        || getHeader(headers, "x-actor-source")
+        || "cloud-admin-api";
+
+    if (!tenantId || !requestedTerminalId || !deviceId) {
+        return {
+            statusCode: 400,
+            body: { error: "DEVICE_ID_REQUIRED", message: "DEVICE_ID_REQUIRED: tenant, terminal y device_id son requeridos para reparar el enlace." },
+        };
+    }
+
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+        db: { schema: "landlord" },
+    });
+
+    let terminalId = requestedTerminalId;
+    let terminalDisplayCode = terminalName || requestedTerminalId;
+    let previousDeviceId: string | null = null;
+
+    const { data: selectedRegistry, error: selectedRegistryError } = registryId
+        ? await supabase
+            .from("tenant_server_registry")
+            .select("id,terminal_id,terminal_name,device_id,current_device_id,authorized_device_id,previous_device_id,last_rejected_device_id")
+            .eq("tenant_id", tenantId)
+            .eq("id", registryId)
+            .maybeSingle()
+        : { data: null, error: null };
+    if (selectedRegistryError) throw selectedRegistryError;
+
+    const selected = (selectedRegistry as RegistryRecord | null) || null;
+    if (selected?.terminal_id) terminalId = selected.terminal_id;
+    if (selected?.terminal_name) terminalDisplayCode = selected.terminal_name;
+    previousDeviceId = selected?.device_id || selected?.current_device_id || selected?.authorized_device_id || null;
+
+    let publicTerminalQuery = supabase
+        .schema("public")
+        .from("terminals")
+        .select("id,code")
+        .eq("tenant_id", tenantId);
+    publicTerminalQuery = isUuid(requestedTerminalId)
+        ? publicTerminalQuery.eq("id", requestedTerminalId)
+        : publicTerminalQuery.eq("code", terminalName || requestedTerminalId);
+
+    const { data: publicTerminalData, error: publicTerminalError } = await publicTerminalQuery
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    if (publicTerminalError) throw publicTerminalError;
+
+    const publicTerminal = (publicTerminalData as PublicTerminalRecord | null) || null;
+    if (publicTerminal?.id) terminalId = publicTerminal.id;
+    if (publicTerminal?.code) terminalDisplayCode = publicTerminal.code;
+
+    const { data: existingRegistry, error: existingRegistryError } = await supabase
+        .from("tenant_server_registry")
+        .select("id,terminal_id,terminal_name,device_id,current_device_id,authorized_device_id,previous_device_id,last_rejected_device_id")
+        .eq("tenant_id", tenantId)
+        .eq("device_id", deviceId)
+        .maybeSingle();
+    if (existingRegistryError) throw existingRegistryError;
+
+    const existing = (existingRegistry as RegistryRecord | null) || null;
+    if (!existing?.id) {
+        return {
+            statusCode: 409,
+            body: {
+                error: "TENANT_DEVICE_CONFLICT_NOT_REPAIRABLE",
+                message: "Cloud-Admin detecto un conflicto de device, pero no encontro el registro existente para repararlo.",
+            },
+        };
+    }
+
+    const repairedAt = new Date().toISOString();
+    const registryUpdate = {
+        terminal_id: terminalId,
+        terminal_name: terminalDisplayCode,
+        device_id: deviceId,
+        current_device_id: deviceId,
+        authorized_device_id: deviceId,
+        previous_device_id: previousDeviceId && previousDeviceId !== deviceId ? previousDeviceId : existing.previous_device_id || null,
+        last_rejected_device_id: null,
+        status: "ONLINE",
+        auth_status: "AUTHORIZED",
+        is_revoked: false,
+        requires_pos_reauth: false,
+        last_auth_error: null,
+        last_auth_attempt_at: repairedAt,
+        updated_at: repairedAt,
+    };
+
+    const { error: updateExistingError } = await supabase
+        .from("tenant_server_registry")
+        .update(registryUpdate)
+        .eq("id", existing.id);
+    if (updateExistingError) throw updateExistingError;
+
+    const { data: registryRows, error: registryRowsError } = await supabase
+        .from("tenant_server_registry")
+        .select("id,terminal_id,terminal_name")
+        .eq("tenant_id", tenantId);
+    if (registryRowsError) throw registryRowsError;
+
+    const duplicateIds = ((Array.isArray(registryRows) ? registryRows : []) as RegistryRecord[])
+        .filter((row) => {
+            if (!row.id || row.id === existing.id) return false;
+            const rowTerminalId = row.terminal_id?.trim() || "";
+            const rowTerminalName = row.terminal_name?.trim() || "";
+            return rowTerminalId === terminalId
+                || rowTerminalId === requestedTerminalId
+                || Boolean(terminalDisplayCode && rowTerminalId.toUpperCase() === terminalDisplayCode.toUpperCase())
+                || Boolean(terminalDisplayCode && rowTerminalName.toUpperCase() === terminalDisplayCode.toUpperCase());
+        })
+        .map((row) => row.id);
+
+    if (duplicateIds.length > 0) {
+        const { error: archiveError } = await supabase
+            .from("tenant_server_registry")
+            .update({
+                status: "OFFLINE",
+                auth_status: "OLD_DEVICE_REVOKED",
+                is_revoked: true,
+                revocation_reason: "POS_ERP_TERMINAL_TAKEOVER_SUPERSEDED",
+                requires_pos_reauth: true,
+                previous_device_id: deviceId,
+                updated_at: repairedAt,
+            })
+            .in("id", duplicateIds);
+        if (archiveError) throw archiveError;
+    }
+
+    const { error: auditError } = await supabase
+        .from("terminal_device_audit")
+        .insert({
+            tenant_id: tenantId,
+            terminal_id: terminalId,
+            terminal_name: terminalDisplayCode,
+            old_device_id: previousDeviceId,
+            new_device_id: deviceId,
+            action,
+            performed_by: performedBy,
+            reason,
+            result: "SUCCESS",
+            metadata: {
+                fallback_source: "vercel-api",
+                action_result: "terminal_device_registry_merged_after_conflict",
+                edge_error: "idx_tenant_server_registry_tenant_device",
+                registry_id: existing.id,
+                requested_registry_id: registryId,
+                archived_duplicate_registry_ids: duplicateIds,
+            },
+        });
+    if (auditError) {
+        console.warn("terminal-device-action duplicate registry repair audit failed", auditError);
+    }
+
+    return {
+        statusCode: 200,
+        body: {
+            status: "success",
+            success: true,
+            action: "terminal_device_registry_merged_after_conflict",
+            registry_id: existing.id,
+            requested_registry_id: registryId,
+            authorized_device_id: deviceId,
+            archived_duplicate_registry_ids: duplicateIds,
+            message: "Device autorizado; Cloud-Admin reparo el registro duplicado. Reintenta conexion desde el POS.",
+        },
+    };
+}
+
 function isAuthorizedRequest(request: ApiRequest) {
     const authorization = getHeader(request.headers, "authorization") ?? "";
     const bearerToken = authorization.replace(/^Bearer\s+/i, "").trim();
@@ -671,6 +878,12 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 erp_status: edgeResponse.status,
                 legacy_message_rewritten: true,
             });
+            return;
+        }
+
+        if (!edgeResponse.ok && isTenantDeviceUniqueConflict(edgePayload || payloadText)) {
+            const fallback = await repairDuplicateTenantDeviceRegistry(body, request.headers, supabaseUrl, serviceRoleKey);
+            sendJson(response, fallback.statusCode, fallback.body);
             return;
         }
 
