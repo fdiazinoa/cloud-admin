@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const actionFunction = readFileSync('supabase/functions/request-terminal-device-authorization/index.ts', 'utf8');
 const attemptsFunction = readFileSync('supabase/functions/request-terminal-auth-attempts/index.ts', 'utf8');
 const deviceActionProxy = readFileSync('api/terminal-device-action.ts', 'utf8');
+const authAttemptsProxy = readFileSync('api/terminal-auth-attempts.ts', 'utf8');
 const terminalTakeoverProxy = readFileSync('api/terminal-takeover.ts', 'utf8');
 const terminalTakeoverFunction = readFileSync('supabase/functions/request-terminal-takeover/index.ts', 'utf8');
 const tenantsPage = readFileSync('src/pages/Tenants.tsx', 'utf8');
@@ -72,6 +73,10 @@ assert.match(deviceActionProxy, /legacy_message_rewritten:\s*true/, 'Vercel prox
 assert.match(deviceActionProxy, /isTenantDeviceUniqueConflict/, 'Vercel proxy must detect tenant-device unique conflicts while old Edge Functions are still deployed');
 assert.match(deviceActionProxy, /idx_tenant_server_registry_tenant_device/, 'Vercel proxy must recognize the tenant-device registry unique index');
 assert.match(deviceActionProxy, /terminal_device_registry_merged_after_conflict/, 'Vercel proxy must merge duplicate tenant-device registry rows');
+assert.match(authAttemptsProxy, /ERP rechazo la consulta de intentos \(HTTP \$\{status\}\)/, 'auth attempts proxy must rewrite ERP 401/403 permission failures with actionable detail');
+assert.match(authAttemptsProxy, /\/api\/sync\/terminals\/.*auth-attempts/, 'auth attempts proxy must query ERP auth attempts directly from Vercel');
+assert.match(tenantService, /fetch\("\/api\/terminal-auth-attempts"/, 'tenant service must use the Vercel auth attempts proxy instead of the Edge Function directly');
+assert.doesNotMatch(tenantService, /functions\/v1\/request-terminal-auth-attempts/, 'tenant service must not call the legacy auth attempts Edge Function directly');
 assert.doesNotMatch(terminalTakeoverProxy, /No tienes permiso para ejecutar recuperacion de terminal/, 'terminal takeover proxy must not hide ERP 401/403 causes behind a generic permission message');
 assert.doesNotMatch(terminalTakeoverFunction, /No tienes permiso para ejecutar recuperacion de terminal/, 'terminal takeover Edge Function must not hide ERP 401/403 causes behind a generic permission message');
 assert.match(terminalTakeoverProxy, /ERP rechazo la recuperacion de terminal \(HTTP \$\{status\}\) sin detalle/, 'terminal takeover proxy must return an actionable ERP rejection fallback');
