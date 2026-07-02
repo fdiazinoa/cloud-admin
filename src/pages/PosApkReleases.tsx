@@ -8,6 +8,7 @@ import {
     ExternalLink,
     FileText,
     ListChecks,
+    Link,
     Loader2,
     PackageCheck,
     Plus,
@@ -86,6 +87,11 @@ function linesToList(value: string): string[] {
 function listItems(values?: string[] | null, empty = 'No registrado') {
     const cleanValues = (values ?? []).filter(Boolean);
     return cleanValues.length > 0 ? cleanValues : [empty];
+}
+
+function buildCloudAdminApkUrl(path: string) {
+    if (typeof window === 'undefined') return path;
+    return `${window.location.origin}${path}`;
 }
 
 const ReleaseList: React.FC<{
@@ -198,6 +204,11 @@ export const PosApkReleases: React.FC = () => {
     const selectedRelease = releases.find((release) => release.id === selectedReleaseId) || latestRelease;
     const previewDownloadUrl = useMemo(() => buildDirectDownloadUrl(form.apkUrl), [form.apkUrl]);
     const availableCount = releases.filter((release) => release.release_status === 'available').length;
+    const latestApkDownloadUrl = useMemo(() => buildCloudAdminApkUrl('/api/pos-apk/latest?download=1'), []);
+    const latestApkJsonUrl = useMemo(() => buildCloudAdminApkUrl('/api/pos-apk/latest'), []);
+    const selectedDownloadUrl = selectedRelease?.is_latest
+        ? latestApkDownloadUrl
+        : selectedRelease?.direct_download_url || selectedRelease?.apk_url || '';
 
     const loadReleases = async () => {
         setLoading(true);
@@ -350,6 +361,46 @@ export const PosApkReleases: React.FC = () => {
                 </div>
             </div>
 
+            <section className="rounded-2xl border border-blue-100 bg-white shadow-sm">
+                <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                    <div className="flex items-start gap-4">
+                        <div className="rounded-xl bg-blue-50 p-2.5 text-blue-600">
+                            <Download size={20} />
+                        </div>
+                        <div>
+                            <p className="text-xs font-black uppercase tracking-widest text-blue-600">Instalacion inicial</p>
+                            <h3 className="mt-1 text-lg font-black text-slate-900">
+                                {latestRelease ? `APK actual POS ${latestRelease.version_name}` : 'APK actual no disponible'}
+                            </h3>
+                            <p className="mt-1 text-sm font-medium text-slate-500">
+                                {latestRelease
+                                    ? `Build ${latestRelease.version_code} - enlace estable para clientes nuevos y reinstalaciones.`
+                                    : 'Registra un APK disponible y marcalo como ultimo para habilitar la descarga desde Cloud-Admin.'}
+                            </p>
+                            <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Link Cloud-Admin</p>
+                                <p className="mt-1 break-all font-mono text-xs text-slate-600">{latestApkDownloadUrl}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 lg:justify-end">
+                        <a
+                            href={latestApkDownloadUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-disabled={!latestRelease}
+                            className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-black text-white shadow-sm transition-colors ${latestRelease ? 'bg-blue-600 hover:bg-blue-700' : 'pointer-events-none bg-slate-300'}`}
+                        >
+                            <Download size={18} />
+                            Descargar ultimo APK
+                        </a>
+                        <CopyButton value={latestApkDownloadUrl} label="Copiar link APK" />
+                        <CopyButton value={latestApkJsonUrl} label="Copiar endpoint" />
+                    </div>
+                </div>
+            </section>
+
             <section className="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
                 <div className="rounded-2xl border border-slate-100 bg-white shadow-sm flex flex-col min-h-[520px]">
                     <div className="border-b border-slate-100 px-5 py-4">
@@ -434,7 +485,7 @@ export const PosApkReleases: React.FC = () => {
                             <div className="space-y-5 px-6 py-5">
                                 <div className="flex flex-wrap gap-3">
                                     <a
-                                        href={selectedRelease.direct_download_url || selectedRelease.apk_url}
+                                        href={selectedDownloadUrl}
                                         target="_blank"
                                         rel="noreferrer"
                                         className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-black text-white shadow-sm transition-colors hover:bg-blue-700"
@@ -451,7 +502,22 @@ export const PosApkReleases: React.FC = () => {
                                         <ExternalLink size={18} />
                                         Abrir fuente
                                     </a>
-                                    <CopyButton value={selectedRelease.direct_download_url || selectedRelease.apk_url} label="Copiar enlace" />
+                                    {selectedRelease.is_latest ? (
+                                        <CopyButton value={latestApkDownloadUrl} label="Copiar enlace" />
+                                    ) : (
+                                        <CopyButton value={selectedDownloadUrl} label="Copiar enlace" />
+                                    )}
+                                    {selectedRelease.is_latest ? (
+                                        <a
+                                            href={latestApkJsonUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                                        >
+                                            <Link size={14} />
+                                            API
+                                        </a>
+                                    ) : null}
                                 </div>
                                 <ReleaseDetails release={selectedRelease} />
                             </div>
