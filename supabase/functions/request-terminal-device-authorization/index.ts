@@ -808,6 +808,77 @@ async function archiveDuplicateRegistriesForTerminal(
     return ids;
 }
 
+function isTenantDeviceUniqueConflict(error: unknown) {
+    if (!error || typeof error !== 'object') return false;
+    const record = error as Record<string, unknown>;
+    const haystack = [
+        record.code,
+        record.message,
+        record.details,
+        record.hint,
+    ].filter((value) => typeof value === 'string').join(' ');
+    return haystack.includes('23505')
+        || haystack.includes('idx_tenant_server_registry_tenant_device')
+        || haystack.includes('tenant_server_registry_tenant_device');
+}
+
+async function persistAuthorizedRegistry(
+    supabase: ReturnType<typeof createClient>,
+    input: {
+        tenantId: string;
+        registryId?: string | null;
+        terminalId: string;
+        terminalCode: string | null;
+        deviceId: string;
+        update: Record<string, unknown>;
+    },
+) {
+    if (input.registryId) {
+        const { error } = await supabase
+            .from('tenant_server_registry')
+            .update(input.update)
+            .eq('id', input.registryId);
+        if (!error) {
+            return { registryId: input.registryId, result: 'updated_existing' };
+        }
+        if (!isTenantDeviceUniqueConflict(error)) throw error;
+    }
+
+    const { data: existingRegistry, error: existingError } = await supabase
+        .from('tenant_server_registry')
+        .select('id')
+        .eq('tenant_id', input.tenantId)
+        .eq('device_id', input.deviceId)
+        .maybeSingle();
+    if (existingError) throw existingError;
+
+    if (existingRegistry?.id) {
+        const { error: updateExistingError } = await supabase
+            .from('tenant_server_registry')
+            .update(input.update)
+            .eq('id', existingRegistry.id);
+        if (updateExistingError) throw updateExistingError;
+
+        if (input.registryId && input.registryId !== existingRegistry.id) {
+            await archiveDuplicateRegistriesForTerminal(
+                supabase,
+                input.tenantId,
+                input.terminalId,
+                input.terminalCode,
+                existingRegistry.id,
+                input.deviceId,
+            );
+        }
+
+        return {
+            registryId: existingRegistry.id,
+            result: input.registryId ? 'merged_existing_device_registry' : 'updated_existing_after_heartbeat_race',
+        };
+    }
+
+    return { registryId: null, result: 'erp_confirmed_waiting_terminal_heartbeat' };
+}
+
 async function erpTerminalHasDependencies(
     supabase: ReturnType<typeof createClient>,
     terminalId: string,
@@ -1764,47 +1835,25 @@ Deno.serve(async (request) => {
 
         let registryActionResult = 'updated_existing_no_local_registry';
         let confirmedRegistryId = registry?.id || null;
-        if (registry?.id) {
-            const { error: updateError } = await supabase
-                .from('tenant_server_registry')
-                .update(registryUpdate)
-                .eq('id', registry.id);
-            if (updateError) throw updateError;
-            registryActionResult = 'updated_existing';
+        const persistedRegistry = await persistAuthorizedRegistry(supabase, {
+            tenantId,
+            registryId: registry?.id || null,
+            terminalId,
+            terminalCode: terminalDisplayCode,
+            deviceId: newAuthorizedDeviceId,
+            update: registryUpdate,
+        });
+        confirmedRegistryId = persistedRegistry.registryId;
+        registryActionResult = persistedRegistry.result;
+        if (confirmedRegistryId) {
             logCloudAdminDeviceEvent('cloud_admin_authorized_device_persisted', {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
-                registry_id: registry.id,
+                registry_id: confirmedRegistryId,
                 device_id: newAuthorizedDeviceId,
                 action,
+                result: registryActionResult,
             });
-        } else {
-            const { data: existingRegistry, error: existingError } = await supabase
-                .from('tenant_server_registry')
-                .select('id')
-                .eq('tenant_id', tenantId)
-                .eq('device_id', newAuthorizedDeviceId)
-                .maybeSingle();
-            if (existingError) throw existingError;
-
-            if (existingRegistry?.id) {
-                const { error: fallbackUpdateError } = await supabase
-                    .from('tenant_server_registry')
-                    .update(registryUpdate)
-                    .eq('id', existingRegistry.id);
-                if (fallbackUpdateError) throw fallbackUpdateError;
-                confirmedRegistryId = existingRegistry.id;
-                registryActionResult = 'updated_existing_after_heartbeat_race';
-                logCloudAdminDeviceEvent('cloud_admin_authorized_device_persisted', {
-                    tenant_id: tenantId,
-                    terminal_id: terminalId,
-                    registry_id: existingRegistry.id,
-                    device_id: newAuthorizedDeviceId,
-                    action,
-                });
-            } else {
-                registryActionResult = 'erp_confirmed_waiting_terminal_heartbeat';
-            }
         }
 
         logCloudAdminDeviceEvent('cloud_admin_terminal_device_synced_to_erp', {
