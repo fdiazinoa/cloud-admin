@@ -188,7 +188,7 @@ function getErrorMessage(status: number, payload: unknown) {
         }
     }
     if (status === 401 || status === 403) {
-        return 'No tienes permiso para ejecutar esta accion de autorizacion.';
+        return `ERP rechazo la autorizacion del device (HTTP ${status}) sin detalle. Verifica el tenant ERP, el token de servicio ERP y que la terminal este activa.`;
     }
     return 'El ERP no pudo completar la accion de autorizacion.';
 }
@@ -1594,6 +1594,9 @@ Deno.serve(async (request) => {
             return json({
                 error: erpErrorCode || 'ERP_DEVICE_ACTION_FAILED',
                 message: getErrorMessage(erpResponse.status, erpPayload),
+                erp_status: erpResponse.status,
+                erp_error_code: erpErrorCode,
+                erp_payload: sanitizePayload(erpPayload),
             }, erpResponse.status);
         }
 
