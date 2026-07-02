@@ -75,6 +75,7 @@ assert.match(deviceActionProxy, /idx_tenant_server_registry_tenant_device/, 'Ver
 assert.match(deviceActionProxy, /terminal_device_registry_merged_after_conflict/, 'Vercel proxy must merge duplicate tenant-device registry rows');
 assert.match(authAttemptsProxy, /ERP rechazo la consulta de intentos \(HTTP \$\{status\}\)/, 'auth attempts proxy must rewrite ERP 401/403 permission failures with actionable detail');
 assert.match(authAttemptsProxy, /\/api\/sync\/terminals\/.*auth-attempts/, 'auth attempts proxy must query ERP auth attempts directly from Vercel');
+assert.match(authAttemptsProxy, /requestedDeviceId[\s\S]*authorizedDeviceId[\s\S]*resolutionStatus[\s\S]*createdAt/, 'auth attempts proxy must normalize ERP camelCase attempt fields for the UI');
 assert.match(tenantService, /fetch\("\/api\/terminal-auth-attempts"/, 'tenant service must use the Vercel auth attempts proxy instead of the Edge Function directly');
 assert.doesNotMatch(tenantService, /functions\/v1\/request-terminal-auth-attempts/, 'tenant service must not call the legacy auth attempts Edge Function directly');
 assert.doesNotMatch(terminalTakeoverProxy, /No tienes permiso para ejecutar recuperacion de terminal/, 'terminal takeover proxy must not hide ERP 401/403 causes behind a generic permission message');

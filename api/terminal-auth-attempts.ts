@@ -121,16 +121,23 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
     const sanitized = sanitizePayload(asRecord(value)) as Record<string, unknown>;
     const requestedDeviceId = stringValue(sanitized.requested_device_id)
         || stringValue(sanitized.device_id)
-        || stringValue(sanitized.deviceId);
-    const resolutionStatus = stringValue(sanitized.resolution_status) || stringValue(sanitized.status);
-    const attemptedAt = stringValue(sanitized.attempted_at) || stringValue(sanitized.created_at);
+        || stringValue(sanitized.deviceId)
+        || stringValue(sanitized.requestedDeviceId);
+    const authorizedDeviceId = stringValue(sanitized.authorized_device_id)
+        || stringValue(sanitized.authorizedDeviceId);
+    const resolutionStatus = stringValue(sanitized.resolution_status)
+        || stringValue(sanitized.resolutionStatus)
+        || stringValue(sanitized.status);
+    const attemptedAt = stringValue(sanitized.attempted_at)
+        || stringValue(sanitized.created_at)
+        || stringValue(sanitized.createdAt);
 
     return {
         ...sanitized,
         tenant_id: tenantId,
         terminal_id: terminalId,
         requested_device_id: requestedDeviceId,
-        authorized_device_id: stringValue(sanitized.authorized_device_id),
+        authorized_device_id: authorizedDeviceId,
         reason: stringValue(sanitized.reason),
         resolution_status: resolutionStatus,
         attempted_at: attemptedAt,
