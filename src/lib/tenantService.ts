@@ -442,6 +442,8 @@ export async function createTenant({
             captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
             serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
             is_new_user: true,
+            must_change_password: true,
+            temporary_password: true,
         },
     });
 
@@ -492,6 +494,7 @@ export async function createTenant({
     const tenantId = data as string;
 
     const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
+        password: tempPassword,
         user_metadata: {
             name,
             full_name: name,
@@ -519,6 +522,8 @@ export async function createTenant({
             captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
             serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
             is_new_user: true,
+            must_change_password: true,
+            temporary_password: true,
             tenant_id: tenantId,
         },
     });
