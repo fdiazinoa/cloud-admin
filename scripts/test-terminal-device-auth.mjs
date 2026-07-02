@@ -61,6 +61,9 @@ assert.match(actionFunction, /device_id:\s*effectiveDeviceId/, 'ERP payload must
 assert.match(actionFunction, /cloudTenantId/, 'ERP tenant resolver must support Cloud tenant alias keys');
 assert.match(actionFunction, /filter\(`config->>\$\{key\}`,\s*'eq',\s*cloudTenantId\)/, 'ERP tenant resolver must query JSON config aliases safely');
 assert.match(actionFunction, /record\.message[\s\S]*status === 401 \|\| status === 403/, 'ERP 401/403 functional messages must be preserved before the generic permission fallback');
+assert.doesNotMatch(actionFunction, /No tienes permiso para ejecutar esta accion de autorizacion/, 'device authorization must not hide ERP 401/403 causes behind a generic permission message');
+assert.match(actionFunction, /ERP rechazo la autorizacion del device \(HTTP \$\{status\}\) sin detalle/, 'device authorization must return an actionable ERP rejection fallback');
+assert.match(actionFunction, /erp_status:\s*erpResponse\.status/, 'device authorization failures must expose ERP HTTP status');
 
 assert.match(migration, /terminal_device_audit/, 'migration must create terminal device audit');
 assert.match(migration, /DEVICE_MISMATCH/, 'migration must allow DEVICE_MISMATCH state');
