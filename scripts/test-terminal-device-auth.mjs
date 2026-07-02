@@ -58,6 +58,9 @@ assert.match(actionFunction, /cloud_admin_terminal_device_synced_to_erp/, 'devic
 assert.match(actionFunction, /erp_terminal_id:\s*canonicalErpTerminalId/, 'ERP payload must include canonical erp_terminal_id');
 assert.match(actionFunction, /cloud_admin_tenant_id:\s*cloudAdminTenantId/, 'ERP payload must include cloud_admin_tenant_id');
 assert.match(actionFunction, /device_id:\s*effectiveDeviceId/, 'ERP payload must include authorized device_id');
+assert.match(actionFunction, /cloudTenantId/, 'ERP tenant resolver must support Cloud tenant alias keys');
+assert.match(actionFunction, /filter\(`config->>\$\{key\}`,\s*'eq',\s*cloudTenantId\)/, 'ERP tenant resolver must query JSON config aliases safely');
+assert.match(actionFunction, /record\.message[\s\S]*status === 401 \|\| status === 403/, 'ERP 401/403 functional messages must be preserved before the generic permission fallback');
 
 assert.match(migration, /terminal_device_audit/, 'migration must create terminal device audit');
 assert.match(migration, /DEVICE_MISMATCH/, 'migration must allow DEVICE_MISMATCH state');
