@@ -180,13 +180,15 @@ function getErrorMessage(status: number, payload: unknown) {
     if (code === 'LICENSE_NOT_ALLOWED') {
         return 'La licencia actual no permite reautorizar esta terminal.';
     }
-    if (status === 401 || status === 403) {
-        return 'No tienes permiso para ejecutar esta accion de autorizacion.';
-    }
     if (payload && typeof payload === 'object') {
         const record = payload as Record<string, unknown>;
-        if (typeof record.message === 'string') return record.message;
-        if (typeof record.error === 'string') return record.error;
+        if (typeof record.message === 'string' && record.message.trim()) return record.message.trim();
+        if (typeof record.error === 'string' && record.error.trim() && record.error.trim() !== code) {
+            return record.error.trim();
+        }
+    }
+    if (status === 401 || status === 403) {
+        return 'No tienes permiso para ejecutar esta accion de autorizacion.';
     }
     return 'El ERP no pudo completar la accion de autorizacion.';
 }
@@ -679,12 +681,12 @@ async function resolveErpTenantId(
     if (directError) console.error('Failed to resolve ERP tenant by id', directError);
     if (directMatch) return (directMatch as ErpTenantRecord).id;
 
-    for (const key of ['cloudAdminTenantId', 'cloud_admin_tenant_id']) {
+    for (const key of ['cloudAdminTenantId', 'cloud_admin_tenant_id', 'cloudTenantId', 'cloud_tenant_id']) {
         const { data, error } = await supabase
             .schema('public')
             .from('erp_tenants')
             .select('id')
-            .eq(`config->>${key}`, cloudTenantId)
+            .filter(`config->>${key}`, 'eq', cloudTenantId)
             .maybeSingle();
         if (error) {
             console.error(`Failed to resolve ERP tenant by ${key}`, error);
