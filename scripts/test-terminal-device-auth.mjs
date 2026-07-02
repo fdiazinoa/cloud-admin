@@ -73,6 +73,8 @@ assert.doesNotMatch(terminalTakeoverProxy, /No tienes permiso para ejecutar recu
 assert.doesNotMatch(terminalTakeoverFunction, /No tienes permiso para ejecutar recuperacion de terminal/, 'terminal takeover Edge Function must not hide ERP 401/403 causes behind a generic permission message');
 assert.match(terminalTakeoverProxy, /ERP rechazo la recuperacion de terminal \(HTTP \$\{status\}\) sin detalle/, 'terminal takeover proxy must return an actionable ERP rejection fallback');
 assert.match(terminalTakeoverFunction, /ERP rechazo la recuperacion de terminal \(HTTP \$\{status\}\) sin detalle/, 'terminal takeover Edge Function must return an actionable ERP rejection fallback');
+assert.match(actionFunction, /isTenantDeviceUniqueConflict/, 'device authorization must detect tenant-device unique conflicts');
+assert.match(actionFunction, /merged_existing_device_registry/, 'device authorization must merge into the existing registry when tenant-device already exists');
 
 assert.match(migration, /terminal_device_audit/, 'migration must create terminal device audit');
 assert.match(migration, /DEVICE_MISMATCH/, 'migration must allow DEVICE_MISMATCH state');
