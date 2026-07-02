@@ -87,6 +87,13 @@ function requiresDeviceId(action: unknown) {
         || action === "GENERATE_PAIRING_CODE";
 }
 
+const legacyDeviceAuthorizationPermissionMessage = "No tienes permiso para ejecutar esta accion de autorizacion.";
+
+function isLegacyDeviceAuthorizationPermissionPayload(payload: unknown) {
+    const record = asRecord(payload);
+    return stringValue(record.message) === legacyDeviceAuthorizationPermissionMessage;
+}
+
 function isUuid(value: string) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
@@ -639,9 +646,9 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         });
 
         const payloadText = await edgeResponse.text();
-        let edgePayload: { error?: string } | null = null;
+        let edgePayload: Record<string, unknown> | null = null;
         try {
-            edgePayload = payloadText ? JSON.parse(payloadText) as { error?: string } : null;
+            edgePayload = payloadText ? JSON.parse(payloadText) as Record<string, unknown> : null;
         } catch {
             edgePayload = null;
         }
@@ -653,6 +660,17 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         ) {
             const fallback = await fallbackClearTerminalDevices(body, request.headers, supabaseUrl, serviceRoleKey);
             sendJson(response, fallback.statusCode, fallback.body);
+            return;
+        }
+
+        if (!edgeResponse.ok && isLegacyDeviceAuthorizationPermissionPayload(edgePayload)) {
+            sendJson(response, edgeResponse.status, {
+                ...(edgePayload || {}),
+                error: stringValue(edgePayload?.error) || "ERP_DEVICE_ACTION_FAILED",
+                message: `ERP rechazo la autorizacion del device (HTTP ${edgeResponse.status}) sin detalle. Verifica el tenant ERP, el token de servicio ERP y que la terminal este activa.`,
+                erp_status: edgeResponse.status,
+                legacy_message_rewritten: true,
+            });
             return;
         }
 
