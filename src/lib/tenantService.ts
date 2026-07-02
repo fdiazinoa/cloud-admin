@@ -1612,8 +1612,7 @@ export async function getTerminalAuthAttempts(
     tenantId: string,
     terminalId: string,
 ): Promise<TerminalAuthAttempt[]> {
-    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-auth-attempts`;
-    const response = await fetch(endpoint, {
+    const response = await fetch("/api/terminal-auth-attempts", {
         method: "POST",
         headers: {
             Authorization: `Bearer ${supabaseServiceRoleKey}`,
