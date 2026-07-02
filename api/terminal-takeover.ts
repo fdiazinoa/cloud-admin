@@ -174,13 +174,15 @@ function getErpErrorMessage(status: number, payload: unknown) {
     if (status === 403 && code === "DEVICE_SUPERSEDED") {
         return "Este dispositivo anterior ya fue reemplazado.";
     }
-    if (status === 401 || status === 403) {
-        return "No tienes permiso para ejecutar recuperacion de terminal.";
-    }
     if (payload && typeof payload === "object") {
         const record = payload as Record<string, unknown>;
-        if (typeof record.message === "string") return record.message;
-        if (typeof record.error === "string") return record.error;
+        if (typeof record.message === "string" && record.message.trim()) return record.message.trim();
+        if (typeof record.error === "string" && record.error.trim() && record.error.trim() !== code) {
+            return record.error.trim();
+        }
+    }
+    if (status === 401 || status === 403) {
+        return `ERP rechazo la recuperacion de terminal (HTTP ${status}) sin detalle. Verifica el tenant ERP, el token de servicio ERP y que la terminal este activa.`;
     }
     return "El ERP no pudo completar la recuperacion de terminal.";
 }
