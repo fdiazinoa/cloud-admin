@@ -46,8 +46,10 @@ CREATE TABLE IF NOT EXISTS landlord.tenants (
     name VARCHAR(255) NOT NULL,
     -- slug: Usado param nombre del esquema (ej. 'supermercado_el_sol'). Debe cumplir reglas de identificadores de Postgres.
     slug VARCHAR(63) NOT NULL UNIQUE, 
+    legal_name VARCHAR(255),
     tax_id VARCHAR(50),
     email VARCHAR(255) NOT NULL,
+    phone VARCHAR(50),
     contact_name VARCHAR(255),
     contact_email VARCHAR(255),
     city VARCHAR(120),

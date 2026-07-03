@@ -15,6 +15,8 @@ interface AuthAttemptsRequest {
 interface TenantRecord {
     id: string;
     status: string;
+    contracted_product?: string | null;
+    cloud_channel?: string | null;
 }
 
 interface AuthAttempt {
@@ -207,13 +209,14 @@ Deno.serve(async (request) => {
 
         const { data: tenantData, error: tenantError } = await supabase
             .from('tenants')
-            .select('id,status')
+            .select('id,status,contracted_product,cloud_channel')
             .eq('id', tenantId)
             .maybeSingle();
 
         if (tenantError) throw tenantError;
         const tenant = tenantData as TenantRecord | null;
         if (!tenant) return json({ error: 'TENANT_NOT_FOUND', message: 'Tenant no encontrado.' }, 404);
+        const permissivePosErpAuth = tenant.contracted_product === 'POS_ERP' || tenant.cloud_channel === 'ERP_ACTIVE';
 
         const response = await fetch(`${erpApiUrl.replace(/\/$/, '')}/api/sync/terminals/${encodeURIComponent(terminalId)}/auth-attempts`, {
             method: 'GET',
@@ -252,12 +255,19 @@ Deno.serve(async (request) => {
             const appVersionCode = getAttemptAppVersionCode(latestRejected) || getAttemptAppVersionCode(latestWithVersion);
             const registryUpdate: Record<string, unknown> = {
                 last_rejected_device_id: latestRejected.requested_device_id,
-                authorized_device_id: latestRejected.authorized_device_id || null,
-                auth_status: 'DEVICE_MISMATCH',
-                last_auth_error: latestRejected.reason || latestRejected.message || 'DEVICE_NOT_AUTHORIZED',
+                authorized_device_id: permissivePosErpAuth
+                    ? latestRejected.requested_device_id
+                    : latestRejected.authorized_device_id || null,
+                auth_status: permissivePosErpAuth ? 'AUTHORIZED' : 'DEVICE_MISMATCH',
+                last_auth_error: permissivePosErpAuth ? null : latestRejected.reason || latestRejected.message || 'DEVICE_NOT_AUTHORIZED',
                 last_auth_attempt_at: latestRejected.attempted_at || latestRejected.created_at || new Date().toISOString(),
+                requires_pos_reauth: false,
                 updated_at: new Date().toISOString(),
             };
+            if (permissivePosErpAuth) {
+                registryUpdate.device_id = latestRejected.requested_device_id;
+                registryUpdate.current_device_id = latestRejected.requested_device_id;
+            }
             if (appVersion) registryUpdate.app_version = appVersion;
             if (appVersionCode) registryUpdate.app_version_code = appVersionCode;
 

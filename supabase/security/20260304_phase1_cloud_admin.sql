@@ -12,13 +12,20 @@ CREATE FUNCTION public.get_tenant_status(p_tenant_id UUID)
 RETURNS TABLE (
     id UUID,
     status landlord.tenant_status,
-    slug TEXT
+    slug TEXT,
+    max_pos_terminals INTEGER,
+    max_erp_users INTEGER
 )
 LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, landlord
 AS $$
-    SELECT t.id, t.status, t.slug::TEXT
+    SELECT
+        t.id,
+        t.status,
+        t.slug::TEXT,
+        COALESCE(t.max_pos_terminals, 1),
+        COALESCE(t.max_erp_users, 1)
     FROM landlord.tenants AS t
     WHERE t.id = p_tenant_id
     LIMIT 1;
@@ -37,7 +44,9 @@ CREATE FUNCTION public.resolve_tenant_license(
 RETURNS TABLE (
     id UUID,
     status landlord.tenant_status,
-    slug TEXT
+    slug TEXT,
+    max_pos_terminals INTEGER,
+    max_erp_users INTEGER
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -45,7 +54,12 @@ SET search_path = public, landlord
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT t.id, t.status, t.slug::TEXT
+    SELECT
+        t.id,
+        t.status,
+        t.slug::TEXT,
+        COALESCE(t.max_pos_terminals, 1),
+        COALESCE(t.max_erp_users, 1)
     FROM landlord.tenants AS t
     WHERE
         (p_tenant_id IS NOT NULL AND t.id = p_tenant_id)

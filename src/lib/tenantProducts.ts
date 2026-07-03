@@ -15,6 +15,8 @@ export interface TenantProductSelection {
     pos: boolean;
     erp: boolean;
     backup: boolean;
+    pos_licenses: number;
+    erp_users: number;
     offlineMode?: boolean;
 }
 
@@ -65,7 +67,9 @@ export function getDefaultTenantProducts(): TenantProductSelection {
         pos: true,
         erp: true,
         backup: true,
-        offlineMode: false
+        pos_licenses: 1,
+        erp_users: 1,
+        offlineMode: false,
     };
 }
 
@@ -74,6 +78,8 @@ export function normalizeTenantProductSelection(products: TenantProductSelection
         pos: Boolean(products.pos),
         erp: Boolean(products.erp),
         backup: Boolean(products.backup),
+        pos_licenses: Math.max(1, Number(products.pos_licenses) || 1),
+        erp_users: Math.max(1, Number(products.erp_users) || 1),
         offlineMode: Boolean(products.offlineMode),
     };
 
@@ -114,6 +120,8 @@ export function isExplicitOfflineSelection(products: TenantProductSelection): bo
 export function deriveProductsFromTenant(
     type: TenantType | undefined,
     cloudSync: boolean | undefined,
+    maxPosTerminals?: number,
+    maxErpUsers?: number,
     semantics?: {
         posVariant?: PosVariant | null;
         offlineMode?: boolean | null;
@@ -131,6 +139,8 @@ export function deriveProductsFromTenant(
             pos: true,
             erp: false,
             backup: explicitOffline ? false : true,
+            pos_licenses: maxPosTerminals ?? 1,
+            erp_users: maxErpUsers ?? 1,
             offlineMode: explicitOffline,
         };
     }
@@ -140,6 +150,8 @@ export function deriveProductsFromTenant(
             pos: false,
             erp: true,
             backup: cloudSync ?? true,
+            pos_licenses: maxPosTerminals ?? 1,
+            erp_users: maxErpUsers ?? 1,
             offlineMode: false,
         };
     }
@@ -148,6 +160,8 @@ export function deriveProductsFromTenant(
         pos: true,
         erp: true,
         backup: true,
+        pos_licenses: maxPosTerminals ?? 1,
+        erp_users: maxErpUsers ?? 1,
         offlineMode: false,
     };
 }
@@ -272,6 +286,8 @@ export function deriveTenantSemanticsFromProducts(
 export function deriveTenantSemanticsFromTenant(
     type: TenantType | undefined,
     cloudSync: boolean | undefined,
+    maxPosTerminals?: number,
+    maxErpUsers?: number,
     semantics?: {
         posVariant?: PosVariant | null;
         offlineMode?: boolean | null;
@@ -279,7 +295,9 @@ export function deriveTenantSemanticsFromTenant(
         cloudChannel?: CloudChannel | null;
     },
 ): TenantSemanticConfig {
-    return deriveTenantSemanticsFromProducts(deriveProductsFromTenant(type, cloudSync, semantics));
+    return deriveTenantSemanticsFromProducts(
+        deriveProductsFromTenant(type, cloudSync, maxPosTerminals, maxErpUsers, semantics),
+    );
 }
 
 export function getTenantTypeLabel(type: TenantType | undefined): string {
