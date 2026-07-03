@@ -20,7 +20,12 @@ import type {
     TenantType,
     Terminal,
 } from "../types";
-import { deriveTenantSemanticsFromTenant, type TenantSemanticConfig } from "./tenantProducts";
+import type { ProvisionTenantInput } from "./tenantProvisioning";
+import {
+    deriveTenantSemanticsFromTenant,
+    type TenantSemanticConfig,
+} from "./tenantProducts";
+import { buildTenantAuthMetadataPayload } from "./tenantAuthMetadata";
 
 export interface DashboardStats {
     totalTenants: number;
@@ -72,33 +77,463 @@ export interface DashboardExpiringSubscription {
     daysRemaining: number;
 }
 
-interface CreateTenantInput {
+type CreateTenantInput = ProvisionTenantInput;
+
+type TenantUpdatePayload = {
     name: string;
-    slug: string;
-    email: string;
-    contactName: string;
-    contactEmail: string;
-    city: string;
-    capturedByDistributorId?: string;
-    servicedByDistributorId?: string;
-    plan?: string;
-    type?: TenantType;
-    cloudSync?: boolean;
-    contractedProduct?: ContractedProduct;
-    posVariant?: PosVariant;
-    offlineMode?: boolean;
-    explicitOffline?: boolean;
-    cloudDisabledReason?: string | null;
-    posRuntime?: PosRuntime;
-    cloudChannel?: CloudChannel;
-    dataMaster?: DataMaster;
-    cloudSyncEnabled?: boolean;
-    erpCoreEnabled?: boolean;
-    erpUiEnabled?: boolean;
-    customerErpAccess?: boolean;
-    backupEnabled?: boolean;
-    lifecycleStatus?: TenantLifecycleStatus;
-    provisioningStatus?: TenantProvisioningStatus;
+    legal_name: string | null;
+    tax_id: string | null;
+    phone: string | null;
+    type: TenantType;
+    cloud_sync: boolean;
+    max_pos_terminals?: number;
+    max_erp_users?: number;
+    contracted_product?: ContractedProduct;
+    pos_variant?: PosVariant;
+    offline_mode?: boolean;
+    explicit_offline?: boolean;
+    cloud_disabled_reason?: string | null;
+    pos_runtime?: PosRuntime;
+    cloud_channel?: CloudChannel;
+    data_master?: DataMaster;
+    cloud_sync_enabled?: boolean;
+    erp_core_enabled?: boolean;
+    erp_ui_enabled?: boolean;
+    customer_erp_access?: boolean;
+    backup_enabled?: boolean;
+    lifecycle_status?: TenantLifecycleStatus;
+    provisioning_status?: TenantProvisioningStatus;
+    email?: string;
+    password?: string;
+};
+
+const TENANT_UPDATE_PAYLOAD_KEYS = new Set<keyof TenantUpdatePayload>([
+    "name",
+    "legal_name",
+    "tax_id",
+    "phone",
+    "type",
+    "cloud_sync",
+    "max_pos_terminals",
+    "max_erp_users",
+    "contracted_product",
+    "pos_variant",
+    "offline_mode",
+    "explicit_offline",
+    "cloud_disabled_reason",
+    "pos_runtime",
+    "cloud_channel",
+    "data_master",
+    "cloud_sync_enabled",
+    "erp_core_enabled",
+    "erp_ui_enabled",
+    "customer_erp_access",
+    "backup_enabled",
+    "lifecycle_status",
+    "provisioning_status",
+    "email",
+    "password",
+]);
+
+const REQUIRED_TENANT_UPDATE_COLUMNS = new Set<keyof TenantUpdatePayload>([
+    "name",
+    "type",
+    "cloud_sync",
+]);
+
+const TENANT_CORE_UPDATE_COLUMNS: Array<keyof TenantUpdatePayload> = [
+    "name",
+    "legal_name",
+    "tax_id",
+    "phone",
+    "type",
+    "cloud_sync",
+    "max_pos_terminals",
+    "max_erp_users",
+];
+
+const TENANT_SEMANTIC_UPDATE_COLUMNS: Array<keyof TenantUpdatePayload> = [
+    "contracted_product",
+    "pos_variant",
+    "offline_mode",
+    "explicit_offline",
+    "cloud_disabled_reason",
+    "pos_runtime",
+    "cloud_channel",
+    "data_master",
+    "cloud_sync_enabled",
+    "erp_core_enabled",
+    "erp_ui_enabled",
+    "customer_erp_access",
+    "backup_enabled",
+    "lifecycle_status",
+    "provisioning_status",
+];
+
+function getSupabaseErrorHaystack(error: unknown): string {
+    if (!error || typeof error !== "object") return "";
+
+    const record = error as Record<string, unknown>;
+    return [
+        record.message,
+        record.details,
+        record.hint,
+        record.error,
+    ]
+        .filter((value): value is string => typeof value === "string")
+        .join(" ");
+}
+
+function getTerminalEdgeErrorMessage(
+    payload: { message?: string; error?: string } | null | undefined,
+    fallback: string,
+    context: string,
+) {
+    const message = payload?.message || payload?.error || "";
+    if (message && !message.toLowerCase().includes("no tienes permiso")) return message;
+    if (message) {
+        return `${context}: el servicio rechazo la solicitud con permisos insuficientes. Verifica el token de servicio ERP/Supabase y la configuracion del tenant.`;
+    }
+    return fallback;
+}
+
+function parseMissingTenantColumn(error: unknown): keyof TenantUpdatePayload | null {
+    const haystack = getSupabaseErrorHaystack(error);
+    if (!haystack) return null;
+
+    const quotedMatch = haystack.match(/Could not find the '([^']+)' column/i)
+        || haystack.match(/'([a-z][a-z0-9_]*)'\s+column/i)
+        || haystack.match(/column\s+"([a-z][a-z0-9_]*)"/i)
+        || haystack.match(/column\s+'([a-z][a-z0-9_]*)'/i);
+
+    if (quotedMatch?.[1]) {
+        const column = quotedMatch[1] as keyof TenantUpdatePayload;
+        if (TENANT_UPDATE_PAYLOAD_KEYS.has(column) && !REQUIRED_TENANT_UPDATE_COLUMNS.has(column)) {
+            return column;
+        }
+    }
+
+    const lowerHaystack = haystack.toLowerCase();
+    for (const column of TENANT_UPDATE_PAYLOAD_KEYS) {
+        if (REQUIRED_TENANT_UPDATE_COLUMNS.has(column)) continue;
+        if (lowerHaystack.includes(column)) {
+            return column;
+        }
+    }
+
+    return null;
+}
+
+function pickTenantUpdateFields(
+    payload: TenantUpdatePayload,
+    keys: Array<keyof TenantUpdatePayload>,
+): Partial<TenantUpdatePayload> {
+    const picked: Partial<TenantUpdatePayload> = {};
+
+    for (const key of keys) {
+        if (key in payload && payload[key] !== undefined) {
+            (picked as Record<string, unknown>)[key] = payload[key];
+        }
+    }
+
+    return picked;
+}
+
+async function updateTenantPayloadWithFallback(
+    id: string,
+    payload: Partial<TenantUpdatePayload>,
+): Promise<void> {
+    const nextPayload: Partial<TenantUpdatePayload> = { ...payload };
+    const maxAttempts = Math.max(5, Object.keys(nextPayload).length + 3);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (Object.keys(nextPayload).length === 0) return;
+
+        const { error } = await supabaseAdmin
+            .from("tenants")
+            .update(nextPayload)
+            .eq("id", id);
+
+        if (!error) return;
+
+        const missingColumn = parseMissingTenantColumn(error);
+        if (missingColumn && missingColumn in nextPayload) {
+            delete nextPayload[missingColumn];
+            continue;
+        }
+
+        throw error;
+    }
+
+    if (Object.keys(nextPayload).length === 0) return;
+
+    throw new Error("Tenant update failed after retrying without optional columns.");
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asText(value: unknown): string {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function isArchivedErpTerminalRow(terminal: Record<string, unknown>): boolean {
+    const config = asRecord(terminal.config);
+    const metadata = asRecord(config.metadata);
+    const terminalName = asText(terminal.name).toUpperCase();
+    const deviceId = asText(terminal.device_id).toUpperCase();
+
+    return terminalName.startsWith("ARCHIVED-")
+        || deviceId.startsWith("ARCHIVED-")
+        || config.active === false
+        || config.is_active === false
+        || config.archived === true
+        || metadata.archived === true;
+}
+
+function normalizeKey(value: unknown): string {
+    return asText(value).toUpperCase();
+}
+
+function isUuidLike(value: unknown): boolean {
+    const text = asText(value);
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text);
+}
+
+function firstText(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = asText(value);
+        if (text) return text;
+    }
+    return null;
+}
+
+function firstHumanText(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = asText(value);
+        if (text && !isUuidLike(text)) return text;
+    }
+    return null;
+}
+
+function firstNumber(...values: unknown[]): number | null {
+    for (const value of values) {
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+        if (typeof value === "string" && value.trim()) {
+            const parsed = Number(value.trim());
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return null;
+}
+
+interface ErpTerminalBinding {
+    deviceId: string;
+    erpTerminalId: string;
+    displayName?: string | null;
+    terminalCode?: string | null;
+    appVersion?: string | null;
+    appVersionCode?: number | null;
+}
+
+function resolveErpTerminalBinding(
+    bindings: Map<string, ErpTerminalBinding>,
+    ...candidates: Array<string | null | undefined>
+): ErpTerminalBinding | null {
+    for (const candidate of candidates) {
+        const key = normalizeKey(candidate);
+        if (!key) continue;
+        const hit = bindings.get(key);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, ErpTerminalBinding>> {
+    try {
+        const { data: erpTenant, error: erpTenantError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_tenants")
+            .select("id")
+            .eq("config->>cloudAdminTenantId", tenantId)
+            .maybeSingle();
+
+        if (erpTenantError) {
+            console.warn("ERP tenant lookup unavailable for terminal binding status:", erpTenantError);
+            return new Map();
+        }
+
+        const erpTenantId = (erpTenant as { id?: string } | null)?.id;
+        if (!erpTenantId) return new Map();
+
+        const { data: stores, error: storesError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_stores")
+            .select("id")
+            .eq("tenant_id", erpTenantId);
+
+        if (storesError) {
+            console.warn("ERP store lookup unavailable for terminal binding status:", storesError);
+            return new Map();
+        }
+
+        const storeIds = ((stores as Array<{ id?: string }> | null) || [])
+            .map((store) => store.id)
+            .filter((id): id is string => Boolean(id));
+
+        if (storeIds.length === 0) return new Map();
+
+        const { data: terminals, error: terminalsError } = await supabaseAdmin
+            .schema("public")
+            .from("erp_terminals")
+            .select("id,device_id,name,config,last_seen,created_at")
+            .in("store_id", storeIds);
+
+        if (terminalsError) {
+            console.warn("ERP terminal lookup unavailable for terminal binding status:", terminalsError);
+            return new Map();
+        }
+
+        const bindings = new Map<string, ErpTerminalBinding>();
+        for (const terminal of ((terminals as Array<Record<string, unknown>> | null) || [])) {
+            if (isArchivedErpTerminalRow(terminal)) continue;
+
+            const deviceId = asText(terminal.device_id);
+            const erpTerminalId = asText(terminal.id);
+            if (!deviceId || !erpTerminalId) continue;
+
+            const config = asRecord(terminal.config);
+            const metadata = asRecord(config.metadata);
+            const status = asRecord(config.status);
+            const app = asRecord(config.app);
+            const apk = asRecord(config.apk);
+            const terminalCode = firstHumanText(
+                terminal.code,
+                config.station_number,
+                config.stationNumber,
+                metadata.station_number,
+                metadata.stationNumber,
+                metadata.terminal_code,
+                metadata.terminalCode,
+            );
+            const displayName = firstHumanText(
+                terminal.name,
+                terminal.code,
+                metadata.terminal_name,
+                metadata.terminalName,
+                metadata.display_name,
+                metadata.displayName,
+                config.terminal_name,
+                config.terminalName,
+                config.display_name,
+                config.displayName,
+                terminalCode,
+            );
+            const binding: ErpTerminalBinding = {
+                deviceId,
+                erpTerminalId,
+                displayName,
+                terminalCode,
+                appVersion: firstText(
+                    config.app_version,
+                    config.appVersion,
+                    config.apk_version,
+                    config.apkVersion,
+                    config.version,
+                    metadata.app_version,
+                    metadata.appVersion,
+                    metadata.apk_version,
+                    metadata.apkVersion,
+                    metadata.version,
+                    status.app_version,
+                    status.appVersion,
+                    status.apk_version,
+                    status.apkVersion,
+                    status.version,
+                    app.version,
+                    app.app_version,
+                    app.apk_version,
+                    apk.version,
+                    apk.app_version,
+                    apk.apk_version,
+                ),
+                appVersionCode: firstNumber(
+                    config.app_version_code,
+                    config.appVersionCode,
+                    config.apk_version_code,
+                    config.apkVersionCode,
+                    config.version_code,
+                    config.versionCode,
+                    metadata.app_version_code,
+                    metadata.appVersionCode,
+                    metadata.apk_version_code,
+                    metadata.apkVersionCode,
+                    metadata.version_code,
+                    metadata.versionCode,
+                    status.app_version_code,
+                    status.appVersionCode,
+                    status.apk_version_code,
+                    status.apkVersionCode,
+                    status.version_code,
+                    status.versionCode,
+                    app.version_code,
+                    app.versionCode,
+                    apk.version_code,
+                    apk.versionCode,
+                ),
+            };
+            [
+                terminal.id,
+                terminal.name,
+                terminal.code,
+                terminal.device_id,
+                metadata.terminal_id,
+                metadata.terminal_name,
+                metadata.terminalName,
+                metadata.erp_terminal_id,
+                terminalCode,
+                displayName,
+            ].forEach((candidate) => {
+                const key = normalizeKey(candidate);
+                if (key) bindings.set(key, binding);
+            });
+        }
+
+        return bindings;
+    } catch (error) {
+        console.warn("ERP terminal binding status lookup failed:", error);
+        return new Map();
+    }
+}
+
+function applyRegistryBindingStatus(
+    registries: TenantTerminalRegistryEntry[],
+    bindings: Map<string, ErpTerminalBinding>,
+): TenantTerminalRegistryEntry[] {
+    if (bindings.size === 0) return registries;
+
+    return registries.map((registry) => {
+        const binding = resolveErpTerminalBinding(
+            bindings,
+            registry.terminal_id,
+            registry.terminal_name,
+            registry.device_id,
+        );
+        const authorizedDeviceId = binding?.deviceId || null;
+
+        const isRevoked = Boolean(
+            authorizedDeviceId
+            && registry.device_id
+            && normalizeKey(registry.device_id) !== normalizeKey(authorizedDeviceId)
+        );
+
+        return {
+            ...registry,
+            authorized_device_id: authorizedDeviceId || registry.authorized_device_id || null,
+            is_revoked: isRevoked,
+        };
+    });
 }
 
 export interface RequestTerminalTakeoverInput {
@@ -156,17 +591,21 @@ export interface TerminalErpReadinessResult {
     message?: string;
 }
 
-export type TerminalDeviceAction = "TAKEOVER" | "ROTATE_TOKEN" | "REVOKE_DEVICE";
+export type TerminalDeviceAction =
+    | "TAKEOVER"
+    | "ROTATE_TOKEN"
+    | "REVOKE_DEVICE"
+    | "SYNC_AUTHORIZED_DEVICE"
+    | "CLEAR_TERMINAL_DEVICES";
 
 export interface RequestTerminalDeviceActionInput {
     tenantId: string;
     terminalId: string;
     registryId?: string | null;
     terminalName?: string | null;
-    deviceId: string;
+    deviceId?: string | null;
     action: TerminalDeviceAction;
     reason: string;
-    pairingCode?: string | null;
 }
 
 export interface TerminalDeviceActionResult {
@@ -180,6 +619,8 @@ export interface TerminalDeviceActionResult {
     deviceTokenIssued?: boolean;
     deviceTokenStatus?: string | null;
     tokenPreview?: string | null;
+    cleared_registry_count?: number | null;
+    cleared_device_ids?: string[] | null;
     message?: string;
 }
 
@@ -233,7 +674,7 @@ export interface TerminalFiscalConfigResult {
     message?: string;
 }
 
-function normalizeOptional(value?: string): string | null {
+function normalizeOptional(value?: string | null): string | null {
     if (!value) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
@@ -250,7 +691,7 @@ function generateTempPassword(): string {
 }
 
 function normalizeTenantSemantics(input: CreateTenantInput): TenantSemanticConfig {
-    const inferred = deriveTenantSemanticsFromTenant(input.type, input.cloudSync, {
+    const inferred = deriveTenantSemanticsFromTenant(input.type, input.cloudSync, undefined, undefined, {
         posVariant: input.posVariant,
         offlineMode: input.offlineMode,
         explicitOffline: input.explicitOffline,
@@ -493,40 +934,42 @@ export async function createTenant({
 
     const tenantId = data as string;
 
-    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
-        password: tempPassword,
-        user_metadata: {
-            name,
-            full_name: name,
-            slug,
-            type,
-            cloudSync,
-            contracted_product: semantics.contractedProduct,
-            pos_variant: semantics.posVariant,
-            offline_mode: semantics.offlineMode,
-            explicit_offline: semantics.explicitOffline,
-            cloud_disabled_reason: semantics.cloudDisabledReason,
-            pos_runtime: semantics.posRuntime,
-            cloud_channel: semantics.cloudChannel,
-            data_master: semantics.dataMaster,
-            cloud_sync_enabled: semantics.cloudSyncEnabled,
-            erp_core_enabled: semantics.erpCoreEnabled,
-            erp_ui_enabled: semantics.erpUiEnabled,
-            customer_erp_access: semantics.customerErpAccess,
-            backup_enabled: semantics.backupEnabled,
-            lifecycle_status: semantics.lifecycleStatus,
-            provisioning_status: semantics.provisioningStatus,
-            contact_name: contactName.trim(),
-            contact_email: contactMail,
-            city: city.trim(),
-            captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
-            serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
-            is_new_user: true,
-            must_change_password: true,
-            temporary_password: true,
-            tenant_id: tenantId,
+    const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(
+        authUserId,
+        {
+            password: tempPassword,
+            ...buildTenantAuthMetadataPayload(tenantId, {
+                name,
+                full_name: name,
+                slug,
+                type,
+                cloudSync,
+                contracted_product: semantics.contractedProduct,
+                pos_variant: semantics.posVariant,
+                offline_mode: semantics.offlineMode,
+                explicit_offline: semantics.explicitOffline,
+                cloud_disabled_reason: semantics.cloudDisabledReason,
+                pos_runtime: semantics.posRuntime,
+                cloud_channel: semantics.cloudChannel,
+                data_master: semantics.dataMaster,
+                cloud_sync_enabled: semantics.cloudSyncEnabled,
+                erp_core_enabled: semantics.erpCoreEnabled,
+                erp_ui_enabled: semantics.erpUiEnabled,
+                customer_erp_access: semantics.customerErpAccess,
+                backup_enabled: semantics.backupEnabled,
+                lifecycle_status: semantics.lifecycleStatus,
+                provisioning_status: semantics.provisioningStatus,
+                contact_name: contactName.trim(),
+                contact_email: contactMail,
+                city: city.trim(),
+                captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
+                serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
+                is_new_user: true,
+                must_change_password: true,
+                temporary_password: true,
+            }),
         },
-    });
+    );
 
     if (metadataError) {
         console.error("Failed to sync tenant metadata into Supabase Auth", metadataError);
@@ -586,36 +1029,25 @@ export async function updateTenantTaxId(id: string, taxId: string): Promise<void
 
 export async function updateTenant(
     id: string,
-    payload: {
-        name: string;
-        legal_name: string | null;
-        tax_id: string | null;
-        phone: string | null;
-        type: TenantType;
-        cloud_sync: boolean;
-        contracted_product?: ContractedProduct;
-        pos_variant?: PosVariant;
-        offline_mode?: boolean;
-        explicit_offline?: boolean;
-        cloud_disabled_reason?: string | null;
-        pos_runtime?: PosRuntime;
-        cloud_channel?: CloudChannel;
-        data_master?: DataMaster;
-        cloud_sync_enabled?: boolean;
-        erp_core_enabled?: boolean;
-        erp_ui_enabled?: boolean;
-        customer_erp_access?: boolean;
-        backup_enabled?: boolean;
-        lifecycle_status?: TenantLifecycleStatus;
-        provisioning_status?: TenantProvisioningStatus;
-    },
+    payload: TenantUpdatePayload,
 ): Promise<void> {
-    const { error } = await supabaseAdmin
-        .from("tenants")
-        .update(payload)
-        .eq("id", id);
+    const corePayload = pickTenantUpdateFields(payload, TENANT_CORE_UPDATE_COLUMNS);
+    const semanticPayload = pickTenantUpdateFields(payload, TENANT_SEMANTIC_UPDATE_COLUMNS);
 
-    if (error) throw error;
+    if (Object.keys(corePayload).length > 0) {
+        await updateTenantPayloadWithFallback(id, corePayload);
+    }
+
+    if (Object.keys(semanticPayload).length === 0) return;
+
+    try {
+        await updateTenantPayloadWithFallback(id, semanticPayload);
+    } catch (error) {
+        console.warn(
+            "Tenant semantic fields were not persisted because the database schema is missing columns:",
+            getSupabaseErrorHaystack(error) || error,
+        );
+    }
 }
 
 async function findTenantAuthUserId(tenant: Tenant): Promise<string | null> {
@@ -682,112 +1114,346 @@ export async function getDistributors(): Promise<Distributor[]> {
 }
 
 export async function getTenantTerminalOverview(tenantId: string): Promise<TenantTerminalSnapshot[]> {
-    const [terminalsRes, registryRes] = await Promise.all([
+    const [terminalsRes, registryRes, tenantRes] = await Promise.all([
         supabaseAdmin
             .schema("public")
             .from("terminals")
-            .select("id,tenant_id,device_token,name,is_active,last_checkin_at,created_at")
-            .eq("tenant_id", tenantId)
-            .order("created_at", { ascending: true }),
+            .select("*")
+            .eq("tenant_id", tenantId),
         supabaseAdmin
             .from("tenant_server_registry")
             .select("*")
             .eq("tenant_id", tenantId)
             .order("last_seen_at", { ascending: false }),
+        supabaseAdmin
+            .from("tenants")
+            .select("contracted_product,cloud_channel,type")
+            .eq("id", tenantId)
+            .maybeSingle(),
     ]);
 
+    const tenantRow = (tenantRes.data || null) as { contracted_product?: string | null; cloud_channel?: string | null; type?: string | null } | null;
+    const isPosErpTenant = tenantRow?.contracted_product === "POS_ERP"
+        || tenantRow?.cloud_channel === "ERP_ACTIVE"
+        || tenantRow?.type === "full";
+
+    const terminalRows: Terminal[] = [];
     if (terminalsRes.error) {
-        throw terminalsRes.error;
+        console.warn("Tenant terminal catalog unavailable, falling back to registry data:", terminalsRes.error);
+    } else {
+        terminalRows.push(...((terminalsRes.data as Terminal[]) || []));
     }
 
     let registryRows: TenantTerminalRegistryEntry[] = [];
     if (registryRes.error) {
         const code = (registryRes.error as { code?: string }).code;
         if (code !== "42P01") {
-            throw registryRes.error;
+            console.warn("Tenant server registry unavailable, falling back to catalog data:", registryRes.error);
         }
     } else {
         registryRows = (registryRes.data as TenantTerminalRegistryEntry[]) || [];
     }
 
     const erpBindings = await loadErpTerminalBindings(tenantId);
-    const registryByTerminalId = new Map<string, TenantTerminalRegistryEntry>();
-    const registryByDeviceId = new Map<string, TenantTerminalRegistryEntry>();
+    registryRows = applyRegistryBindingStatus(registryRows, erpBindings);
+
+    if (terminalsRes.error && registryRes.error) {
+        throw terminalsRes.error;
+    }
+
+    const registriesByTerminalId = new Map<string, TenantTerminalRegistryEntry[]>();
+    const registriesByDeviceId = new Map<string, TenantTerminalRegistryEntry[]>();
     const matchedRegistryIds = new Set<string>();
 
     for (const row of registryRows) {
-        if (row.terminal_id && !registryByTerminalId.has(row.terminal_id)) {
-            registryByTerminalId.set(row.terminal_id, row);
+        if (row.terminal_id) {
+            const arr = registriesByTerminalId.get(row.terminal_id) || [];
+            arr.push(row);
+            registriesByTerminalId.set(row.terminal_id, arr);
         }
-        if (row.device_id && !registryByDeviceId.has(row.device_id)) {
-            registryByDeviceId.set(row.device_id, row);
+        const registryDeviceId = row.authorized_device_id || row.current_device_id || row.device_id;
+        if (registryDeviceId) {
+            const arr = registriesByDeviceId.get(registryDeviceId) || [];
+            arr.push(row);
+            registriesByDeviceId.set(registryDeviceId, arr);
         }
     }
 
-    const snapshots: TenantTerminalSnapshot[] = ((terminalsRes.data as Terminal[]) || []).map((terminal) => {
-        const registry = registryByTerminalId.get(terminal.id) || registryByDeviceId.get(terminal.device_token) || null;
-        const erpBinding = resolveErpTerminalBinding(
-            erpBindings,
-            terminal.id,
-            terminal.name,
-            terminal.device_token,
-            registry?.terminal_id,
-            registry?.terminal_name,
-            registry?.device_id,
+    const getTerminalConfig = (terminal?: Terminal | null) => asRecord(terminal?.config);
+    const getTerminalMetadata = (terminal?: Terminal | null) => asRecord(getTerminalConfig(terminal).metadata);
+    const getHumanTerminalCode = (terminal?: Terminal | null, binding?: ErpTerminalBinding | null) => {
+        const config = getTerminalConfig(terminal);
+        const metadata = getTerminalMetadata(terminal);
+        return firstHumanText(
+            terminal?.code,
+            binding?.terminalCode,
+            config.station_number,
+            config.stationNumber,
+            metadata.station_number,
+            metadata.stationNumber,
+            metadata.terminal_code,
+            metadata.terminalCode,
         );
-        if (registry?.id) {
-            matchedRegistryIds.add(registry.id);
+    };
+    const getHumanTerminalName = (
+        terminal?: Terminal | null,
+        registry?: TenantTerminalRegistryEntry | null,
+        binding?: ErpTerminalBinding | null,
+    ) => {
+        const config = getTerminalConfig(terminal);
+        const metadata = getTerminalMetadata(terminal);
+        return firstHumanText(
+            terminal?.name,
+            terminal?.terminal_name,
+            terminal?.label,
+            terminal?.code,
+            registry?.terminal_name,
+            binding?.displayName,
+            metadata.terminal_name,
+            metadata.terminalName,
+            metadata.display_name,
+            metadata.displayName,
+            config.terminal_name,
+            config.terminalName,
+            config.display_name,
+            config.displayName,
+            getHumanTerminalCode(terminal, binding),
+        ) || "Terminal sin nombre";
+    };
+    const getPosErpTerminalGroupKey = (
+        terminal?: Terminal | null,
+        registry?: TenantTerminalRegistryEntry | null,
+        binding?: ErpTerminalBinding | null,
+    ) => {
+        const key = normalizeKey(binding?.erpTerminalId)
+            || normalizeKey(getHumanTerminalCode(terminal, binding))
+            || normalizeKey(getHumanTerminalName(terminal, registry, binding));
+        return key || normalizeKey(terminal?.id) || normalizeKey(registry?.terminal_id) || normalizeKey(registry?.id);
+    };
+    const registryDeviceMatches = (registry: TenantTerminalRegistryEntry, deviceId?: string | null) => {
+        const normalizedDevice = normalizeKey(deviceId);
+        if (!normalizedDevice) return false;
+        return [registry.authorized_device_id, registry.current_device_id, registry.device_id]
+            .some((candidate) => normalizeKey(candidate) === normalizedDevice);
+    };
+    const isRegistryRevoked = (registry: TenantTerminalRegistryEntry) => {
+        const authStatus = normalizeKey(registry.auth_status);
+        return registry.is_revoked === true
+            || authStatus === "OLD_DEVICE_REVOKED"
+            || authStatus === "LICENSE_EXCEEDED";
+    };
+    const getVisibleRegistries = (
+        registries: TenantTerminalRegistryEntry[],
+        binding?: ErpTerminalBinding | null,
+    ) => {
+        if (!isPosErpTenant || registries.length <= 1) return registries;
+
+        const activeRegistries = registries.filter((registry) => !isRegistryRevoked(registry));
+        const candidates = activeRegistries.length ? activeRegistries : registries;
+        const preferred = candidates.find((registry) => registryDeviceMatches(registry, binding?.deviceId))
+            || candidates.find((registry) => ["AUTHORIZED", "TAKEOVER_COMPLETED", "REAUTH_COMPLETED"].includes(normalizeKey(registry.auth_status)))
+            || candidates[0];
+
+        return preferred ? [preferred] : [];
+    };
+    const groupedTerminalRows = new Map<string, Terminal[]>();
+    for (const terminal of terminalRows) {
+        const binding = resolveErpTerminalBinding(erpBindings, terminal.id, terminal.name, terminal.terminal_name, terminal.code);
+        const terminalName = getHumanTerminalName(terminal, null, binding);
+        const groupKey = isPosErpTenant
+            ? getPosErpTerminalGroupKey(terminal, null, binding)
+            : terminalName === "Terminal sin nombre" ? terminal.id : terminalName.toUpperCase();
+        const arr = groupedTerminalRows.get(groupKey) || [];
+        arr.push(terminal);
+        groupedTerminalRows.set(groupKey, arr);
+    }
+
+    const snapshots: TenantTerminalSnapshot[] = [];
+
+    for (const terminalsGroup of groupedTerminalRows.values()) {
+        // We pick the most recently created terminal row as the "primary" one for metadata
+        const primaryTerminal = terminalsGroup.reduce((newest, current) => {
+            const newestTime = new Date(newest.created_at || 0).getTime();
+            const currentTime = new Date(current.created_at || 0).getTime();
+            return currentTime > newestTime ? current : newest;
+        });
+
+        const deviceToken = primaryTerminal.device_token || primaryTerminal.device_id || primaryTerminal.current_device_id || null;
+        const registriesMap = new Map<string, TenantTerminalRegistryEntry>();
+
+        for (const terminal of terminalsGroup) {
+            if (registriesByTerminalId.has(terminal.id)) {
+                for (const reg of registriesByTerminalId.get(terminal.id)!) {
+                     if (reg.id) {
+                         registriesMap.set(reg.id, reg);
+                         matchedRegistryIds.add(reg.id);
+                     }
+                }
+            }
+            const dt = terminal.device_token || terminal.device_id || terminal.current_device_id;
+            if (dt && registriesByDeviceId.has(dt)) {
+                for (const reg of registriesByDeviceId.get(dt)!) {
+                     if (reg.id) {
+                         registriesMap.set(reg.id, reg);
+                         matchedRegistryIds.add(reg.id);
+                     }
+                }
+            }
         }
 
-        return {
-            id: terminal.id,
-            tenant_id: terminal.tenant_id,
-            terminal_id: terminal.id,
-            name: terminal.name || terminal.id,
-            device_token: terminal.device_token,
-            is_active: Boolean(terminal.is_active),
-            last_checkin_at: terminal.last_checkin_at || null,
-            created_at: terminal.created_at || null,
+        const consolidatedRegistries = Array.from(registriesMap.values());
+        // Sort registries by last_seen_at DESC so the most recent heartbeat is first
+        consolidatedRegistries.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
+
+        const registry = consolidatedRegistries.length > 0 ? consolidatedRegistries[0] : null;
+        const erpBinding = resolveErpTerminalBinding(
+            erpBindings,
+            primaryTerminal.id,
+            registry?.terminal_id,
+            primaryTerminal.name,
+            primaryTerminal.terminal_name,
+            primaryTerminal.code,
+            registry?.terminal_name,
+        );
+        const terminalName = getHumanTerminalName(primaryTerminal, registry, erpBinding);
+        const visibleRegistries = getVisibleRegistries(consolidatedRegistries, erpBinding);
+
+        snapshots.push({
+            id: primaryTerminal.id,
+            tenant_id: primaryTerminal.tenant_id,
+            terminal_id: erpBinding?.erpTerminalId || primaryTerminal.id,
+            name: terminalName,
+            device_token: deviceToken,
+            is_active: primaryTerminal.config?.is_active ?? primaryTerminal.is_active ?? primaryTerminal.active ?? true,
+            last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.last_heartbeat_at || primaryTerminal.updated_at || null,
+            created_at: primaryTerminal.created_at || null,
             erp_terminal_uuid: erpBinding?.erpTerminalId || null,
             erp_current_device_id: erpBinding?.deviceId || null,
-            erp_app_version: erpBinding?.appVersion || null,
+            erp_app_version: erpBinding?.appVersion || primaryTerminal.app_version || null,
             erp_app_version_code: erpBinding?.appVersionCode || null,
-            registry,
-        };
-    });
+            registry: visibleRegistries[0] || registry,
+            registries: visibleRegistries,
+        });
+    }
+
+    const orphanedRegistriesGrouped = new Map<string, TenantTerminalRegistryEntry[]>();
 
     for (const row of registryRows) {
-        if (matchedRegistryIds.has(row.id)) continue;
-        const erpBinding = resolveErpTerminalBinding(
+        if (row.id && matchedRegistryIds.has(row.id)) continue;
+        
+        const rowBinding = resolveErpTerminalBinding(
             erpBindings,
             row.terminal_id,
             row.terminal_name,
             row.device_id,
         );
+        const terminalName = firstHumanText(
+            row.terminal_name,
+            rowBinding?.displayName,
+            rowBinding?.terminalCode,
+        ) || "Terminal sin catálogo";
+        const groupKey = isPosErpTenant
+            ? getPosErpTerminalGroupKey(null, row, rowBinding)
+            : terminalName.toUpperCase();
 
+        const existingSnapshot = snapshots.find((snapshot) => {
+            if (isPosErpTenant) {
+                const snapshotKey = normalizeKey(snapshot.erp_terminal_uuid)
+                    || normalizeKey(snapshot.name)
+                    || normalizeKey(snapshot.terminal_id);
+                return snapshotKey === groupKey;
+            }
+            return (snapshot.name || '').trim().toUpperCase() === groupKey;
+        });
+
+        if (existingSnapshot) {
+            existingSnapshot.registries = existingSnapshot.registries || [];
+            existingSnapshot.registries.push(row);
+            existingSnapshot.registries.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
+            existingSnapshot.registry = existingSnapshot.registries[0];
+            if (row.id) matchedRegistryIds.add(row.id);
+        } else {
+            const arr = orphanedRegistriesGrouped.get(groupKey) || [];
+            arr.push(row);
+            orphanedRegistriesGrouped.set(groupKey, arr);
+        }
+    }
+
+    for (const arr of orphanedRegistriesGrouped.values()) {
+        arr.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
+        const primary = arr[0];
+        const orphanBinding = resolveErpTerminalBinding(
+            erpBindings,
+            primary.terminal_id,
+            primary.id,
+            primary.terminal_name,
+            primary.device_id,
+        );
+        const orphanName = firstHumanText(
+            primary.terminal_name,
+            orphanBinding?.displayName,
+            orphanBinding?.terminalCode,
+        ) || "Terminal sin catálogo";
+        const visibleOrphanRegistries = getVisibleRegistries(arr, orphanBinding);
         snapshots.push({
-            id: row.id,
-            tenant_id: row.tenant_id,
-            terminal_id: row.terminal_id || null,
-            name: row.terminal_name || row.terminal_id || row.device_id || "Terminal sin catálogo",
-            device_token: row.device_id || null,
-            is_active: (row.status || "").toUpperCase() === "ONLINE",
-            last_checkin_at: row.last_seen_at || null,
-            created_at: row.created_at || null,
-            erp_terminal_uuid: erpBinding?.erpTerminalId || null,
-            erp_current_device_id: erpBinding?.deviceId || null,
-            erp_app_version: erpBinding?.appVersion || null,
-            erp_app_version_code: erpBinding?.appVersionCode || null,
-            registry: row,
+            id: primary.id || primary.device_id || `orphan-${Date.now()}`,
+            tenant_id: primary.tenant_id,
+            terminal_id: orphanBinding?.erpTerminalId || primary.terminal_id || null,
+            name: orphanName,
+            device_token: primary.device_id || null,
+            is_active: (primary.status || "").toUpperCase() === "ONLINE",
+            last_checkin_at: primary.last_seen_at || null,
+            created_at: primary.created_at || null,
+            erp_terminal_uuid: orphanBinding?.erpTerminalId || null,
+            erp_current_device_id: orphanBinding?.deviceId || null,
+            erp_app_version: orphanBinding?.appVersion || null,
+            erp_app_version_code: orphanBinding?.appVersionCode || null,
+            registry: visibleOrphanRegistries[0] || primary,
+            registries: visibleOrphanRegistries,
         });
     }
 
-    return snapshots;
+    const consolidatedSnapshots = new Map<string, TenantTerminalSnapshot>();
+    for (const snapshot of snapshots) {
+        const key = isPosErpTenant
+            ? normalizeKey(snapshot.erp_terminal_uuid) || normalizeKey(snapshot.name) || normalizeKey(snapshot.terminal_id) || snapshot.id
+            : snapshot.id;
+        const existing = consolidatedSnapshots.get(key);
+        if (!existing) {
+            consolidatedSnapshots.set(key, snapshot);
+            continue;
+        }
+
+        const mergedRegistries = [...(existing.registries || []), ...(snapshot.registries || [])]
+            .filter((registry, index, arr) => registry.id ? arr.findIndex((item) => item.id === registry.id) === index : true)
+            .sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
+        const mergedBinding: ErpTerminalBinding | null = {
+            deviceId: existing.erp_current_device_id || snapshot.erp_current_device_id || '',
+            erpTerminalId: existing.erp_terminal_uuid || snapshot.erp_terminal_uuid || '',
+        };
+        const visibleMergedRegistries = getVisibleRegistries(mergedRegistries, mergedBinding);
+
+        consolidatedSnapshots.set(key, {
+            ...existing,
+            erp_terminal_uuid: existing.erp_terminal_uuid || snapshot.erp_terminal_uuid,
+            erp_current_device_id: existing.erp_current_device_id || snapshot.erp_current_device_id,
+            erp_app_version: existing.erp_app_version || snapshot.erp_app_version,
+            erp_app_version_code: existing.erp_app_version_code || snapshot.erp_app_version_code,
+            last_checkin_at: existing.last_checkin_at || snapshot.last_checkin_at,
+            registry: visibleMergedRegistries[0] || mergedRegistries[0] || existing.registry || snapshot.registry || null,
+            registries: visibleMergedRegistries,
+        });
+    }
+
+    return Array.from(consolidatedSnapshots.values()).sort((a, b) => {
+        const aTime = new Date(a.last_checkin_at || a.created_at || 0).getTime();
+        const bTime = new Date(b.last_checkin_at || b.created_at || 0).getTime();
+        return bTime - aTime;
+    });
 }
 
 export async function requestTerminalTakeover(input: RequestTerminalTakeoverInput): Promise<TerminalTakeoverResult> {
-    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-takeover`;
-    const response = await fetch(endpoint, {
+    const response = await fetch("/api/terminal-takeover", {
         method: "POST",
         headers: {
             Authorization: `Bearer ${supabaseServiceRoleKey}`,
@@ -835,7 +1501,11 @@ export async function requestTerminalLocalRebuild(input: RequestTerminalLocalReb
     const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
 
     if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "No se pudo preparar la reconstruccion local del POS.");
+        throw new Error(getTerminalEdgeErrorMessage(
+            payload,
+            "No se pudo preparar la reconstruccion local del POS.",
+            "Reconstruccion local POS",
+        ));
     }
 
     return (payload || { status: "success" }) as TerminalLocalRebuildResult;
@@ -959,8 +1629,7 @@ export async function getTerminalAuthAttempts(
     tenantId: string,
     terminalId: string,
 ): Promise<TerminalAuthAttempt[]> {
-    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-auth-attempts`;
-    const response = await fetch(endpoint, {
+    const response = await fetch("/api/terminal-auth-attempts", {
         method: "POST",
         headers: {
             Authorization: `Bearer ${supabaseServiceRoleKey}`,
@@ -986,11 +1655,189 @@ export async function getTerminalAuthAttempts(
     return Array.isArray(payload?.attempts) ? payload.attempts : [];
 }
 
+type RegistryAuthSyncPayload = {
+    device_id?: string;
+    current_device_id?: string;
+    authorized_device_id?: string;
+    auth_status?: string;
+    last_auth_error?: string | null;
+    last_auth_attempt_at?: string;
+    requires_pos_reauth?: boolean;
+    updated_at: string;
+};
+
+const REGISTRY_OPTIONAL_UPDATE_KEYS = new Set([
+    "device_id",
+    "current_device_id",
+    "authorized_device_id",
+    "auth_status",
+    "last_auth_error",
+    "last_auth_attempt_at",
+    "requires_pos_reauth",
+    "status",
+    "is_revoked",
+    "revocation_reason",
+]);
+
+function parseMissingRegistryColumn(error: unknown): string | null {
+    const haystack = getSupabaseErrorHaystack(error);
+    if (!haystack) return null;
+
+    const quotedMatch = haystack.match(/Could not find the '([^']+)' column/i)
+        || haystack.match(/'([a-z][a-z0-9_]*)'\s+column/i)
+        || haystack.match(/column\s+"([a-z][a-z0-9_]*)"/i)
+        || haystack.match(/column\s+'([a-z][a-z0-9_]*)'/i)
+        || haystack.match(/column\s+tenant_server_registry\.([a-z][a-z0-9_]*)\s+does not exist/i);
+
+    if (quotedMatch?.[1]) {
+        const column = quotedMatch[1];
+        if (REGISTRY_OPTIONAL_UPDATE_KEYS.has(column)) return column;
+    }
+
+    const lowerHaystack = haystack.toLowerCase();
+    for (const column of REGISTRY_OPTIONAL_UPDATE_KEYS) {
+        if (lowerHaystack.includes(column)) return column;
+    }
+
+    return null;
+}
+
+async function updateRegistryWithFallback(
+    registryId: string,
+    tenantId: string,
+    payload: Record<string, unknown>,
+): Promise<{ droppedColumns: string[] }> {
+    const nextPayload: Record<string, unknown> = { ...payload };
+    const droppedColumns: string[] = [];
+    const maxAttempts = Math.max(5, Object.keys(nextPayload).length + 3);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (Object.keys(nextPayload).length === 0) {
+            throw new Error("Registry update failed: no compatible columns remain for this database.");
+        }
+
+        const { error } = await supabaseAdmin
+            .from("tenant_server_registry")
+            .update(nextPayload)
+            .eq("id", registryId)
+            .eq("tenant_id", tenantId);
+
+        if (!error) return { droppedColumns };
+
+        const missingColumn = parseMissingRegistryColumn(error);
+        if (missingColumn && missingColumn in nextPayload) {
+            droppedColumns.push(missingColumn);
+            delete nextPayload[missingColumn];
+            continue;
+        }
+
+        throw error;
+    }
+
+    throw new Error("Registry update failed after retrying without optional columns.");
+}
+
+async function updateRegistryAuthSyncWithFallback(
+    registryId: string,
+    tenantId: string,
+    payload: RegistryAuthSyncPayload,
+): Promise<{ droppedColumns: string[] }> {
+    return updateRegistryWithFallback(registryId, tenantId, payload as Record<string, unknown>);
+}
+
+export async function syncTerminalAuthorizedDevice(input: {
+    tenantId: string;
+    terminalId: string;
+    registryId: string;
+    deviceId: string;
+}): Promise<TerminalDeviceActionResult> {
+    const deviceId = input.deviceId.trim();
+    const { data: tenant, error: tenantError } = await supabaseAdmin
+        .from("tenants")
+        .select("id, status, contracted_product")
+        .eq("id", input.tenantId)
+        .maybeSingle();
+
+    if (tenantError) throw tenantError;
+    if (!tenant) throw new Error("Tenant no encontrado.");
+    if (tenant.status !== "ACTIVE") {
+        throw new Error("No se puede sincronizar si el tenant no esta activo.");
+    }
+    if (tenant.contracted_product !== "POS_ONLY") {
+        throw new Error("Sincronizar device autorizado solo aplica a tenants POS_ONLY.");
+    }
+
+    const { data: registry, error: registryError } = await supabaseAdmin
+        .from("tenant_server_registry")
+        .select("id, tenant_id, device_id, current_device_id")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", input.registryId)
+        .maybeSingle();
+
+    if (registryError) throw registryError;
+    if (!registry) throw new Error("No hay registro de servidor para sincronizar.");
+
+    const registryDeviceId = registry.device_id?.trim() || registry.current_device_id?.trim() || "";
+    if (!registryDeviceId || registryDeviceId !== deviceId) {
+        throw new Error("El device solicitado no coincide con el registro online de la terminal.");
+    }
+
+    const currentDeviceId = registry.current_device_id?.trim() || "";
+    if (registry.device_id?.trim() === deviceId && currentDeviceId === deviceId) {
+        return {
+            status: "success",
+            success: true,
+            action: "authorized_device_already_synced",
+            authorized_device_id: deviceId,
+            message: "El device autorizado ya estaba persistido en Cloud-Admin.",
+        };
+    }
+
+    const completedAt = new Date().toISOString();
+    const { droppedColumns } = await updateRegistryAuthSyncWithFallback(registry.id, input.tenantId, {
+        device_id: deviceId,
+        current_device_id: deviceId,
+        authorized_device_id: deviceId,
+        auth_status: "AUTHORIZED",
+        last_auth_error: null,
+        last_auth_attempt_at: completedAt,
+        requires_pos_reauth: false,
+        updated_at: completedAt,
+    });
+
+    const missingAuthColumns = droppedColumns.includes("authorized_device_id")
+        || droppedColumns.includes("auth_status");
+
+    return {
+        status: "success",
+        success: true,
+        action: "authorized_device_synced",
+        authorized_device_id: deviceId,
+        message: missingAuthColumns
+            ? "Device sincronizado en columnas legacy (device_id/current_device_id). Aplica la migracion 202605271015_terminal_device_authorization en Supabase para persistir authorized_device_id."
+            : "Device autorizado persistido en Cloud-Admin. El POS puede reintentar conexion.",
+    };
+}
+
 export async function requestTerminalDeviceAction(
     input: RequestTerminalDeviceActionInput,
 ): Promise<TerminalDeviceActionResult> {
-    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-device-authorization`;
-    const response = await fetch(endpoint, {
+    if (input.action === "SYNC_AUTHORIZED_DEVICE") {
+        if (!input.registryId) {
+            throw new Error("registry_id requerido para sincronizar device autorizado.");
+        }
+        if (!input.deviceId) {
+            throw new Error("DEVICE_ID_REQUIRED: device_id requerido para sincronizar device autorizado.");
+        }
+        return syncTerminalAuthorizedDevice({
+            tenantId: input.tenantId,
+            terminalId: input.terminalId,
+            registryId: input.registryId,
+            deviceId: input.deviceId,
+        });
+    }
+
+    const response = await fetch("/api/terminal-device-action", {
         method: "POST",
         headers: {
             Authorization: `Bearer ${supabaseServiceRoleKey}`,
@@ -1002,10 +1849,9 @@ export async function requestTerminalDeviceAction(
             terminal_id: input.terminalId,
             registry_id: input.registryId || null,
             terminal_name: input.terminalName || null,
-            device_id: input.deviceId,
+            device_id: input.deviceId || null,
             action: input.action,
             reason: input.reason,
-            pairing_code: input.pairingCode || null,
             confirm_action: true,
         }),
     });
@@ -1017,6 +1863,193 @@ export async function requestTerminalDeviceAction(
     }
 
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
+}
+
+export type TenantPosLicenseSeats = {
+    usedSeats: number;
+    maxSeats: number;
+    licenseUnit: "terminal_id" | "device_id" | string;
+};
+
+export async function getTenantPosLicenseSeats(tenantId: string): Promise<TenantPosLicenseSeats> {
+    const { data, error } = await supabaseAdmin.rpc("count_tenant_pos_license_seats", {
+        p_tenant_id: tenantId,
+    });
+
+    if (error) throw error;
+
+    const row = Array.isArray(data) ? data[0] : data;
+    const record = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
+
+    return {
+        usedSeats: Number(record.used_seats ?? 0),
+        maxSeats: Number(record.max_seats ?? 1),
+        licenseUnit: typeof record.license_unit === "string" ? record.license_unit : "device_id",
+    };
+}
+
+export async function releaseTerminalLicenseSlot(input: {
+    tenantId: string;
+    registryId: string;
+    deviceId: string;
+}): Promise<{ message: string }> {
+    const deviceId = input.deviceId.trim();
+    const { data: tenant, error: tenantError } = await supabaseAdmin
+        .from("tenants")
+        .select("id, contracted_product, type")
+        .eq("id", input.tenantId)
+        .maybeSingle();
+
+    if (tenantError) throw tenantError;
+    if (!tenant) throw new Error("Tenant no encontrado.");
+
+    const usesErpCatalog = tenant.contracted_product === "POS_ERP";
+    if (usesErpCatalog) {
+        throw new Error(
+            "POS+ERP controla licencias al crear terminales en el ERP. Elimine la terminal en el ERP para liberar cupo.",
+        );
+    }
+
+    const { data: registry, error: registryError } = await supabaseAdmin
+        .from("tenant_server_registry")
+        .select("id, tenant_id, device_id, terminal_id, terminal_name, status, is_revoked, auth_status")
+        .eq("tenant_id", input.tenantId)
+        .eq("id", input.registryId)
+        .maybeSingle();
+
+    if (registryError) throw registryError;
+    if (!registry) throw new Error("Registro de terminal no encontrado.");
+    if (registry.device_id?.trim() !== deviceId) {
+        throw new Error("El device_id no coincide con el registro seleccionado.");
+    }
+
+    const usesTerminalSlots = tenant.contracted_product === "POS_ONLY" || tenant.type === "pos_only";
+    const terminalId = registry.terminal_id?.trim() || "";
+    const terminalName = registry.terminal_name?.trim() || terminalId || "caja";
+    const releasedAt = new Date().toISOString();
+
+    const releasePayload = {
+        status: "OFFLINE",
+        is_revoked: true,
+        auth_status: "OLD_DEVICE_REVOKED",
+        revocation_reason: "MANUAL_RELEASE_LICENSE_SLOT",
+        requires_pos_reauth: false,
+        authorized_device_id: null,
+        current_device_id: null,
+        last_auth_error: null,
+        is_primary: false,
+        updated_at: releasedAt,
+    } as Record<string, unknown>;
+
+    if (usesTerminalSlots && terminalId) {
+        const { data: slotRows, error: slotError } = await supabaseAdmin
+            .from("tenant_server_registry")
+            .select("id, status, is_revoked, auth_status")
+            .eq("tenant_id", input.tenantId)
+            .eq("terminal_id", terminalId);
+
+        if (slotError) throw slotError;
+
+        let releasedCount = 0;
+        for (const row of slotRows || []) {
+            const alreadyReleased = row.status === "OFFLINE"
+                || row.is_revoked === true
+                || row.auth_status === "OLD_DEVICE_REVOKED";
+            if (alreadyReleased) continue;
+
+            await updateRegistryWithFallback(row.id, input.tenantId, releasePayload);
+            releasedCount += 1;
+        }
+
+        try {
+            await enforceTenantPosLicenseLimits(input.tenantId);
+        } catch (enforceError) {
+            console.warn("POS license re-balance after release failed", enforceError);
+        }
+
+        const seats = await getTenantPosLicenseSeats(input.tenantId);
+
+        return {
+            message: releasedCount > 0
+                ? `Cupo de ${terminalName} liberado (${releasedCount} equipo(s)). Cupo usado ahora: ${seats.usedSeats}/${seats.maxSeats}. Active el nuevo Android en la misma caja o con otro nombre unico.`
+                : `La caja ${terminalName} ya estaba liberada. Cupo usado: ${seats.usedSeats}/${seats.maxSeats}.`,
+        };
+    }
+
+    const alreadyReleased = registry.status === "OFFLINE"
+        || registry.is_revoked === true
+        || registry.auth_status === "OLD_DEVICE_REVOKED";
+
+    if (!alreadyReleased) {
+        await updateRegistryWithFallback(registry.id, input.tenantId, releasePayload);
+    }
+
+    try {
+        await enforceTenantPosLicenseLimits(input.tenantId);
+    } catch (enforceError) {
+        console.warn("POS license re-balance after release failed", enforceError);
+    }
+
+    const seats = await getTenantPosLicenseSeats(input.tenantId);
+
+    return {
+        message: alreadyReleased
+            ? `Este equipo ya estaba liberado. Cupo usado: ${seats.usedSeats}/${seats.maxSeats}.`
+            : `Cupo liberado para ${deviceId}. Cupo usado: ${seats.usedSeats}/${seats.maxSeats}.`,
+    };
+}
+
+export async function enforceTenantPosLicenseLimits(tenantId: string): Promise<Record<string, unknown>> {
+    const { data, error } = await supabaseAdmin.rpc("enforce_tenant_pos_license_limits", {
+        p_tenant_id: tenantId,
+    });
+
+    if (error) throw error;
+    return (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
+}
+
+/** Quita lifecycle BLOCKED dejado por readiness ERP fallido en tenants POS_ONLY. */
+export async function releasePosOnlyProvisioningBlock(tenantId: string): Promise<void> {
+    const { error } = await supabaseAdmin
+        .from("tenants")
+        .update({
+            lifecycle_status: "CLOUD_READY",
+            provisioning_status: "CLOUD_STAGING_REQUIRED",
+        })
+        .eq("id", tenantId);
+
+    if (error) throw error;
+}
+
+export async function getTerminalFiscalDebug(
+    input: RequestTerminalFiscalReadinessInput,
+): Promise<TerminalFiscalReadiness> {
+    const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-fiscal-debug`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            "Content-Type": "application/json",
+            "X-Actor-Source": "cloud-admin-ui",
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            registry_id: input.registryId || null,
+        }),
+    });
+
+    const payload = await response.json().catch(() => null) as TerminalFiscalReadinessResult & { error?: string } | null;
+
+    if (!response.ok) {
+        throw new Error(getTerminalEdgeErrorMessage(
+            payload,
+            "No se pudo verificar el mapping fiscal de la terminal.",
+            "Mapping fiscal de terminal",
+        ));
+    }
+
+    return payload?.readiness || payload?.fiscal_readiness || { status: "MISSING" };
 }
 
 export async function getTerminalFiscalReadiness(
@@ -1040,7 +2073,11 @@ export async function getTerminalFiscalReadiness(
     const payload = await response.json().catch(() => null) as TerminalFiscalReadinessResult & { error?: string } | null;
 
     if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "No se pudo cargar la configuracion fiscal de la terminal.");
+        throw new Error(getTerminalEdgeErrorMessage(
+            payload,
+            "No se pudo cargar la configuracion fiscal de la terminal.",
+            "Configuracion fiscal de terminal",
+        ));
     }
 
     return payload?.readiness || payload?.fiscal_readiness || { status: "MISSING" };
@@ -1070,7 +2107,11 @@ export async function requestTerminalFiscalConfig(
     const payload = await response.json().catch(() => null) as TerminalFiscalConfigResult & { error?: string } | null;
 
     if (!response.ok) {
-        throw new Error(payload?.message || payload?.error || "No se pudo configurar fiscalmente la terminal.");
+        throw new Error(getTerminalEdgeErrorMessage(
+            payload,
+            "No se pudo configurar fiscalmente la terminal.",
+            "Configuracion fiscal de terminal",
+        ));
     }
 
     return payload || { status: "success", mode: input.mode };
@@ -1165,185 +2206,6 @@ type DashboardTicketRow = {
     customer_rating?: number | null;
     created_at: string;
 };
-
-function asRecord(value: unknown): Record<string, unknown> {
-    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function asText(value: unknown): string {
-    return typeof value === "string" ? value.trim() : "";
-}
-
-function normalizeKey(value: unknown): string {
-    return asText(value).toUpperCase();
-}
-
-function firstText(...values: unknown[]): string | null {
-    for (const value of values) {
-        const text = asText(value);
-        if (text) return text;
-    }
-    return null;
-}
-
-function firstNumber(...values: unknown[]): number | null {
-    for (const value of values) {
-        if (typeof value === "number" && Number.isFinite(value)) return value;
-        if (typeof value === "string" && value.trim()) {
-            const parsed = Number(value.trim());
-            if (Number.isFinite(parsed)) return parsed;
-        }
-    }
-    return null;
-}
-
-interface ErpTerminalBinding {
-    deviceId: string;
-    erpTerminalId: string;
-    appVersion?: string | null;
-    appVersionCode?: number | null;
-}
-
-function resolveErpTerminalBinding(
-    bindings: Map<string, ErpTerminalBinding>,
-    ...candidates: Array<string | null | undefined>
-): ErpTerminalBinding | null {
-    for (const candidate of candidates) {
-        const key = normalizeKey(candidate);
-        if (!key) continue;
-        const hit = bindings.get(key);
-        if (hit) return hit;
-    }
-    return null;
-}
-
-async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, ErpTerminalBinding>> {
-    try {
-        const { data: erpTenant, error: erpTenantError } = await supabaseAdmin
-            .schema("public")
-            .from("erp_tenants")
-            .select("id")
-            .eq("config->>cloudAdminTenantId", tenantId)
-            .maybeSingle();
-
-        if (erpTenantError) {
-            console.warn("ERP tenant lookup unavailable for terminal APK version:", erpTenantError);
-            return new Map();
-        }
-
-        const erpTenantId = (erpTenant as { id?: string } | null)?.id;
-        if (!erpTenantId) return new Map();
-
-        const { data: stores, error: storesError } = await supabaseAdmin
-            .schema("public")
-            .from("erp_stores")
-            .select("id")
-            .eq("tenant_id", erpTenantId);
-
-        if (storesError) {
-            console.warn("ERP store lookup unavailable for terminal APK version:", storesError);
-            return new Map();
-        }
-
-        const storeIds = ((stores as Array<{ id?: string }> | null) || [])
-            .map((store) => store.id)
-            .filter((id): id is string => Boolean(id));
-
-        if (storeIds.length === 0) return new Map();
-
-        const { data: terminals, error: terminalsError } = await supabaseAdmin
-            .schema("public")
-            .from("erp_terminals")
-            .select("id,device_id,name,code,config,last_seen,created_at")
-            .in("store_id", storeIds);
-
-        if (terminalsError) {
-            console.warn("ERP terminal lookup unavailable for terminal APK version:", terminalsError);
-            return new Map();
-        }
-
-        const bindings = new Map<string, ErpTerminalBinding>();
-        for (const terminal of ((terminals as Array<Record<string, unknown>> | null) || [])) {
-            const deviceId = asText(terminal.device_id);
-            const erpTerminalId = asText(terminal.id);
-            if (!deviceId || !erpTerminalId) continue;
-
-            const config = asRecord(terminal.config);
-            const metadata = asRecord(config.metadata);
-            const status = asRecord(config.status);
-            const app = asRecord(config.app);
-            const apk = asRecord(config.apk);
-            const binding: ErpTerminalBinding = {
-                deviceId,
-                erpTerminalId,
-                appVersion: firstText(
-                    config.app_version,
-                    config.appVersion,
-                    config.apk_version,
-                    config.apkVersion,
-                    config.version,
-                    metadata.app_version,
-                    metadata.appVersion,
-                    metadata.apk_version,
-                    metadata.apkVersion,
-                    metadata.version,
-                    status.app_version,
-                    status.appVersion,
-                    status.apk_version,
-                    status.apkVersion,
-                    status.version,
-                    app.version,
-                    app.app_version,
-                    app.apk_version,
-                    apk.version,
-                    apk.app_version,
-                    apk.apk_version,
-                ),
-                appVersionCode: firstNumber(
-                    config.app_version_code,
-                    config.appVersionCode,
-                    config.apk_version_code,
-                    config.apkVersionCode,
-                    config.version_code,
-                    config.versionCode,
-                    metadata.app_version_code,
-                    metadata.appVersionCode,
-                    metadata.apk_version_code,
-                    metadata.apkVersionCode,
-                    metadata.version_code,
-                    metadata.versionCode,
-                    status.app_version_code,
-                    status.appVersionCode,
-                    status.apk_version_code,
-                    status.apkVersionCode,
-                    status.version_code,
-                    status.versionCode,
-                    app.version_code,
-                    app.versionCode,
-                    apk.version_code,
-                    apk.versionCode,
-                ),
-            };
-
-            [
-                terminal.id,
-                terminal.name,
-                terminal.code,
-                terminal.device_id,
-                metadata.terminal_id,
-                metadata.erp_terminal_id,
-            ].forEach((candidate) => {
-                const key = normalizeKey(candidate);
-                if (key) bindings.set(key, binding);
-            });
-        }
-
-        return bindings;
-    } catch (error) {
-        console.warn("ERP terminal APK version lookup failed:", error);
-        return new Map();
-    }
-}
 
 async function getDashboardSubscriptions(): Promise<DashboardSubscriptionRow[]> {
     const { data, error } = await supabaseAdmin
@@ -1456,6 +2318,112 @@ export async function reactivateTenant(id: string): Promise<void> {
     if (error) throw error;
 }
 
+export async function updateTenantCredentials(
+    tenantId: string,
+    payload: { email?: string; password?: string }
+): Promise<void> {
+    const { email, password } = payload;
+    if (!email && !password) return;
+
+    // 1. Get the current tenant to get the current email
+    const { data: tenant, error: fetchErr } = await supabaseAdmin
+        .from("tenants")
+        .select("email")
+        .eq("id", tenantId)
+        .single();
+
+    if (fetchErr) throw fetchErr;
+
+    // 2. Find the user in Auth by current email or tenant_id
+    const { data: { users }, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
+    if (listErr) throw listErr;
+
+    const authUser = users.find((u) => u.email === (tenant as { email: string }).email || u.user_metadata?.tenant_id === tenantId);
+    if (!authUser) throw new Error("Usuario de autenticación no encontrado para este tenant");
+
+    // 3. Update Auth
+    const updateData: { email?: string; password?: string; email_confirm?: boolean } = {};
+    if (email && email.trim().toLowerCase() !== (tenant as { email: string }).email) {
+        updateData.email = email.trim().toLowerCase();
+        updateData.email_confirm = true;
+    }
+    if (password && password.trim()) {
+        updateData.password = password.trim();
+    }
+
+    if (Object.keys(updateData).length > 0) {
+        const { error: authErr } = await supabaseAdmin.auth.admin.updateUserById(authUser.id, updateData);
+        if (authErr) throw authErr;
+    }
+
+    // 4. Update DB if email changed
+    if (email && email.trim().toLowerCase() !== (tenant as { email: string }).email) {
+        const { error: dbErr } = await supabaseAdmin
+            .from("tenants")
+            .update({ email: email.trim().toLowerCase() })
+            .eq("id", tenantId);
+        if (dbErr) throw dbErr;
+    }
+}
+
+export async function toggleTerminalActiveStatus(terminalId: string, isActive: boolean): Promise<void> {
+    const { data: terminal, error: getErr } = await supabaseAdmin
+        .schema("public")
+        .from("erp_terminals")
+        .select("config")
+        .eq("id", terminalId)
+        .single();
+    
+    if (getErr) throw getErr;
+
+    const config = terminal.config || {};
+    config.is_active = isActive;
+
+    const { error: setErr } = await supabaseAdmin
+        .schema("public")
+        .from("erp_terminals")
+        .update({ config })
+        .eq("id", terminalId);
+    
+    if (setErr) throw setErr;
+}
+
+export async function registerTenantServerEndpoint(payload: {
+    tenantId: string;
+    deviceId: string;
+    terminalId: string;
+    terminalName?: string;
+    hostname?: string;
+    protocol?: string;
+    port?: number;
+    localIp: string;
+    localIps?: string[];
+    endpointUrl?: string;
+    isPrimary?: boolean;
+    appVersion?: string;
+    appVersionCode?: number;
+}): Promise<void> {
+    const { error } = await supabaseAdmin.rpc("register_tenant_server_endpoint", {
+        p_tenant_id: payload.tenantId,
+        p_device_id: payload.deviceId,
+        p_terminal_id: payload.terminalId,
+        p_terminal_name: payload.terminalName || null,
+        p_hostname: payload.hostname || null,
+        p_protocol: payload.protocol || 'http',
+        p_port: payload.port || 3001,
+        p_local_ip: payload.localIp,
+        p_local_ips: payload.localIps || [payload.localIp],
+        p_endpoint_url: payload.endpointUrl || null,
+        p_is_primary: payload.isPrimary !== false,
+        p_app_version: payload.appVersion || null,
+        p_app_version_code: payload.appVersionCode || null,
+        p_status: 'ONLINE',
+        p_last_seen_at: new Date().toISOString()
+    });
+
+    if (error) throw error;
+}
+
 export const tenantService = {
     createTenant,
     verifyTenantEmail,
@@ -1474,9 +2442,18 @@ export const tenantService = {
     retryTerminalSyncPending,
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
+    syncTerminalAuthorizedDevice,
+    enforceTenantPosLicenseLimits,
+    getTenantPosLicenseSeats,
+    releaseTerminalLicenseSlot,
+    releasePosOnlyProvisioningBlock,
+    getTerminalFiscalDebug,
     getTerminalFiscalReadiness,
     requestTerminalFiscalConfig,
     getDashboardStats,
     suspendTenant,
     reactivateTenant,
+    updateTenantCredentials,
+    toggleTerminalActiveStatus,
+    registerTenantServerEndpoint,
 };

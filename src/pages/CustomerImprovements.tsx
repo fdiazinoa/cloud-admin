@@ -38,10 +38,12 @@ interface ImprovementRow {
     updated_at: string;
     tenants?: { name?: string | null } | { name?: string | null }[] | null;
     support_tickets?: {
+        ticket_number?: number | null;
         subject?: string | null;
         status?: string | null;
         source?: string | null;
     } | {
+        ticket_number?: number | null;
         subject?: string | null;
         status?: string | null;
         source?: string | null;
@@ -99,8 +101,9 @@ function getCustomerLabel(item: ImprovementRow) {
 }
 
 function getTicketLabel(item: ImprovementRow) {
-    if (!normalizeRelation(item.support_tickets) && !item.ticket_id) return 'Sin ticket';
-    return `#${item.ticket_id?.slice(0, 8) ?? 'sin-id'}`;
+    const ticket = normalizeRelation(item.support_tickets);
+    if (!ticket && !item.ticket_id) return 'Sin ticket';
+    return `#${ticket?.ticket_number ?? item.ticket_id?.slice(0, 8)}`;
 }
 
 function confidenceLabel(value?: number | null) {
@@ -126,6 +129,7 @@ export const CustomerImprovements: React.FC = () => {
                     name
                 ),
                 support_tickets (
+                    ticket_number,
                     subject,
                     status,
                     source

@@ -89,31 +89,65 @@ export const TenantProductsModal: React.FC<TenantProductsModalProps> = ({
                             const active = normalizedDraft[product.key];
 
                             return (
-                                <button
+                                <div
                                     key={product.key}
-                                    type="button"
-                                    onClick={() => toggleProduct(product.key)}
-                                    className={`rounded-2xl border p-4 text-left transition-all ${
+                                    className={`rounded-2xl border flex flex-col overflow-hidden transition-all ${
                                         active
                                             ? 'border-blue-300 bg-blue-50 shadow-sm shadow-blue-100'
                                             : 'border-slate-200 bg-white hover:border-slate-300'
                                     }`}
                                 >
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${
-                                            active ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'
-                                        }`}>
-                                            <Icon size={20} />
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleProduct(product.key)}
+                                        className="p-4 text-left flex-1 hover:bg-slate-50/50 transition-colors"
+                                    >
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${
+                                                active ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'
+                                            }`}>
+                                                <Icon size={20} />
+                                            </div>
+                                            <div className={`w-6 h-6 rounded-full border flex items-center justify-center ${
+                                                active ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'
+                                            }`}>
+                                                <Check size={14} />
+                                            </div>
                                         </div>
-                                        <div className={`w-6 h-6 rounded-full border flex items-center justify-center ${
-                                            active ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white text-transparent'
-                                        }`}>
-                                            <Check size={14} />
+                                        <h4 className="mt-4 font-black text-slate-800">{product.label}</h4>
+                                        <p className="mt-2 text-sm text-slate-500 leading-relaxed">{product.description}</p>
+                                    </button>
+
+                                    {active && product.key === 'pos' && (
+                                        <div className="px-4 pb-4 pt-3 border-t border-blue-100 bg-blue-50/50 mt-auto">
+                                            <label className="block text-xs font-bold text-blue-800 mb-1.5 uppercase tracking-wide">
+                                                Límite de Terminales
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                value={draft.pos_licenses}
+                                                onChange={e => setDraft(d => ({ ...d, pos_licenses: parseInt(e.target.value) || 1 }))}
+                                                className="w-full px-3 py-2 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm text-blue-900 font-bold"
+                                            />
                                         </div>
-                                    </div>
-                                    <h4 className="mt-4 font-black text-slate-800">{product.label}</h4>
-                                    <p className="mt-2 text-sm text-slate-500 leading-relaxed">{product.description}</p>
-                                </button>
+                                    )}
+
+                                    {active && product.key === 'erp' && (
+                                        <div className="px-4 pb-4 pt-3 border-t border-blue-100 bg-blue-50/50 mt-auto">
+                                            <label className="block text-xs font-bold text-blue-800 mb-1.5 uppercase tracking-wide">
+                                                Usuarios Concurrentes
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                value={draft.erp_users}
+                                                onChange={e => setDraft(d => ({ ...d, erp_users: parseInt(e.target.value) || 1 }))}
+                                                className="w-full px-3 py-2 bg-white border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm text-blue-900 font-bold"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
                             );
                         })}
                     </div>

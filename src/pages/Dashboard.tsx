@@ -133,101 +133,110 @@ export const Dashboard: React.FC = () => {
     const activeOperations = stats.activeTenants + stats.trialTenants;
 
     return (
-        <div className="space-y-6">
+        <div className="p-8 space-y-8 max-w-[1600px] mx-auto w-full">
             {errorMessage && (
                 <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
                     {errorMessage}
                 </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="glass-card rounded-2xl p-6 relative overflow-hidden">
                     <div className="flex justify-between items-start">
                         <div>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Tenants Activos</p>
-                            <h3 className="text-3xl font-black text-slate-800">{isLoading ? '...' : formatInteger(stats.activeTenants)}</h3>
-                            <p className="text-xs text-slate-500 mt-2">Total registrados: {formatInteger(stats.totalTenants)}</p>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Tenants Activos</p>
+                            <h3 className="text-3xl font-bold mt-1 text-slate-800">{isLoading ? '...' : formatInteger(stats.activeTenants)}</h3>
+                            <p className="text-xs text-slate-500 mt-3">Total registrados: {formatInteger(stats.totalTenants)}</p>
                         </div>
-                        <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
+                        <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
                             <Users size={24} />
                         </div>
                     </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <div className="glass-card rounded-2xl p-6 relative overflow-hidden">
                     <div className="flex justify-between items-start">
                         <div>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">En Prueba</p>
-                            <h3 className="text-3xl font-black text-amber-600">{isLoading ? '...' : formatInteger(stats.trialTenants)}</h3>
-                            <p className="text-xs text-slate-500 mt-2">Operativos: {formatInteger(activeOperations)}</p>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">En Prueba</p>
+                            <h3 className="text-3xl font-bold mt-1 text-amber-600">{isLoading ? '...' : formatInteger(stats.trialTenants)}</h3>
+                            <p className="text-xs text-slate-500 mt-3">Operativos: {formatInteger(activeOperations)}</p>
                         </div>
-                        <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
+                        <div className="p-2 bg-amber-50 rounded-xl text-amber-600">
                             <Clock size={24} />
                         </div>
                     </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <div className="glass-card rounded-2xl p-6 relative overflow-hidden">
                     <div className="flex justify-between items-start">
                         <div>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Cuentas Suspendidas</p>
-                            <h3 className="text-3xl font-black text-red-600">{isLoading ? '...' : formatInteger(stats.suspendedTenants)}</h3>
-                            <p className="text-xs text-slate-500 mt-2">Bloqueadas desde landlord.tenants</p>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Cuentas Suspendidas</p>
+                            <h3 className="text-3xl font-bold mt-1 text-orange-600">{isLoading ? '...' : formatInteger(stats.suspendedTenants)}</h3>
+                            <p className="text-xs text-slate-500 mt-3">Bloqueadas desde landlord.tenants</p>
                         </div>
-                        <div className="p-3 bg-red-50 text-red-600 rounded-xl">
+                        <div className="p-2 bg-orange-50 rounded-xl text-orange-600">
                             <AlertCircle size={24} />
                         </div>
                     </div>
                 </div>
 
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <div className="glass-card rounded-2xl p-6 relative overflow-hidden">
                     <div className="flex justify-between items-start">
                         <div>
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Terminales POS</p>
-                            <h3 className="text-3xl font-black text-indigo-600">{isLoading ? '...' : formatInteger(stats.terminals)}</h3>
-                            <p className="text-xs text-slate-500 mt-2">Registradas en public.terminals</p>
+                            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Terminales POS</p>
+                            <h3 className="text-3xl font-bold mt-1 text-indigo-600">{isLoading ? '...' : formatInteger(stats.terminals)}</h3>
+                            <p className="text-xs text-slate-500 mt-3">Registradas en public.terminals</p>
                         </div>
-                        <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
+                        <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
                             <Server size={24} />
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
 
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                <div className="xl:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2 glass-card rounded-2xl p-6">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-8">
                         <div>
-                            <h3 className="text-lg font-bold text-slate-800">Altas de Tenants</h3>
+                            <h4 className="font-bold text-slate-800">Altas de Tenants</h4>
                             <p className="text-sm text-slate-500">Últimos 6 meses según fecha de creación real</p>
                         </div>
                         <p className="text-xs font-semibold text-slate-400">Actualizado {formatDateTime(stats.lastUpdatedAt)}</p>
                     </div>
-                    <div className="h-72 w-full">
+                    <div className="h-[350px] w-full">
                         <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={stats.tenantGrowth} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                                 <defs>
                                     <linearGradient id="tenantGrowthValue" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#2563eb" stopOpacity={0.25} />
-                                        <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                                        <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.2} />
+                                        <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
                                     </linearGradient>
                                 </defs>
                                 <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} />
                                 <YAxis stroke="#94a3b8" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                                 <Tooltip
-                                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontFamily: '"Public Sans", sans-serif' }}
                                     formatter={(value: number | string | undefined) => [formatInteger(Number(value ?? 0)), 'Altas']}
                                 />
-                                <Area type="monotone" dataKey="value" stroke="#2563eb" strokeWidth={3} fillOpacity={1} fill="url(#tenantGrowthValue)" />
+                                <Area
+                                    type="linear"
+                                    dataKey="value"
+                                    stroke="#4f46e5"
+                                    strokeWidth={3}
+                                    fillOpacity={1}
+                                    fill="url(#tenantGrowthValue)"
+                                    activeDot={{ r: 6, strokeWidth: 2, stroke: '#fff' }}
+                                    dot={{ r: 4, fill: '#4f46e5', stroke: '#fff', strokeWidth: 2 }}
+                                />
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>
                 </div>
 
                 <div className="space-y-6">
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                        <h3 className="text-lg font-bold text-slate-800 mb-6">Operación Actual</h3>
+                    <div className="glass-card rounded-2xl p-6">
+                        <h4 className="font-bold text-slate-800 mb-6">Operación Actual</h4>
                         <div className="space-y-4">
                             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                                 <span className="text-sm font-semibold text-slate-600">Suscripciones activas</span>
@@ -248,7 +257,7 @@ export const Dashboard: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                    <div className="glass-card rounded-2xl p-6">
                         <div className="mb-5 flex items-start justify-between gap-3">
                             <div>
                                 <h4 className="font-bold text-slate-800">Satisfacción del soporte</h4>
@@ -300,10 +309,10 @@ export const Dashboard: React.FC = () => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="glass-card rounded-2xl p-6">
                     <div className="flex items-center justify-between mb-6">
-                        <h3 className="text-lg font-bold text-slate-800">Tickets Recientes</h3>
+                        <h4 className="font-bold text-slate-800">Tickets Recientes</h4>
                         <Link to="/support" className="text-xs font-bold text-indigo-600 hover:underline">
                             Gestionar Tickets
                         </Link>
@@ -317,14 +326,14 @@ export const Dashboard: React.FC = () => {
                     ) : (
                         <div className="overflow-hidden border border-slate-100 rounded-xl">
                             <table className="w-full text-left text-sm border-collapse">
-                                <thead className="bg-slate-50/70">
+                                <thead className="bg-slate-50/50">
                                     <tr>
                                         <th className="p-3 font-semibold text-slate-500">Ticket</th>
                                         <th className="p-3 font-semibold text-slate-500">Prioridad</th>
                                         <th className="p-3 font-semibold text-slate-500 text-right">Recibido</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
+                                <tbody className="divide-y divide-slate-100 bg-white/40">
                                     {stats.recentTickets.map((ticket) => (
                                         <tr key={ticket.id}>
                                             <td className="p-3">
@@ -345,10 +354,10 @@ export const Dashboard: React.FC = () => {
                     )}
                 </div>
 
-                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <div className="glass-card rounded-2xl p-6">
                     <div className="flex items-center justify-between mb-6">
-                        <h3 className="text-lg font-bold text-slate-800">Vencimientos de Suscripción</h3>
-                        <span className="rounded bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">
+                        <h4 className="font-bold text-slate-800">Vencimientos de Suscripción</h4>
+                        <span className="bg-orange-100 text-orange-700 text-[10px] px-2 py-0.5 rounded font-bold">
                             {formatInteger(stats.expiringSubscriptions.length)} PRÓXIMOS
                         </span>
                     </div>
@@ -361,7 +370,7 @@ export const Dashboard: React.FC = () => {
                     ) : (
                         <div className="space-y-3">
                             {stats.expiringSubscriptions.map((subscription) => (
-                                <div key={`${subscription.tenantId}-${subscription.endDate}`} className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-3">
+                                <div key={`${subscription.tenantId}-${subscription.endDate}`} className="flex items-center justify-between p-3 bg-white/50 border border-slate-100 rounded-xl">
                                     <div className="flex min-w-0 items-center gap-3">
                                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-600">
                                             {subscription.tenantName.slice(0, 2).toUpperCase()}
