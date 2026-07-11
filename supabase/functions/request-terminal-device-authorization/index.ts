@@ -225,6 +225,11 @@ function isPosTenant(tenant: TenantRecord) {
     return tenant.type === 'pos_only' || tenant.type === 'full';
 }
 
+function isOperationalTenantStatus(status?: string | null) {
+    const normalized = (status || '').trim().toUpperCase();
+    return normalized === 'ACTIVE' || normalized === 'TRIAL';
+}
+
 function sameDeviceId(left?: string | null, right?: string | null) {
     return Boolean(left?.trim() && right?.trim() && left.trim() === right.trim());
 }
@@ -652,6 +657,24 @@ async function preservePublicTerminalCatalog(
     if (terminalError) throw terminalError;
 
     return { preserved: true, terminal_id: terminal.id, terminal_code: terminalCode, store_id: terminal.store_id };
+}
+
+async function reactivatePublicTenantCatalog(
+    supabase: ReturnType<typeof createClient>,
+    tenant: TenantRecord,
+) {
+    const tenantName = getTextCandidate(tenant.name, tenant.id) || tenant.id;
+    const tenantCode = buildCatalogCode(getTextCandidate(tenant.slug, tenantName), tenant.id.slice(0, 8).toUpperCase());
+    const { error } = await supabase
+        .schema('public')
+        .from('tenants')
+        .upsert({
+            id: tenant.id,
+            code: tenantCode,
+            name: tenantName,
+            is_active: true,
+        }, { onConflict: 'id' });
+    if (error) throw error;
 }
 
 async function fetchFirstAvailableErpRoute(
@@ -1164,15 +1187,17 @@ Deno.serve(async (request) => {
         if (tenantError) throw tenantError;
         const tenant = tenantData as TenantRecord | null;
         if (!tenant) return json({ error: 'TENANT_NOT_FOUND', message: 'Tenant no encontrado.' }, 404);
-        if (tenant.status !== 'ACTIVE') {
+        if (!isOperationalTenantStatus(tenant.status)) {
             return json({
                 error: 'TENANT_NOT_ACTIVE',
-                message: 'No se permite reautorizar si el tenant no esta activo.',
+                message: 'No se permite reautorizar si el tenant esta suspendido o inactivo.',
             }, 400);
         }
         if (!isPosTenant(tenant)) {
             return json({ error: 'LICENSE_NOT_ALLOWED', message: 'La licencia actual no permite reautorizar esta terminal.' }, 403);
         }
+
+        await reactivatePublicTenantCatalog(supabase, tenant);
 
         const registry = await loadRegistry(supabase, tenantId, terminalId, registryId);
         let terminalQuery = supabase
