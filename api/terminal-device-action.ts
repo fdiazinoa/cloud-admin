@@ -266,6 +266,29 @@ async function preservePublicTerminalCatalog(
     return { preserved: true, terminal_id: terminal.id, terminal_code: terminalCode, store_id: terminal.store_id };
 }
 
+async function reactivatePublicTenantCatalog(
+    supabase: ReturnType<typeof createClient>,
+    tenantId: string,
+) {
+    const tenant = await loadTenantForCatalog(supabase, tenantId);
+    if (!tenant) return { reactivated: false, reason: "missing_landlord_tenant" };
+
+    const tenantName = stringValue(tenant.name) || tenant.id;
+    const tenantCode = buildCatalogCode(stringValue(tenant.slug) || tenantName, tenant.id.slice(0, 8).toUpperCase());
+    const { error } = await supabase
+        .schema("public")
+        .from("tenants")
+        .upsert({
+            id: tenant.id,
+            code: tenantCode,
+            name: tenantName,
+            is_active: true,
+        }, { onConflict: "id" });
+    if (error) throw error;
+
+    return { reactivated: true };
+}
+
 function buildClearedErpTerminalConfig(terminal: ErpTerminalRecord, clearedAt: string) {
     const config = asRecord(terminal.config);
     const metadata = getRecordChild(config, "metadata");
@@ -818,6 +841,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         const body = await readBody(request) as DeviceActionPayload;
         const supabaseUrl = getEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/$/, "");
         const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
+        const tenantId = stringValue(body.tenant_id);
 
         if (requiresDeviceId(body.action) && !stringValue(body.device_id)) {
             console.warn("cloud_admin_device_id_missing", {
@@ -838,6 +862,14 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 message: "DEVICE_ID_REQUIRED: Cloud-Admin necesita un device_id autorizado antes de llamar ERP.",
             });
             return;
+        }
+
+        if (tenantId) {
+            const supabase = createClient(supabaseUrl, serviceRoleKey, {
+                auth: { autoRefreshToken: false, persistSession: false },
+                db: { schema: "landlord" },
+            });
+            await reactivatePublicTenantCatalog(supabase, tenantId);
         }
 
         const edgeResponse = await fetch(`${supabaseUrl}/functions/v1/request-terminal-device-authorization`, {

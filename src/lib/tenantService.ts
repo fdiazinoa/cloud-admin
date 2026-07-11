@@ -680,6 +680,11 @@ function normalizeOptional(value?: string | null): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function isOperationalTenantStatus(status?: string | null): boolean {
+    const normalized = (status || "").trim().toUpperCase();
+    return normalized === "ACTIVE" || normalized === "TRIAL";
+}
+
 function generateTempPassword(): string {
     const length = 14;
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -1760,8 +1765,8 @@ export async function syncTerminalAuthorizedDevice(input: {
 
     if (tenantError) throw tenantError;
     if (!tenant) throw new Error("Tenant no encontrado.");
-    if (tenant.status !== "ACTIVE") {
-        throw new Error("No se puede sincronizar si el tenant no esta activo.");
+    if (!isOperationalTenantStatus(tenant.status)) {
+        throw new Error("No se puede sincronizar si el tenant esta suspendido o inactivo.");
     }
     if (tenant.contracted_product !== "POS_ONLY") {
         throw new Error("Sincronizar device autorizado solo aplica a tenants POS_ONLY.");
