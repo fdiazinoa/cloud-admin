@@ -42,8 +42,8 @@ interface RegistryRecord {
 interface PublicTerminalRecord {
     id: string;
     tenant_id: string;
-    device_token?: string | null;
-    name?: string | null;
+    code?: string | null;
+    is_active?: boolean | null;
 }
 
 const corsHeaders = {
@@ -267,7 +267,7 @@ Deno.serve(async (request) => {
         const { data: publicTerminalData, error: terminalError } = await supabase
             .schema('public')
             .from('terminals')
-            .select('id,tenant_id,device_token,name')
+            .select('id,tenant_id,code,is_active')
             .eq('tenant_id', tenantId)
             .eq('id', terminalId)
             .maybeSingle();
@@ -279,7 +279,7 @@ Deno.serve(async (request) => {
             return json({ error: 'TERMINAL_NOT_FOUND', message: 'Terminal no encontrada para este tenant.' }, 404);
         }
 
-        const currentDeviceId = registry?.device_id || publicTerminal?.device_token || null;
+        const currentDeviceId = registry?.device_id || null;
         if (!currentDeviceId) {
             return json({
                 error: 'DEVICE_ID_NOT_FOUND',

@@ -94,7 +94,7 @@ export interface OperationalObservability {
 interface PublicTerminalRow {
     id: string;
     tenant_id: string;
-    device_token?: string | null;
+    device_id?: string | null;
     code?: string | null;
     name?: string | null;
     is_active?: boolean | null;
@@ -343,7 +343,7 @@ function isTerminalOnline(registry: TenantTerminalRegistryEntry | null | undefin
 function getTerminalDeviceId(registry: TenantTerminalRegistryEntry | null | undefined, terminal?: PublicTerminalRow | null): string {
     return registry?.current_device_id
         || registry?.device_id
-        || terminal?.device_token
+        || terminal?.device_id
         || 'N/D';
 }
 
@@ -351,7 +351,7 @@ function getAuthorizedDeviceId(registry: TenantTerminalRegistryEntry | null | un
     return registry?.authorized_device_id
         || registry?.current_device_id
         || registry?.device_id
-        || terminal?.device_token
+        || terminal?.device_id
         || 'N/D';
 }
 
@@ -451,7 +451,7 @@ export async function getOperationalObservability(filters: ObservabilityFilters)
             supabaseAdmin
                 .schema('public')
                 .from('terminals')
-                .select('id,tenant_id,device_token,code,name,is_active,last_checkin_at,created_at'),
+                .select('id,tenant_id,code,name,is_active,last_checkin_at,created_at'),
             'public.terminals',
         ),
         safeSelect<ErpTenantRow>(
@@ -611,7 +611,7 @@ export async function getOperationalObservability(filters: ObservabilityFilters)
                 const terminal: PublicTerminalRow = {
                     id: erpTerminal.id,
                     tenant_id: tenant.id,
-                    device_token: erpTerminal.device_id || null,
+                    device_id: erpTerminal.device_id || null,
                     code: terminalCode,
                     name: terminalName,
                     is_active: true,
@@ -624,7 +624,7 @@ export async function getOperationalObservability(filters: ObservabilityFilters)
             for (const terminal of tenantTerminals) {
                 const matchingRegistries = tenantRegistry.filter((item) => (
                     item.terminal_id === terminal.id
-                    || item.device_id === terminal.device_token
+                    || item.device_id === terminal.device_id
                     || item.terminal_name === terminal.name
                     || item.terminal_name === terminal.code
                 ));
