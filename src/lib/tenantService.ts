@@ -1278,7 +1278,6 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             return currentTime > newestTime ? current : newest;
         });
 
-        const deviceToken = primaryTerminal.device_token || primaryTerminal.device_id || primaryTerminal.current_device_id || null;
         const registriesMap = new Map<string, TenantTerminalRegistryEntry>();
 
         for (const terminal of terminalsGroup) {
@@ -1290,7 +1289,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
                      }
                 }
             }
-            const dt = terminal.device_token || terminal.device_id || terminal.current_device_id;
+            const dt = terminal.device_id || terminal.current_device_id;
             if (dt && registriesByDeviceId.has(dt)) {
                 for (const reg of registriesByDeviceId.get(dt)!) {
                      if (reg.id) {
@@ -1317,13 +1316,18 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         );
         const terminalName = getHumanTerminalName(primaryTerminal, registry, erpBinding);
         const visibleRegistries = getVisibleRegistries(consolidatedRegistries, erpBinding);
+        const catalogDeviceId = erpBinding?.deviceId
+            || registry?.authorized_device_id
+            || registry?.current_device_id
+            || registry?.device_id
+            || null;
 
         snapshots.push({
             id: primaryTerminal.id,
             tenant_id: primaryTerminal.tenant_id,
             terminal_id: erpBinding?.erpTerminalId || primaryTerminal.id,
             name: terminalName,
-            device_token: deviceToken,
+            device_token: catalogDeviceId,
             is_active: primaryTerminal.config?.is_active ?? primaryTerminal.is_active ?? primaryTerminal.active ?? true,
             last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.last_heartbeat_at || primaryTerminal.updated_at || null,
             created_at: primaryTerminal.created_at || null,
