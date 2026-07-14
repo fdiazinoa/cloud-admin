@@ -69,6 +69,7 @@ interface PublicTerminalRecord {
 
 interface ErpTenantRecord {
     id: string;
+    config?: Record<string, unknown> | null;
 }
 
 interface ErpTerminalRecord {
@@ -721,6 +722,80 @@ async function resolveErpTenantId(
     return cloudTenantId;
 }
 
+function getCloudAdminTenantIdFromErpConfig(config: Record<string, unknown> | null | undefined) {
+    if (!config) return null;
+    for (const key of ['cloudAdminTenantId', 'cloud_admin_tenant_id', 'cloudTenantId', 'cloud_tenant_id']) {
+        const value = config[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+}
+
+async function resolveCloudTenantForDeviceAuthorization(
+    supabase: ReturnType<typeof createClient>,
+    requestedTenantId: string,
+) {
+    const { data: directTenant, error: directTenantError } = await supabase
+        .from('tenants')
+        .select('id')
+        .eq('id', requestedTenantId)
+        .maybeSingle();
+    if (directTenantError) throw directTenantError;
+    if (directTenant?.id) {
+        return {
+            tenantId: requestedTenantId,
+            erpTenantId: await resolveErpTenantId(supabase, requestedTenantId),
+            source: 'landlord_tenant_id',
+        };
+    }
+
+    const { data: erpTenantData, error: erpTenantError } = await supabase
+        .schema('public')
+        .from('erp_tenants')
+        .select('id,config')
+        .eq('id', requestedTenantId)
+        .maybeSingle();
+    if (erpTenantError) throw erpTenantError;
+
+    const erpTenant = erpTenantData as ErpTenantRecord | null;
+    if (!erpTenant?.id) {
+        return {
+            tenantId: null,
+            erpTenantId: null,
+            source: 'not_found',
+        };
+    }
+
+    const cloudAdminTenantId = getCloudAdminTenantIdFromErpConfig(erpTenant.config);
+    if (!cloudAdminTenantId) {
+        return {
+            tenantId: null,
+            erpTenantId: erpTenant.id,
+            source: 'erp_tenant_without_cloud_mapping',
+        };
+    }
+
+    const { data: mappedTenant, error: mappedTenantError } = await supabase
+        .from('tenants')
+        .select('id')
+        .eq('id', cloudAdminTenantId)
+        .maybeSingle();
+    if (mappedTenantError) throw mappedTenantError;
+    if (!mappedTenant?.id) {
+        return {
+            tenantId: null,
+            erpTenantId: erpTenant.id,
+            source: 'erp_tenant_cloud_mapping_not_found',
+        };
+    }
+
+    return {
+        tenantId: mappedTenant.id,
+        erpTenantId: erpTenant.id,
+        source: 'erp_tenant_cloud_mapping',
+    };
+}
+
 async function insertDeviceAudit(
     supabase: ReturnType<typeof createClient>,
     payload: {
@@ -1128,7 +1203,7 @@ Deno.serve(async (request) => {
         });
 
         const body = await request.json().catch(() => ({})) as DeviceActionRequest;
-        const tenantId = body.tenant_id?.trim();
+        const requestedTenantId = body.tenant_id?.trim();
         let terminalId = body.terminal_id?.trim();
         const registryId = body.registry_id?.trim() || null;
         const terminalName = body.terminal_name?.trim() || null;
@@ -1141,12 +1216,29 @@ Deno.serve(async (request) => {
             || request.headers.get('x-actor-source')
             || 'cloud-admin';
 
-        if (!tenantId || !terminalId || !requestedAction) {
+        if (!requestedTenantId || !terminalId || !requestedAction) {
             return json({
                 error: 'VALIDATION_ERROR',
                 message: 'Selecciona tenant, terminal y accion.',
             }, 400);
         }
+
+        const tenantResolution = await resolveCloudTenantForDeviceAuthorization(supabase, requestedTenantId);
+        if (!tenantResolution.tenantId) {
+            logCloudAdminDeviceEvent('cloud_admin_device_authorization_tenant_rejected', {
+                requested_tenant_id: requestedTenantId,
+                erp_tenant_id: tenantResolution.erpTenantId,
+                reason: tenantResolution.source,
+                source: 'request-terminal-device-authorization',
+            });
+            return json({
+                error: tenantResolution.source === 'not_found' ? 'TENANT_NOT_FOUND' : 'TENANT_NOT_AUTHORIZED',
+                message: 'Tenant no encontrado o no autorizado para esta activacion.',
+            }, tenantResolution.source === 'not_found' ? 404 : 403);
+        }
+
+        const tenantId = tenantResolution.tenantId;
+        const resolvedErpTenantId = tenantResolution.erpTenantId;
 
         if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE', 'GENERATE_PAIRING_CODE', 'CLEAR_TERMINAL_DEVICES'].includes(requestedAction)) {
             return json({ error: 'INVALID_ACTION', message: 'Accion de autorizacion no soportada.' }, 400);
@@ -1155,6 +1247,7 @@ Deno.serve(async (request) => {
         if (requiresRequestDeviceId(requestedAction) && !deviceId) {
             logCloudAdminDeviceEvent('cloud_admin_device_id_missing', {
                 tenant_id: tenantId,
+                requested_tenant_id: requestedTenantId,
                 terminal_id: terminalId,
                 registry_id: registryId,
                 terminal_name: terminalName,
@@ -1164,6 +1257,7 @@ Deno.serve(async (request) => {
             });
             logCloudAdminDeviceEvent('cloud_admin_erp_repair_skipped_missing_device', {
                 tenant_id: tenantId,
+                requested_tenant_id: requestedTenantId,
                 terminal_id: terminalId,
                 requested_action: requestedAction,
                 reason: 'missing_request_device_id',
@@ -1457,7 +1551,7 @@ Deno.serve(async (request) => {
         }
 
         const erpTenantId = action === 'TAKEOVER' || action === 'ROTATE_TOKEN'
-            ? await resolveErpTenantId(supabase, tenantId)
+            ? resolvedErpTenantId || await resolveErpTenantId(supabase, tenantId)
             : null;
         const preErpConsolidation = action === 'TAKEOVER' && deviceId
             ? await consolidateErpTerminalDeviceDuplicates(supabase, {

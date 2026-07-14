@@ -64,6 +64,11 @@ assert.match(actionFunction, /cloud_admin_tenant_id:\s*cloudAdminTenantId/, 'ERP
 assert.match(actionFunction, /device_id:\s*effectiveDeviceId/, 'ERP payload must include authorized device_id');
 assert.match(actionFunction, /cloudTenantId/, 'ERP tenant resolver must support Cloud tenant alias keys');
 assert.match(actionFunction, /filter\(`config->>\$\{key\}`,\s*'eq',\s*cloudTenantId\)/, 'ERP tenant resolver must query JSON config aliases safely');
+assert.match(actionFunction, /resolveCloudTenantForDeviceAuthorization/, 'device authorization must normalize ERP tenant ids to Cloud tenant ids before loading registries');
+assert.match(actionFunction, /erp_tenant_without_cloud_mapping/, 'device authorization must reject ERP tenant ids without explicit Cloud tenant mapping');
+assert.match(actionFunction, /cloud_admin_device_authorization_tenant_rejected/, 'device authorization must log rejected tenant resolution attempts');
+assert.match(actionFunction, /const tenantId = tenantResolution\.tenantId/, 'device authorization must use the resolved Cloud tenant id for local registry queries');
+assert.match(actionFunction, /resolvedErpTenantId \|\| await resolveErpTenantId/, 'device authorization must preserve the resolved ERP tenant id for ERP calls');
 assert.match(actionFunction, /record\.message[\s\S]*status === 401 \|\| status === 403/, 'ERP 401/403 functional messages must be preserved before the generic permission fallback');
 assert.doesNotMatch(actionFunction, /No tienes permiso para ejecutar esta accion de autorizacion/, 'device authorization must not hide ERP 401/403 causes behind a generic permission message');
 assert.match(actionFunction, /ERP rechazo la autorizacion del device \(HTTP \$\{status\}\) sin detalle/, 'device authorization must return an actionable ERP rejection fallback');
