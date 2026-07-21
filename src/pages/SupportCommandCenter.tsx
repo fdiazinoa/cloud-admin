@@ -609,11 +609,25 @@ const SupportCommandCenter: React.FC = () => {
 
     useEffect(() => {
         let mounted = true;
+        let realtimeRefreshTimer: number | undefined;
 
         const fetchTickets = async () => {
             const { data, error } = await supabaseAdmin.from('support_tickets')
                 .select(`
-                    *,
+                    id,
+                    ticket_number,
+                    tenant_id,
+                    category,
+                    priority,
+                    status,
+                    resolution_status,
+                    customer_rating,
+                    subject,
+                    source,
+                    assignment_status,
+                    external_sender_email,
+                    technical_context,
+                    created_at,
                     tenants (
                         name
                     ),
@@ -692,16 +706,24 @@ const SupportCommandCenter: React.FC = () => {
             }
         };
 
+        const scheduleTicketsRefresh = () => {
+            window.clearTimeout(realtimeRefreshTimer);
+            realtimeRefreshTimer = window.setTimeout(() => {
+                void fetchTickets();
+            }, 350);
+        };
+
         fetchTickets();
 
         const channel = supabaseAdmin.channel('support_tickets_global')
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_tickets' }, fetchTickets)
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_contacts' }, fetchTickets)
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'ai_ticket_insights' }, fetchTickets)
+            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_tickets' }, scheduleTicketsRefresh)
+            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_contacts' }, scheduleTicketsRefresh)
+            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'ai_ticket_insights' }, scheduleTicketsRefresh)
             .subscribe();
 
         return () => {
             mounted = false;
+            window.clearTimeout(realtimeRefreshTimer);
             supabaseAdmin.removeChannel(channel);
         };
     }, []);
