@@ -402,10 +402,6 @@ export const Tenants: React.FC = () => {
             setTenantTerminals(data);
             setPosLicenseSeats(seats);
             setLatestPosApkRelease(releases.find((release) => release.is_latest) || releases[0] || null);
-            void loadAuthAttemptsForTerminals(tenant.id, data);
-            if (isFiscalEligibleTenant(tenant)) {
-                void loadFiscalReadinessForTerminals(tenant.id, data);
-            }
         } catch (err) {
             console.error('Error fetching tenant terminals:', err);
             alert('No se pudieron cargar las terminales de este tenant.');
@@ -964,12 +960,6 @@ export const Tenants: React.FC = () => {
         }
     };
 
-    const loadAuthAttemptsForTerminals = async (tenantId: string, terminals: TenantTerminalSnapshot[]) => {
-        for (const terminal of terminals) {
-            void loadTerminalAuthAttempts(tenantId, terminal);
-        }
-    };
-
     const handleEnforcePosLicenseLimits = async () => {
         if (!selectedTenantForTerminals) return;
         try {
@@ -995,10 +985,6 @@ export const Tenants: React.FC = () => {
         ]);
         setTenantTerminals(data);
         setPosLicenseSeats(seats);
-        void loadAuthAttemptsForTerminals(selectedTenantForTerminals.id, data);
-        if (isFiscalEligibleTenant(selectedTenantForTerminals)) {
-            void loadFiscalReadinessForTerminals(selectedTenantForTerminals.id, data);
-        }
     };
 
     const loadTerminalSyncPending = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
@@ -1057,12 +1043,6 @@ export const Tenants: React.FC = () => {
             }));
         } finally {
             setFiscalReadinessLoadingKey((current) => current === key ? null : current);
-        }
-    };
-
-    const loadFiscalReadinessForTerminals = async (tenantId: string, terminals: TenantTerminalSnapshot[]) => {
-        for (const terminal of terminals) {
-            void loadTerminalFiscalReadiness(tenantId, terminal);
         }
     };
 
@@ -2542,6 +2522,12 @@ export const Tenants: React.FC = () => {
                                                                                 ...current,
                                                                                 [terminalKey]: tab.key,
                                                                             }));
+                                                                            if (tab.key === 'attempts' && !authAttemptsByTerminal[terminalKey]) {
+                                                                                void loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal);
+                                                                            }
+                                                                            if (tab.key === 'fiscal' && !fiscalReadinessByTerminal[terminalKey]) {
+                                                                                void loadTerminalFiscalReadiness(selectedTenantForTerminals.id, terminal);
+                                                                            }
                                                                             if (tab.key === 'sync' && !terminalSyncPending) {
                                                                                 void loadTerminalSyncPending(selectedTenantForTerminals.id, terminal);
                                                                             }
