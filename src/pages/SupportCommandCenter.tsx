@@ -21,7 +21,12 @@ import {
     WifiOff,
     X,
 } from 'lucide-react';
-import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
+import {
+    authorizeAdminRealtime,
+    supabaseAdmin,
+    supabaseProjectUrl,
+    supabaseServiceRoleKey,
+} from '../lib/supabase';
 
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
 const HELPDESK_ATTACHMENTS_BUCKET = 'helpdesk-attachments';
@@ -715,16 +720,30 @@ const SupportCommandCenter: React.FC = () => {
 
         fetchTickets();
 
-        const channel = supabaseAdmin.channel('support_tickets_global')
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_tickets' }, scheduleTicketsRefresh)
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_contacts' }, scheduleTicketsRefresh)
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'ai_ticket_insights' }, scheduleTicketsRefresh)
-            .subscribe();
+        let channel: ReturnType<typeof supabaseAdmin.channel> | null = null;
+
+        const subscribe = async () => {
+            await authorizeAdminRealtime();
+            if (!mounted) return;
+
+            channel = supabaseAdmin
+                .channel('cloud-admin:helpdesk', {
+                    config: { private: true },
+                })
+                .on('broadcast', { event: 'helpdesk_changed' }, scheduleTicketsRefresh)
+                .subscribe();
+        };
+
+        void subscribe().catch((error: unknown) => {
+            console.error('Admin: error authorizing Helpdesk Broadcast', error);
+        });
 
         return () => {
             mounted = false;
             window.clearTimeout(realtimeRefreshTimer);
-            supabaseAdmin.removeChannel(channel);
+            if (channel) {
+                void supabaseAdmin.removeChannel(channel);
+            }
         };
     }, []);
 
@@ -772,35 +791,33 @@ const SupportCommandCenter: React.FC = () => {
 
         fetchMessages();
 
-        const msgChannel = supabaseAdmin.channel(`support_messages_${selectedTicketId}`)
-            .on('postgres_changes', {
-                event: 'INSERT',
-                schema: 'landlord',
-                table: 'ticket_messages',
-                filter: `ticket_id=eq.${selectedTicketId}`,
-            }, (payload) => {
-                if (mounted) {
-                    const nextMessage = payload.new as Message;
-                    if (normalizeMessageAttachments(nextMessage.attachments).length) {
+        let msgChannel: ReturnType<typeof supabaseAdmin.channel> | null = null;
+
+        const subscribe = async () => {
+            await authorizeAdminRealtime();
+            if (!mounted) return;
+
+            msgChannel = supabaseAdmin
+                .channel(`cloud-admin:helpdesk:ticket:${selectedTicketId}`, {
+                    config: { private: true },
+                })
+                .on('broadcast', { event: 'helpdesk_changed' }, () => {
+                    if (mounted) {
                         void fetchMessages();
-                        return;
                     }
-                    setMessages((previous) => [...previous, nextMessage]);
-                    setLastMessageByTicketId((current) => ({
-                        ...current,
-                        [selectedTicketId]: {
-                            message: nextMessage.message,
-                            sender_type: nextMessage.sender_type,
-                            created_at: nextMessage.created_at,
-                        },
-                    }));
-                }
-            })
-            .subscribe();
+                })
+                .subscribe();
+        };
+
+        void subscribe().catch((error: unknown) => {
+            console.error('Admin: error authorizing ticket Broadcast', error);
+        });
 
         return () => {
             mounted = false;
-            supabaseAdmin.removeChannel(msgChannel);
+            if (msgChannel) {
+                void supabaseAdmin.removeChannel(msgChannel);
+            }
         };
     }, [selectedTicketId]);
 

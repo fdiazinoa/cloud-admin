@@ -11,7 +11,7 @@ import {
     XCircle,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { supabaseAdmin } from '../lib/supabase';
+import { authorizeAdminRealtime, supabaseAdmin } from '../lib/supabase';
 
 type ImprovementStatus = 'Nueva' | 'En evaluacion' | 'Aceptada' | 'En desarrollo' | 'Implementada' | 'Rechazada';
 type ImprovementPriority = 'Baja' | 'Media' | 'Alta' | 'Critica';
@@ -157,12 +157,30 @@ export const CustomerImprovements: React.FC = () => {
     useEffect(() => {
         void Promise.resolve().then(fetchItems);
 
-        const channel = supabaseAdmin.channel('customer_improvement_requests')
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'customer_improvement_requests' }, () => void fetchItems())
-            .subscribe();
+        let active = true;
+        let channel: ReturnType<typeof supabaseAdmin.channel> | null = null;
+
+        const subscribe = async () => {
+            await authorizeAdminRealtime();
+            if (!active) return;
+
+            channel = supabaseAdmin
+                .channel('cloud-admin:improvements', {
+                    config: { private: true },
+                })
+                .on('broadcast', { event: 'improvement_changed' }, () => void fetchItems())
+                .subscribe();
+        };
+
+        void subscribe().catch((error: unknown) => {
+            console.error('Admin: error authorizing Improvements Broadcast', error);
+        });
 
         return () => {
-            supabaseAdmin.removeChannel(channel);
+            active = false;
+            if (channel) {
+                void supabaseAdmin.removeChannel(channel);
+            }
         };
     }, []);
 
