@@ -146,14 +146,26 @@ async function loadCanonicalErpTerminal(
     supabase: ReturnType<typeof createClient>,
     terminalId: string,
 ) {
-    const { data, error } = await supabase
-        .schema("public")
-        .from("erp_terminals")
-        .select("id,name,store_id,device_id,config")
-        .eq("id", terminalId)
-        .maybeSingle();
-    if (error) throw error;
-    if (data) return data as ErpTerminalRecord;
+    if (isUuid(terminalId)) {
+        const { data, error } = await supabase
+            .schema("public")
+            .from("erp_terminals")
+            .select("id,name,store_id,device_id,config")
+            .eq("id", terminalId)
+            .maybeSingle();
+        if (error) throw error;
+        if (data) return data as ErpTerminalRecord;
+    } else {
+        const { data, error } = await supabase
+            .schema("public")
+            .from("erp_terminals")
+            .select("id,name,store_id,device_id,config")
+            .eq("device_id", terminalId)
+            .limit(1)
+            .maybeSingle();
+        if (error) throw error;
+        if (data) return data as ErpTerminalRecord;
+    }
 
     const { data: metadataMatch, error: metadataError } = await supabase
         .schema("public")

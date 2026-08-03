@@ -7,6 +7,8 @@ const deviceActionProxy = readFileSync('api/terminal-device-action.ts', 'utf8');
 const authAttemptsProxy = readFileSync('api/terminal-auth-attempts.ts', 'utf8');
 const terminalTakeoverProxy = readFileSync('api/terminal-takeover.ts', 'utf8');
 const terminalTakeoverFunction = readFileSync('supabase/functions/request-terminal-takeover/index.ts', 'utf8');
+const terminalLocalRebuildFunction = readFileSync('supabase/functions/request-terminal-local-rebuild/index.ts', 'utf8');
+const posErpReadinessFunction = readFileSync('supabase/functions/request-pos-erp-readiness/index.ts', 'utf8');
 const tenantsPage = readFileSync('src/pages/Tenants.tsx', 'utf8');
 const migration = readFileSync('supabase/migrations/202605271015_terminal_device_authorization.sql', 'utf8');
 const pairingMigration = readFileSync('supabase/migrations/202605301845_terminal_pairing_code_flow.sql', 'utf8');
@@ -85,6 +87,11 @@ assert.match(terminalTakeoverProxy, /ERP rechazo la recuperacion de terminal \(H
 assert.match(terminalTakeoverFunction, /ERP rechazo la recuperacion de terminal \(HTTP \$\{status\}\) sin detalle/, 'terminal takeover Edge Function must return an actionable ERP rejection fallback');
 assert.match(actionFunction, /isTenantDeviceUniqueConflict/, 'device authorization must detect tenant-device unique conflicts');
 assert.match(actionFunction, /merged_existing_device_registry/, 'device authorization must merge into the existing registry when tenant-device already exists');
+assert.match(actionFunction, /if \(isUuid\(terminalId\)\)[\s\S]*\.eq\('device_id', terminalId\)/, 'device authorization must resolve DEV identifiers by device_id instead of UUID id');
+assert.match(deviceActionProxy, /if \(isUuid\(terminalId\)\)[\s\S]*\.eq\("device_id", terminalId\)/, 'device authorization proxy must resolve DEV identifiers by device_id instead of UUID id');
+assert.match(terminalLocalRebuildFunction, /isUuid\(terminalId\)[\s\S]*\.eq\('id', terminalId\)/, 'local rebuild must guard UUID terminal lookups');
+assert.match(terminalTakeoverFunction, /isUuid\(terminalId\)[\s\S]*\.eq\('id', terminalId\)/, 'terminal takeover must guard UUID terminal lookups');
+assert.match(posErpReadinessFunction, /terminalId && isUuid\(terminalId\)[\s\S]*\.eq\('id', terminalId\)/, 'ERP readiness must guard UUID terminal lookups');
 
 assert.match(migration, /terminal_device_audit/, 'migration must create terminal device audit');
 assert.match(migration, /DEVICE_MISMATCH/, 'migration must allow DEVICE_MISMATCH state');
