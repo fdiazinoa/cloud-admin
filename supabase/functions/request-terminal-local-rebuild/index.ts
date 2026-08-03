@@ -106,6 +106,10 @@ function getErrorCode(payload: unknown): string | null {
     return null;
 }
 
+function isUuid(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function getErrorMessage(status: number, payload: unknown) {
     const code = getErrorCode(payload);
     if (status === 404 && code === 'REBUILD_ENDPOINT_NOT_FOUND') {
@@ -264,13 +268,15 @@ Deno.serve(async (request) => {
             registry = (data as RegistryRecord | null) || null;
         }
 
-        const { data: publicTerminalData, error: terminalError } = await supabase
-            .schema('public')
-            .from('terminals')
-            .select('id,tenant_id,device_token,name')
-            .eq('tenant_id', tenantId)
-            .eq('id', terminalId)
-            .maybeSingle();
+        const { data: publicTerminalData, error: terminalError } = isUuid(terminalId)
+            ? await supabase
+                .schema('public')
+                .from('terminals')
+                .select('id,tenant_id,device_token,name')
+                .eq('tenant_id', tenantId)
+                .eq('id', terminalId)
+                .maybeSingle()
+            : { data: null, error: null };
 
         if (terminalError) throw terminalError;
         const publicTerminal = publicTerminalData as PublicTerminalRecord | null;

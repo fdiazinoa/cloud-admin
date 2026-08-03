@@ -127,6 +127,10 @@ function getErrorCode(payload: unknown): string | null {
     return null;
 }
 
+function isUuid(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function getMessage(payload: unknown, fallback: string) {
     if (payload && typeof payload === 'object') {
         const record = payload as Record<string, unknown>;
@@ -323,7 +327,7 @@ Deno.serve(async (request) => {
         }
 
         const terminalId = requestedTerminalId || registry?.terminal_id || '';
-        const { data: publicTerminalData, error: terminalError } = !registry && terminalId
+        const { data: publicTerminalData, error: terminalError } = !registry && terminalId && isUuid(terminalId)
             ? await supabase
                 .schema('public')
                 .from('terminals')

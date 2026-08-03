@@ -562,14 +562,27 @@ async function loadCanonicalErpTerminal(
     supabase: ReturnType<typeof createClient>,
     terminalId: string,
 ) {
-    const { data, error } = await supabase
-        .schema('public')
-        .from('erp_terminals')
-        .select('id,name,store_id,device_id,config,last_seen,created_at')
-        .eq('id', terminalId)
-        .maybeSingle();
-    if (error) throw error;
-    if (data) return data as ErpTerminalRecord;
+    if (isUuid(terminalId)) {
+        const { data, error } = await supabase
+            .schema('public')
+            .from('erp_terminals')
+            .select('id,name,store_id,device_id,config,last_seen,created_at')
+            .eq('id', terminalId)
+            .maybeSingle();
+        if (error) throw error;
+        if (data) return data as ErpTerminalRecord;
+    } else {
+        const { data, error } = await supabase
+            .schema('public')
+            .from('erp_terminals')
+            .select('id,name,store_id,device_id,config,last_seen,created_at')
+            .eq('device_id', terminalId)
+            .order('last_seen', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error) throw error;
+        if (data) return data as ErpTerminalRecord;
+    }
 
     const { data: metadataMatch, error: metadataError } = await supabase
         .schema('public')
@@ -976,15 +989,9 @@ async function consolidateErpTerminalDeviceDuplicates(
         copyAuthToCanonical: boolean;
     },
 ) {
-    const { data: canonicalData, error: canonicalError } = await supabase
-        .schema('public')
-        .from('erp_terminals')
-        .select('id,name,device_id,config,last_seen,created_at')
-        .eq('id', input.terminalId)
-        .maybeSingle();
-    if (canonicalError) throw canonicalError;
-    const canonical = canonicalData as ErpTerminalRecord | null;
+    const canonical = await loadCanonicalErpTerminal(supabase, input.terminalId);
     if (!canonical) return { archived: [], deleted: [], copied_auth: false };
+    const canonicalTerminalId = canonical.id;
 
     const { data: deviceMatches, error: deviceError } = await supabase
         .schema('public')
@@ -1005,7 +1012,7 @@ async function consolidateErpTerminalDeviceDuplicates(
 
     const candidates = new Map<string, ErpTerminalRecord>();
     for (const row of [...(deviceMatches || []), ...(nameMatches || [])] as ErpTerminalRecord[]) {
-        if (!row.id || row.id === input.terminalId) continue;
+        if (!row.id || row.id === canonicalTerminalId) continue;
         const config = asRecord(row.config);
         const metadata = getRecordChild(config, 'metadata');
         const rowCanonicalId = String(metadata.erp_terminal_id || metadata.canonical_erp_terminal_id || '');
@@ -1013,7 +1020,7 @@ async function consolidateErpTerminalDeviceDuplicates(
         const rowName = (row.name || '').trim().toUpperCase();
         const expectedName = (input.terminalName || canonical.name || '').trim().toUpperCase();
         const isSameDevice = row.device_id === input.deviceId;
-        const pointsToCanonical = rowCanonicalId === input.terminalId;
+        const pointsToCanonical = rowCanonicalId === canonicalTerminalId;
         const sameTenantAndName = Boolean(expectedName && rowName === expectedName && (rowCloudTenantId === input.tenantId || rowCloudTenantId === input.erpTenantId));
         const isArchived = rowName.startsWith('ARCHIVED-') || metadata.archived === true || config.active === false || config.is_active === false;
         if (isSameDevice || pointsToCanonical || sameTenantAndName || isArchived) candidates.set(row.id, row);
@@ -1025,7 +1032,7 @@ async function consolidateErpTerminalDeviceDuplicates(
     const deleted: string[] = [];
 
     for (const duplicate of duplicateRows) {
-        const result = await archiveOrDeleteErpTerminal(supabase, duplicate, input.terminalId);
+        const result = await archiveOrDeleteErpTerminal(supabase, duplicate, canonicalTerminalId);
         if (result.mode === 'deleted') deleted.push(result.id);
         else archived.push(result.id);
     }
@@ -1045,8 +1052,8 @@ async function consolidateErpTerminalDeviceDuplicates(
             },
             metadata: {
                 ...canonicalMetadata,
-                erp_terminal_id: input.terminalId,
-                canonical_erp_terminal_id: input.terminalId,
+                erp_terminal_id: canonicalTerminalId,
+                canonical_erp_terminal_id: canonicalTerminalId,
                 cloud_admin_tenant_id: input.tenantId,
                 authorizedDeviceId: input.deviceId,
                 authorized_device_id: input.deviceId,
@@ -1079,7 +1086,7 @@ async function consolidateErpTerminalDeviceDuplicates(
                 last_seen: new Date().toISOString(),
                 config: updatedConfig,
             })
-            .eq('id', input.terminalId);
+            .eq('id', canonicalTerminalId);
         if (canonicalUpdateError) throw canonicalUpdateError;
         copiedAuth = true;
     }
