@@ -13,6 +13,8 @@ export interface HelpdeskActor {
     fullName: string;
     profileCode: string;
     permissions: Record<string, boolean>;
+    canViewAllDepartments: boolean;
+    departmentIds: string[];
 }
 
 interface AdminProfileRow {
@@ -27,7 +29,9 @@ interface AdminUserRow {
     email: string;
     full_name: string;
     status: string;
+    helpdesk_all_departments?: boolean | null;
     cloud_admin_profiles?: AdminProfileRow | AdminProfileRow[] | null;
+    support_team_members?: Array<{ team_id?: string | null }> | null;
 }
 
 function getEnv(name: string) {
@@ -65,6 +69,8 @@ export async function requireHelpdeskActor(request: Request, permission = 'suppo
             email,
             full_name,
             status,
+            helpdesk_all_departments,
+            support_team_members (team_id),
             cloud_admin_profiles (
                 code,
                 is_active,
@@ -90,7 +96,30 @@ export async function requireHelpdeskActor(request: Request, permission = 'suppo
         fullName: adminUser.full_name,
         profileCode: profile.code ?? 'support',
         permissions,
+        canViewAllDepartments: adminUser.helpdesk_all_departments === true,
+        departmentIds: Array.from(new Set((adminUser.support_team_members ?? [])
+            .map((membership) => membership.team_id ?? '')
+            .filter(Boolean))),
     };
+}
+
+export async function assertHelpdeskTicketAccess(
+    supabase: ReturnType<typeof createHelpdeskAdminClient>,
+    actor: HelpdeskActor,
+    ticketIds: string[],
+) {
+    const uniqueTicketIds = Array.from(new Set(ticketIds.filter(Boolean)));
+    if (!uniqueTicketIds.length) return;
+    if (actor.canViewAllDepartments) return;
+    if (!actor.departmentIds.length) throw new Error('Forbidden helpdesk request');
+
+    const { data, error } = await supabase
+        .from('support_tickets')
+        .select('id')
+        .in('id', uniqueTicketIds)
+        .in('team_id', actor.departmentIds);
+    if (error) throw error;
+    if ((data ?? []).length !== uniqueTicketIds.length) throw new Error('Forbidden helpdesk request');
 }
 
 export function isAuthorizationError(error: unknown) {

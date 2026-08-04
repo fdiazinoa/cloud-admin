@@ -7,6 +7,8 @@ export interface HelpdeskAgentOption {
     full_name: string;
     email: string;
     status: string;
+    helpdesk_all_departments?: boolean;
+    support_team_members?: Array<{ team_id: string }>;
 }
 
 export interface HelpdeskTeamOption {
@@ -80,6 +82,10 @@ export async function fetchHelpdeskBootstrap(query = '') {
         templates: HelpdeskReplyTemplate[];
         previews: unknown[];
         unread_states: HelpdeskTicketUnreadState[];
+        actor_access: {
+            all_departments: boolean;
+            department_ids: string[];
+        };
     }>('bootstrap', { query });
 }
 

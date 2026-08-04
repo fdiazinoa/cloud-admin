@@ -369,6 +369,16 @@ export interface CloudAdminProfile {
     updated_at?: string | null;
 }
 
+export interface SupportDepartment {
+    id: string;
+    code: string;
+    name: string;
+    description?: string | null;
+    is_active: boolean;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
 export interface CloudAdminUser {
     id: string;
     auth_user_id?: string | null;
@@ -377,9 +387,11 @@ export interface CloudAdminUser {
     profile_id?: string | null;
     status: CloudAdminUserStatus;
     phone?: string | null;
+    helpdesk_all_departments?: boolean;
     metadata?: Record<string, unknown> | null;
     last_sign_in_at?: string | null;
     created_at: string;
     updated_at?: string | null;
     profile?: CloudAdminProfile | null;
+    departments?: SupportDepartment[];
 }

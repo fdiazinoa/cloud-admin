@@ -6,6 +6,7 @@ import type {
     CloudAdminProfile,
     CloudAdminUser,
     CloudAdminUserStatus,
+    SupportDepartment,
 } from '../types';
 
 export const permissionCatalog: Array<{ key: CloudAdminPermissionKey; label: string; description: string }> = [
@@ -50,6 +51,8 @@ export interface CreateCloudAdminUserInput {
     phone?: string;
     profileId: string;
     status: CloudAdminUserStatus;
+    departmentIds: string[];
+    helpdeskAllDepartments: boolean;
 }
 
 export interface UpdateCloudAdminUserInput {
@@ -57,6 +60,15 @@ export interface UpdateCloudAdminUserInput {
     phone?: string;
     profileId: string;
     status: CloudAdminUserStatus;
+    departmentIds: string[];
+    helpdeskAllDepartments: boolean;
+}
+
+export interface SupportDepartmentInput {
+    code: string;
+    name: string;
+    description?: string;
+    isActive?: boolean;
 }
 
 export interface CreatedCloudAdminUser {
@@ -137,15 +149,39 @@ async function getAuthUserById(userId: string): Promise<User | null> {
     return data.user || null;
 }
 
-function withProfile(user: CloudAdminUser, profiles: CloudAdminProfile[]) {
+function withProfile(
+    user: CloudAdminUser,
+    profiles: CloudAdminProfile[],
+    departments: SupportDepartment[],
+    memberships: Array<{ admin_user_id: string; team_id: string }>,
+) {
     return {
         ...user,
         profile: profiles.find((profile) => profile.id === user.profile_id) || null,
+        departments: memberships
+            .filter((membership) => membership.admin_user_id === user.id)
+            .map((membership) => departments.find((department) => department.id === membership.team_id))
+            .filter((department): department is SupportDepartment => Boolean(department)),
     };
 }
 
+async function syncUserDepartments(userId: string, departmentIds: string[]) {
+    const uniqueDepartmentIds = Array.from(new Set(departmentIds.filter(Boolean)));
+    const { error: deleteError } = await supabaseAdmin
+        .from('support_team_members')
+        .delete()
+        .eq('admin_user_id', userId);
+    if (deleteError) throw deleteError;
+    if (!uniqueDepartmentIds.length) return;
+
+    const { error: insertError } = await supabaseAdmin
+        .from('support_team_members')
+        .insert(uniqueDepartmentIds.map((teamId) => ({ team_id: teamId, admin_user_id: userId })));
+    if (insertError) throw insertError;
+}
+
 export async function getAccessOverview() {
-    const [profilesRes, usersRes] = await Promise.all([
+    const [profilesRes, usersRes, departmentsRes, membershipsRes] = await Promise.all([
         supabaseAdmin
             .from('cloud_admin_profiles')
             .select('*')
@@ -155,18 +191,30 @@ export async function getAccessOverview() {
             .from('cloud_admin_users')
             .select('*')
             .order('created_at', { ascending: false }),
+        supabaseAdmin
+            .from('support_teams')
+            .select('*')
+            .order('name'),
+        supabaseAdmin
+            .from('support_team_members')
+            .select('team_id, admin_user_id'),
     ]);
 
     if (profilesRes.error) throw profilesRes.error;
     if (usersRes.error) throw usersRes.error;
+    if (departmentsRes.error) throw departmentsRes.error;
+    if (membershipsRes.error) throw membershipsRes.error;
 
     const profiles = ((profilesRes.data || []) as CloudAdminProfile[]).map((profile) => ({
         ...profile,
         permissions: normalizePermissions(profile.permissions || {}),
     }));
-    const users = ((usersRes.data || []) as CloudAdminUser[]).map((user) => withProfile(user, profiles));
+    const departments = (departmentsRes.data || []) as SupportDepartment[];
+    const memberships = (membershipsRes.data || []) as Array<{ admin_user_id: string; team_id: string }>;
+    const users = ((usersRes.data || []) as CloudAdminUser[])
+        .map((user) => withProfile(user, profiles, departments, memberships));
 
-    return { profiles, users };
+    return { profiles, users, departments };
 }
 
 export async function createProfile(input: CreateProfileInput): Promise<CloudAdminProfile> {
@@ -286,6 +334,7 @@ export async function createCloudAdminUser(input: CreateCloudAdminUserInput): Pr
             phone: input.phone?.trim() || null,
             profile_id: profile.id,
             status: input.status,
+            helpdesk_all_departments: input.helpdeskAllDepartments,
             metadata: {
                 created_from: 'cloud_admin',
                 auth_link_type: authLinkType,
@@ -302,11 +351,29 @@ export async function createCloudAdminUser(input: CreateCloudAdminUserInput): Pr
         throw error;
     }
 
-    return { user: { ...(data as CloudAdminUser), profile }, tempPassword: passwordToReturn, authLinkType };
+    try {
+        await syncUserDepartments(data.id, input.departmentIds);
+    } catch (membershipError) {
+        await supabaseAdmin.from('cloud_admin_users').delete().eq('id', data.id);
+        if (authUserCreated) await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        throw membershipError;
+    }
+
+    return {
+        user: { ...(data as CloudAdminUser), profile, departments: [] },
+        tempPassword: passwordToReturn,
+        authLinkType,
+    };
 }
 
 export async function updateCloudAdminUser(userId: string, input: UpdateCloudAdminUserInput): Promise<CloudAdminUser> {
     const profile = await getProfile(input.profileId);
+    const { data: existingUser, error: existingUserError } = await supabaseAdmin
+        .from('cloud_admin_users')
+        .select('metadata')
+        .eq('id', userId)
+        .single();
+    if (existingUserError) throw existingUserError;
     const { data, error } = await supabaseAdmin
         .from('cloud_admin_users')
         .update({
@@ -314,7 +381,9 @@ export async function updateCloudAdminUser(userId: string, input: UpdateCloudAdm
             phone: input.phone?.trim() || null,
             profile_id: profile.id,
             status: input.status,
+            helpdesk_all_departments: input.helpdeskAllDepartments,
             metadata: {
+                ...((existingUser.metadata || {}) as Record<string, unknown>),
                 profile_code: profile.code,
             },
         })
@@ -325,6 +394,8 @@ export async function updateCloudAdminUser(userId: string, input: UpdateCloudAdm
     if (error) throw error;
     const user = data as CloudAdminUser;
 
+    await syncUserDepartments(userId, input.departmentIds);
+
     if (user.auth_user_id) {
         const authUser = await getAuthUserById(user.auth_user_id);
         const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(user.auth_user_id, {
@@ -333,7 +404,7 @@ export async function updateCloudAdminUser(userId: string, input: UpdateCloudAdm
         if (authError) throw authError;
     }
 
-    return { ...user, profile };
+    return { ...user, profile, departments: [] };
 }
 
 export async function deleteCloudAdminUser(user: CloudAdminUser): Promise<void> {
@@ -351,6 +422,42 @@ export async function deleteCloudAdminUser(user: CloudAdminUser): Promise<void> 
         const { error: authError } = await supabaseAdmin.auth.admin.deleteUser(user.auth_user_id);
         if (authError) throw authError;
     }
+}
+
+export async function createSupportDepartment(input: SupportDepartmentInput): Promise<SupportDepartment> {
+    const code = normalizeCode(input.code);
+    if (!code || !input.name.trim()) throw new Error('Código y nombre del departamento son requeridos.');
+    const { data, error } = await supabaseAdmin
+        .from('support_teams')
+        .insert({
+            code,
+            name: input.name.trim(),
+            description: input.description?.trim() || null,
+            is_active: input.isActive ?? true,
+        })
+        .select('*')
+        .single();
+    if (error) throw error;
+    return data as SupportDepartment;
+}
+
+export async function updateSupportDepartment(
+    departmentId: string,
+    input: Omit<SupportDepartmentInput, 'code'>,
+): Promise<SupportDepartment> {
+    if (!input.name.trim()) throw new Error('El nombre del departamento es requerido.');
+    const { data, error } = await supabaseAdmin
+        .from('support_teams')
+        .update({
+            name: input.name.trim(),
+            description: input.description?.trim() || null,
+            is_active: input.isActive ?? true,
+        })
+        .eq('id', departmentId)
+        .select('*')
+        .single();
+    if (error) throw error;
+    return data as SupportDepartment;
 }
 
 async function getProfile(profileId: string): Promise<CloudAdminProfile> {
@@ -376,4 +483,6 @@ export const accessService = {
     createCloudAdminUser,
     updateCloudAdminUser,
     deleteCloudAdminUser,
+    createSupportDepartment,
+    updateSupportDepartment,
 };
