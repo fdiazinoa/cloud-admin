@@ -38,6 +38,7 @@ import {
     createHelpdeskImprovement,
     createPreventiveHelpdeskTicket,
     fetchHelpdeskBootstrap,
+    fetchHelpdeskTicketSnapshot,
     fetchSupportMessages,
     generateHelpdeskDraft,
     heartbeatHelpdeskTicket,
@@ -257,6 +258,29 @@ const resolutionStatusStyles: Record<string, string> = {
 function normalizeRelation<T>(value: T | T[] | null | undefined): T | null {
     if (Array.isArray(value)) return value[0] ?? null;
     return value ?? null;
+}
+
+function mapTicketRow(ticket: TicketRow): Ticket {
+    return {
+        ...ticket,
+        source: ticket.source || 'POS',
+        tenant_name: normalizeRelation(ticket.tenants)?.name || 'Sin tenant asignado',
+        contact: normalizeRelation(ticket.support_contacts),
+        insight: normalizeRelation(ticket.ai_ticket_insights),
+        assignee: normalizeRelation(ticket.assignee),
+        support_team: normalizeRelation(ticket.support_team),
+        technical_context: ticket.technical_context || {},
+    };
+}
+
+function serializeDraft(input: {
+    body: string;
+    mode: HelpdeskReplyMode;
+    cc: string[];
+    bcc: string[];
+    forwardTo: string;
+}) {
+    return JSON.stringify(input);
 }
 
 function formatTime(value: string) {
@@ -631,6 +655,8 @@ const SupportCommandCenter: React.FC = () => {
     const replyFileInputRef = useRef<HTMLInputElement>(null);
     const pendingReplyAttachmentsRef = useRef<PendingReplyAttachment[]>([]);
     const searchDebounceRef = useRef<number | undefined>(undefined);
+    const searchQueryRef = useRef('');
+    const lastSavedDraftRef = useRef<string | null>(null);
 
     const selectedTicketId = selectedTicket?.id;
 
@@ -675,31 +701,13 @@ const SupportCommandCenter: React.FC = () => {
 
     useEffect(() => {
         let mounted = true;
-        let realtimeRefreshTimer: number | undefined;
-
         const fetchTickets = async () => {
             setIsRefreshingTickets(true);
             try {
                 const response = await fetchHelpdeskBootstrap(searchQuery);
                 if (!mounted) return;
 
-                const mappedTickets = (response.tickets as TicketRow[]).map((ticket) => {
-                    const tenant = normalizeRelation(ticket.tenants);
-                    const contact = normalizeRelation(ticket.support_contacts);
-                    const insight = normalizeRelation(ticket.ai_ticket_insights);
-                    const assignee = normalizeRelation(ticket.assignee);
-                    const supportTeam = normalizeRelation(ticket.support_team);
-                    return {
-                        ...ticket,
-                        source: ticket.source || 'POS',
-                        tenant_name: tenant?.name || 'Sin tenant asignado',
-                        contact,
-                        insight,
-                        assignee,
-                        support_team: supportTeam,
-                        technical_context: ticket.technical_context || {},
-                    };
-                });
+                const mappedTickets = (response.tickets as TicketRow[]).map(mapTicketRow);
 
                 setTickets(mappedTickets);
                 setAgents(response.agents);
@@ -718,25 +726,91 @@ const SupportCommandCenter: React.FC = () => {
             }
         };
 
-        const scheduleTicketsRefresh = () => {
-            window.clearTimeout(realtimeRefreshTimer);
-            realtimeRefreshTimer = window.setTimeout(() => void fetchTickets(), 350);
-        };
-
         void fetchTickets();
-
-        const channel = supabase.channel('support_tickets_global_secure')
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_tickets' }, scheduleTicketsRefresh)
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_contacts' }, scheduleTicketsRefresh)
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'ai_ticket_insights' }, scheduleTicketsRefresh)
-            .subscribe();
 
         return () => {
             mounted = false;
-            window.clearTimeout(realtimeRefreshTimer);
-            void supabase.removeChannel(channel);
         };
     }, [refreshVersion, searchQuery]);
+
+    useEffect(() => {
+        searchQueryRef.current = searchQuery;
+    }, [searchQuery]);
+
+    useEffect(() => {
+        const refreshTimers = new Map<string, number>();
+        let searchRefreshTimer: number | undefined;
+
+        const removeTicket = (ticketId: string) => {
+            setTickets((current) => current.filter((ticket) => ticket.id !== ticketId));
+            setSelectedTicket((current) => current?.id === ticketId ? null : current);
+            setSelectedTicketIds((current) => current.filter((id) => id !== ticketId));
+            setLastMessageByTicketId((current) => {
+                const next = { ...current };
+                delete next[ticketId];
+                return next;
+            });
+        };
+
+        const refreshTicket = async (ticketId: string) => {
+            try {
+                const response = await fetchHelpdeskTicketSnapshot(ticketId);
+                if (!response.ticket) {
+                    removeTicket(ticketId);
+                    return;
+                }
+                const mappedTicket = mapTicketRow(response.ticket as TicketRow);
+                setTickets((current) => {
+                    const index = current.findIndex((ticket) => ticket.id === ticketId);
+                    if (index < 0) return [mappedTicket, ...current];
+                    const next = [...current];
+                    next[index] = mappedTicket;
+                    return next;
+                });
+                setSelectedTicket((current) => current?.id === ticketId ? mappedTicket : current);
+                if (response.preview) {
+                    setLastMessageByTicketId((current) => ({
+                        ...current,
+                        ...buildLatestMessagePreviewMap([response.preview as Record<string, string | null>]),
+                    }));
+                }
+            } catch (error) {
+                console.error('Admin: error refreshing changed support ticket', error);
+            }
+        };
+
+        const channel = supabase.channel('support_tickets_incremental_secure')
+            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_tickets' }, (payload) => {
+                const oldRecord = payload.old as Record<string, unknown>;
+                const newRecord = payload.new as Record<string, unknown>;
+                const ticketId = String(newRecord?.id || oldRecord?.id || '');
+                if (!ticketId) return;
+
+                if (payload.eventType === 'DELETE') {
+                    removeTicket(ticketId);
+                    return;
+                }
+
+                if (searchQueryRef.current) {
+                    window.clearTimeout(searchRefreshTimer);
+                    searchRefreshTimer = window.setTimeout(() => setRefreshVersion((value) => value + 1), 800);
+                    return;
+                }
+
+                window.clearTimeout(refreshTimers.get(ticketId));
+                refreshTimers.set(ticketId, window.setTimeout(() => {
+                    refreshTimers.delete(ticketId);
+                    void refreshTicket(ticketId);
+                }, 250));
+            })
+            .subscribe();
+
+        return () => {
+            refreshTimers.forEach((timer) => window.clearTimeout(timer));
+            window.clearTimeout(searchRefreshTimer);
+            void supabase.removeChannel(channel);
+        };
+    }, []);
 
     useEffect(() => {
         window.clearTimeout(searchDebounceRef.current);
@@ -753,6 +827,7 @@ const SupportCommandCenter: React.FC = () => {
         }
 
         let mounted = true;
+        let messageRefreshTimer: number | undefined;
 
         const fetchMessages = async () => {
             try {
@@ -772,11 +847,16 @@ const SupportCommandCenter: React.FC = () => {
                 schema: 'landlord',
                 table: 'ticket_messages',
                 filter: `ticket_id=eq.${selectedTicketId}`,
-            }, () => void fetchMessages())
+            }, () => {
+                if (document.visibilityState !== 'visible') return;
+                window.clearTimeout(messageRefreshTimer);
+                messageRefreshTimer = window.setTimeout(() => void fetchMessages(), 250);
+            })
             .subscribe();
 
         return () => {
             mounted = false;
+            window.clearTimeout(messageRefreshTimer);
             void supabase.removeChannel(msgChannel);
         };
     }, [selectedTicketId]);
@@ -797,6 +877,13 @@ const SupportCommandCenter: React.FC = () => {
                     setCcText((workspace.draft.cc ?? []).join(', '));
                     setBccText((workspace.draft.bcc ?? []).join(', '));
                     setForwardTo(workspace.draft.forward_to ?? '');
+                    lastSavedDraftRef.current = serializeDraft({
+                        body: workspace.draft.body ?? '',
+                        mode: workspace.draft.mode ?? 'reply',
+                        cc: workspace.draft.cc ?? [],
+                        bcc: workspace.draft.bcc ?? [],
+                        forwardTo: workspace.draft.forward_to ?? '',
+                    });
                     setDraftStatus('saved');
                 }
             } catch (error) {
@@ -805,39 +892,50 @@ const SupportCommandCenter: React.FC = () => {
         };
 
         void refreshWorkspace(true);
-        const heartbeat = window.setInterval(async () => {
+        const heartbeatWorkspace = async () => {
+            if (document.visibilityState !== 'visible') return;
             try {
-                await heartbeatHelpdeskTicket(selectedTicketId);
-                await refreshWorkspace(false);
+                const response = await heartbeatHelpdeskTicket(selectedTicketId);
+                if (mounted) setWorkspacePresence(response.presence);
             } catch (error) {
                 console.error('Admin: helpdesk heartbeat failed', error);
             }
-        }, 15_000);
+        };
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') void heartbeatWorkspace();
+        };
+        const heartbeat = window.setInterval(() => void heartbeatWorkspace(), 30_000);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
 
         return () => {
             mounted = false;
             window.clearInterval(heartbeat);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
         };
     }, [selectedTicketId]);
 
     useEffect(() => {
         if (!selectedTicketId) return;
+        const draft = {
+            body: replyText,
+            mode: replyMode,
+            cc: parseEmailList(ccText),
+            bcc: parseEmailList(bccText),
+            forwardTo,
+        };
+        const serializedDraft = serializeDraft(draft);
+        if (serializedDraft === lastSavedDraftRef.current) return;
         const timer = window.setTimeout(async () => {
             setDraftStatus('saving');
             try {
-                await saveHelpdeskDraft(selectedTicketId, {
-                    body: replyText,
-                    mode: replyMode,
-                    cc: parseEmailList(ccText),
-                    bcc: parseEmailList(bccText),
-                    forwardTo,
-                });
+                await saveHelpdeskDraft(selectedTicketId, draft);
+                lastSavedDraftRef.current = serializedDraft;
                 setDraftStatus('saved');
             } catch (error) {
                 console.error('Admin: error saving helpdesk draft', error);
                 setDraftStatus('error');
             }
-        }, 900);
+        }, 1_500);
         return () => window.clearTimeout(timer);
     }, [bccText, ccText, forwardTo, replyMode, replyText, selectedTicketId]);
 

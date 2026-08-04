@@ -1,19 +1,20 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
-import { Dashboard } from './pages/Dashboard'
-import { Tenants } from './pages/Tenants'
-import { KillSwitch } from './pages/KillSwitch'
-import { Plans } from './pages/Plans'
-import { Configuration } from './pages/Configuration'
-import { PosApkReleases } from './pages/PosApkReleases'
-import SupportCommandCenter from './pages/SupportCommandCenter'
-import { CustomerImprovements } from './pages/CustomerImprovements'
-import { AccessManagement } from './pages/AccessManagement'
-import { OperationalObservability } from './pages/OperationalObservability'
 import { supabase, supabaseAdmin } from './lib/supabase'
 import type { CloudAdminProfile, CloudAdminUser } from './types'
+
+const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
+const Tenants = lazy(() => import('./pages/Tenants').then((module) => ({ default: module.Tenants })));
+const KillSwitch = lazy(() => import('./pages/KillSwitch').then((module) => ({ default: module.KillSwitch })));
+const Plans = lazy(() => import('./pages/Plans').then((module) => ({ default: module.Plans })));
+const Configuration = lazy(() => import('./pages/Configuration').then((module) => ({ default: module.Configuration })));
+const PosApkReleases = lazy(() => import('./pages/PosApkReleases').then((module) => ({ default: module.PosApkReleases })));
+const SupportCommandCenter = lazy(() => import('./pages/SupportCommandCenter'));
+const CustomerImprovements = lazy(() => import('./pages/CustomerImprovements').then((module) => ({ default: module.CustomerImprovements })));
+const AccessManagement = lazy(() => import('./pages/AccessManagement').then((module) => ({ default: module.AccessManagement })));
+const OperationalObservability = lazy(() => import('./pages/OperationalObservability').then((module) => ({ default: module.OperationalObservability })));
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -172,6 +173,7 @@ function App() {
 
     return (
         <HashRouter>
+            <Suspense fallback={<PageLoadingScreen />}>
             <Routes>
                 <Route
                     path="/"
@@ -198,8 +200,17 @@ function App() {
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </Suspense>
         </HashRouter>
     )
+}
+
+function PageLoadingScreen() {
+    return (
+        <div className="flex min-h-[40vh] items-center justify-center text-sm font-bold text-slate-500">
+            Cargando módulo...
+        </div>
+    );
 }
 
 function AuthLoadingScreen() {

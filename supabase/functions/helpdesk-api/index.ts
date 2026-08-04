@@ -53,6 +53,54 @@ const mutableTicketFields = new Set([
     'resolution_status',
 ]);
 
+const ticketSelect = `
+    id,
+    ticket_number,
+    tenant_id,
+    category,
+    priority,
+    status,
+    resolution_status,
+    customer_rating,
+    subject,
+    source,
+    assignment_status,
+    external_sender_email,
+    technical_context,
+    tags,
+    assignee_id,
+    team_id,
+    merged_into_ticket_id,
+    merged_at,
+    first_response_at,
+    last_response_at,
+    last_delivery_status,
+    last_delivery_error,
+    created_at,
+    updated_at,
+    tenants (name),
+    support_contacts (id, email, name, company_name, phone, metadata, tenant_id),
+    ai_ticket_insights (
+        sentiment,
+        sentiment_score,
+        summary,
+        suggested_replies,
+        confidence,
+        next_best_action,
+        urgency_reason,
+        affected_module,
+        detected_contact_name,
+        detected_company,
+        detected_phone,
+        detected_identifiers,
+        incident_fingerprint,
+        duplicate_signal,
+        ai_tags
+    ),
+    assignee:cloud_admin_users!support_tickets_assignee_id_fkey (id, full_name, email, status),
+    support_team:support_teams!support_tickets_team_id_fkey (id, name, code)
+`;
+
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), {
         status,
@@ -136,53 +184,7 @@ async function fetchBootstrap(supabase: ReturnType<typeof createHelpdeskAdminCli
     const [ticketsResult, agentsResult, teamsResult, templatesResult] = await Promise.all([
         supabase
             .from('support_tickets')
-            .select(`
-                id,
-                ticket_number,
-                tenant_id,
-                category,
-                priority,
-                status,
-                resolution_status,
-                customer_rating,
-                subject,
-                source,
-                assignment_status,
-                external_sender_email,
-                technical_context,
-                tags,
-                assignee_id,
-                team_id,
-                merged_into_ticket_id,
-                merged_at,
-                first_response_at,
-                last_response_at,
-                last_delivery_status,
-                last_delivery_error,
-                created_at,
-                updated_at,
-                tenants (name),
-                support_contacts (id, email, name, company_name, phone, metadata, tenant_id),
-                ai_ticket_insights (
-                    sentiment,
-                    sentiment_score,
-                    summary,
-                    suggested_replies,
-                    confidence,
-                    next_best_action,
-                    urgency_reason,
-                    affected_module,
-                    detected_contact_name,
-                    detected_company,
-                    detected_phone,
-                    detected_identifiers,
-                    incident_fingerprint,
-                    duplicate_signal,
-                    ai_tags
-                ),
-                assignee:cloud_admin_users!support_tickets_assignee_id_fkey (id, full_name, email, status),
-                support_team:support_teams!support_tickets_team_id_fkey (id, name, code)
-            `)
+            .select(ticketSelect)
             .is('merged_into_ticket_id', null)
             .order('updated_at', { ascending: false })
             .limit(500),
@@ -246,11 +248,9 @@ async function fetchBootstrap(supabase: ReturnType<typeof createHelpdeskAdminCli
     const ticketIds = tickets.map((ticket) => String((ticket as Record<string, unknown>).id));
     let previews: unknown[] = [];
     if (ticketIds.length) {
-        const { data, error } = await supabase
-            .from('ticket_messages')
-            .select('ticket_id, message, sender_type, visibility, delivery_status, created_at')
-            .in('ticket_id', ticketIds)
-            .order('created_at', { ascending: false });
+        const { data, error } = await supabase.rpc('helpdesk_latest_message_previews', {
+            p_ticket_ids: ticketIds,
+        });
         if (error) throw error;
         previews = data ?? [];
     }
@@ -276,6 +276,23 @@ Deno.serve(async (request) => {
 
         if (action === 'bootstrap') {
             return json(await fetchBootstrap(supabase, payload.query ?? ''));
+        }
+
+        if (action === 'ticket_snapshot') {
+            const ticketId = cleanString(payload.ticket_id, 64);
+            if (!ticketId) return json({ error: 'ticket_id is required' }, 400);
+            const [ticketResult, previewResult] = await Promise.all([
+                supabase
+                    .from('support_tickets')
+                    .select(ticketSelect)
+                    .eq('id', ticketId)
+                    .is('merged_into_ticket_id', null)
+                    .maybeSingle(),
+                supabase.rpc('helpdesk_latest_message_previews', { p_ticket_ids: [ticketId] }),
+            ]);
+            if (ticketResult.error) throw ticketResult.error;
+            if (previewResult.error) throw previewResult.error;
+            return json({ ticket: ticketResult.data, preview: previewResult.data?.[0] ?? null });
         }
 
         if (action === 'update_ticket') {
@@ -548,8 +565,10 @@ Deno.serve(async (request) => {
         if (action === 'load_workspace') {
             const ticketId = cleanString(payload.ticket_id, 64);
             if (!ticketId) return json({ error: 'ticket_id is required' }, 400);
-            const staleBefore = new Date(Date.now() - 45_000).toISOString();
-            await supabase.from('support_ticket_presence').delete().lt('last_seen_at', staleBefore);
+            const staleBefore = new Date(Date.now() - 75_000).toISOString();
+            await supabase.from('support_ticket_presence').delete()
+                .eq('ticket_id', ticketId)
+                .lt('last_seen_at', staleBefore);
             await supabase.from('support_ticket_presence').upsert({
                 ticket_id: ticketId,
                 admin_user_id: actor.id,
@@ -577,13 +596,20 @@ Deno.serve(async (request) => {
         if (action === 'heartbeat') {
             const ticketId = cleanString(payload.ticket_id, 64);
             if (!ticketId) return json({ error: 'ticket_id is required' }, 400);
+            const staleBefore = new Date(Date.now() - 75_000).toISOString();
             const { error } = await supabase.from('support_ticket_presence').upsert({
                 ticket_id: ticketId,
                 admin_user_id: actor.id,
                 last_seen_at: new Date().toISOString(),
             }, { onConflict: 'ticket_id,admin_user_id' });
             if (error) throw error;
-            return json({ ok: true });
+            const { data: presence, error: presenceError } = await supabase
+                .from('support_ticket_presence')
+                .select('admin_user_id, last_seen_at, cloud_admin_users!support_ticket_presence_admin_user_id_fkey(id, full_name, email)')
+                .eq('ticket_id', ticketId)
+                .gte('last_seen_at', staleBefore);
+            if (presenceError) throw presenceError;
+            return json({ ok: true, presence: presence ?? [] });
         }
 
         if (action === 'create_upload_urls') {
