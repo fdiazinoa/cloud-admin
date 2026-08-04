@@ -43,6 +43,7 @@ import {
     generateHelpdeskDraft,
     heartbeatHelpdeskTicket,
     loadHelpdeskWorkspace,
+    markHelpdeskTicketRead,
     mergeHelpdeskTickets,
     resolveHelpdeskTicket,
     saveHelpdeskContact,
@@ -55,6 +56,7 @@ import {
     type HelpdeskReplyMode,
     type HelpdeskReplyTemplate,
     type HelpdeskTeamOption,
+    type HelpdeskTicketUnreadState,
 } from '../lib/helpdeskService';
 
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
@@ -134,6 +136,9 @@ interface Ticket {
     last_delivery_error?: string | null;
     merged_into_ticket_id?: string | null;
     created_at: string;
+    is_unread?: boolean;
+    last_customer_message_at?: string | null;
+    last_read_at?: string | null;
     insight?: AiTicketInsight | null;
 }
 
@@ -273,6 +278,15 @@ function mapTicketRow(ticket: TicketRow): Ticket {
     };
 }
 
+function applyUnreadState(ticket: Ticket, unreadState?: HelpdeskTicketUnreadState | null): Ticket {
+    return {
+        ...ticket,
+        is_unread: unreadState?.is_unread ?? false,
+        last_customer_message_at: unreadState?.last_customer_message_at ?? null,
+        last_read_at: unreadState?.last_read_at ?? null,
+    };
+}
+
 function serializeDraft(input: {
     body: string;
     mode: HelpdeskReplyMode;
@@ -358,10 +372,13 @@ function getTicketListCardClass(ticket: Ticket, isSelected: boolean, emphasizeCl
     const high = ticket.priority === 'Alta';
 
     if (critical) {
-        return 'border-red-300 border-l-4 border-l-red-500 bg-gradient-to-r from-red-50 via-white to-white ring-1 ring-red-100 hover:border-red-400 hover:shadow-md';
+        return `border-red-300 border-l-4 border-l-red-500 bg-gradient-to-r from-red-50 via-white to-white hover:border-red-400 hover:shadow-md ${ticket.is_unread ? 'ring-2 ring-indigo-300 shadow-md' : 'ring-1 ring-red-100'}`;
     }
     if (high) {
-        return 'border-amber-300 border-l-4 border-l-amber-500 bg-gradient-to-r from-amber-50/90 via-white to-white ring-1 ring-amber-100 hover:border-amber-400 hover:shadow-md';
+        return `border-amber-300 border-l-4 border-l-amber-500 bg-gradient-to-r from-amber-50/90 via-white to-white hover:border-amber-400 hover:shadow-md ${ticket.is_unread ? 'ring-2 ring-indigo-300 shadow-md' : 'ring-1 ring-amber-100'}`;
+    }
+    if (ticket.is_unread) {
+        return 'border-indigo-300 border-l-4 border-l-indigo-500 bg-indigo-50/80 shadow-sm ring-1 ring-indigo-200 hover:border-indigo-400 hover:shadow-md';
     }
     if (emphasizeClosed && closed) {
         return 'border-slate-300 border-l-4 border-l-slate-400 bg-slate-100/95 text-slate-600 hover:border-slate-400 hover:bg-slate-100';
@@ -707,7 +724,13 @@ const SupportCommandCenter: React.FC = () => {
                 const response = await fetchHelpdeskBootstrap(searchQuery);
                 if (!mounted) return;
 
-                const mappedTickets = (response.tickets as TicketRow[]).map(mapTicketRow);
+                const unreadStateByTicketId = new Map(
+                    response.unread_states.map((state) => [state.ticket_id, state]),
+                );
+                const mappedTickets = (response.tickets as TicketRow[]).map((ticket) => {
+                    const mappedTicket = mapTicketRow(ticket);
+                    return applyUnreadState(mappedTicket, unreadStateByTicketId.get(mappedTicket.id));
+                });
 
                 setTickets(mappedTickets);
                 setAgents(response.agents);
@@ -759,7 +782,10 @@ const SupportCommandCenter: React.FC = () => {
                     removeTicket(ticketId);
                     return;
                 }
-                const mappedTicket = mapTicketRow(response.ticket as TicketRow);
+                const mappedTicket = applyUnreadState(
+                    mapTicketRow(response.ticket as TicketRow),
+                    response.unread_state,
+                );
                 setTickets((current) => {
                     const index = current.findIndex((ticket) => ticket.id === ticketId);
                     if (index < 0) return [mappedTicket, ...current];
@@ -832,10 +858,26 @@ const SupportCommandCenter: React.FC = () => {
         const fetchMessages = async () => {
             try {
                 const response = await fetchSupportMessages(selectedTicketId);
-                if (mounted) setMessages((response.messages ?? []) as Message[]);
+                if (!mounted) return;
+                setMessages((response.messages ?? []) as Message[]);
             } catch (error) {
                 console.error('Admin: error fetching support messages', error);
                 if (mounted) setReplyAttachmentError(error instanceof Error ? error.message : 'No se pudo cargar la conversación.');
+                return;
+            }
+
+            try {
+                const readState = await markHelpdeskTicketRead(selectedTicketId);
+                if (!mounted) return;
+                setTickets((current) => current.map((ticket) => ticket.id === selectedTicketId
+                    ? { ...ticket, is_unread: false, last_read_at: readState.last_read_at ?? null }
+                    : ticket));
+                setSelectedTicket((current) => current?.id === selectedTicketId
+                    ? { ...current, is_unread: false, last_read_at: readState.last_read_at ?? null }
+                    : current);
+            } catch (error) {
+                console.error('Admin: error marking support conversation as read', error);
+                if (mounted) setBulkActionError(error instanceof Error ? error.message : 'No se pudo marcar el ticket como leído.');
             }
         };
 
@@ -945,6 +987,7 @@ const SupportCommandCenter: React.FC = () => {
             open: tickets.filter((ticket) => ticket.status === 'Abierto').length,
             email: tickets.filter((ticket) => ticket.source === 'Email').length,
             unassigned: tickets.filter((ticket) => ticket.assignment_status === 'needs_assignment').length,
+            unread: tickets.filter((ticket) => ticket.is_unread).length,
         };
     }, [tickets]);
 
@@ -1480,6 +1523,12 @@ const SupportCommandCenter: React.FC = () => {
                         <p className="border-t border-slate-200 pt-2 text-[11px] font-medium text-slate-500">
                             Mostrando <span className="font-bold text-slate-800">{filteredTickets.length}</span> de{' '}
                             <span className="font-bold text-slate-800">{tickets.length}</span> tickets
+                            {ticketStats.unread > 0 ? (
+                                <span className="ml-2 inline-flex items-center gap-1 font-bold text-indigo-700">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+                                    {ticketStats.unread} sin leer
+                                </span>
+                            ) : null}
                         </p>
                         {bulkActionError && <p className="text-xs font-medium text-red-600">{bulkActionError}</p>}
                     </div>
@@ -1539,6 +1588,12 @@ const SupportCommandCenter: React.FC = () => {
                                         <span className={`shrink-0 text-xs font-black ${closed && emphasizeClosed && !urgent ? 'text-slate-500' : 'text-slate-500'}`}>
                                             {getTicketNumberLabel(ticket)}
                                         </span>
+                                        {ticket.is_unread ? (
+                                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-indigo-300 bg-indigo-100 px-2 py-0.5 text-[10px] font-black text-indigo-800 shadow-sm">
+                                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-600" />
+                                                Nuevo
+                                            </span>
+                                        ) : null}
                                         {emphasizeClosed && closed ? (
                                             <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-slate-300 bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700">
                                                 <Archive size={10} />
@@ -1561,13 +1616,13 @@ const SupportCommandCenter: React.FC = () => {
                                     </span>
                                 </div>
 
-                                <h3 className={`truncate text-sm font-bold ${closed && emphasizeClosed && !urgent ? 'text-slate-700' : 'text-slate-900'}`}>
+                                <h3 className={`truncate text-sm ${ticket.is_unread ? 'font-black text-slate-950' : `font-bold ${closed && emphasizeClosed && !urgent ? 'text-slate-700' : 'text-slate-900'}`}`}>
                                     {getTicketOwner(ticket)}
                                 </h3>
-                                <p className={`mt-1 line-clamp-1 text-xs font-medium ${closed && emphasizeClosed && !urgent ? 'text-slate-500' : 'text-slate-700'}`}>
+                                <p className={`mt-1 line-clamp-1 text-xs ${ticket.is_unread ? 'font-bold text-slate-900' : `font-medium ${closed && emphasizeClosed && !urgent ? 'text-slate-500' : 'text-slate-700'}`}`}>
                                     {ticket.subject}
                                 </p>
-                                <p className={`mt-2 line-clamp-2 text-xs leading-relaxed ${closed && emphasizeClosed && !urgent ? 'text-slate-400' : 'text-slate-500'}`}>
+                                <p className={`mt-2 line-clamp-2 text-xs leading-relaxed ${ticket.is_unread ? 'font-medium text-slate-700' : closed && emphasizeClosed && !urgent ? 'text-slate-400' : 'text-slate-500'}`}>
                                     {preview ? (
                                         <>
                                             <span className="font-semibold text-slate-600">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}

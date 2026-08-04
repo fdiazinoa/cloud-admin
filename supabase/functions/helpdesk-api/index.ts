@@ -180,7 +180,11 @@ function filterMutableFields(fields: unknown) {
     return output;
 }
 
-async function fetchBootstrap(supabase: ReturnType<typeof createHelpdeskAdminClient>, query: string) {
+async function fetchBootstrap(
+    supabase: ReturnType<typeof createHelpdeskAdminClient>,
+    query: string,
+    adminUserId: string,
+) {
     const [ticketsResult, agentsResult, teamsResult, templatesResult] = await Promise.all([
         supabase
             .from('support_tickets')
@@ -247,12 +251,19 @@ async function fetchBootstrap(supabase: ReturnType<typeof createHelpdeskAdminCli
 
     const ticketIds = tickets.map((ticket) => String((ticket as Record<string, unknown>).id));
     let previews: unknown[] = [];
+    let unreadStates: unknown[] = [];
     if (ticketIds.length) {
-        const { data, error } = await supabase.rpc('helpdesk_latest_message_previews', {
-            p_ticket_ids: ticketIds,
-        });
-        if (error) throw error;
-        previews = data ?? [];
+        const [previewResult, unreadResult] = await Promise.all([
+            supabase.rpc('helpdesk_latest_message_previews', { p_ticket_ids: ticketIds }),
+            supabase.rpc('helpdesk_ticket_unread_states', {
+                p_ticket_ids: ticketIds,
+                p_admin_user_id: adminUserId,
+            }),
+        ]);
+        if (previewResult.error) throw previewResult.error;
+        if (unreadResult.error) throw unreadResult.error;
+        previews = previewResult.data ?? [];
+        unreadStates = unreadResult.data ?? [];
     }
 
     return {
@@ -261,6 +272,7 @@ async function fetchBootstrap(supabase: ReturnType<typeof createHelpdeskAdminCli
         teams: teamsResult.data ?? [],
         templates: templatesResult.data ?? [],
         previews,
+        unread_states: unreadStates,
     };
 }
 
@@ -275,13 +287,13 @@ Deno.serve(async (request) => {
         const supabase = createHelpdeskAdminClient();
 
         if (action === 'bootstrap') {
-            return json(await fetchBootstrap(supabase, payload.query ?? ''));
+            return json(await fetchBootstrap(supabase, payload.query ?? '', actor.id));
         }
 
         if (action === 'ticket_snapshot') {
             const ticketId = cleanString(payload.ticket_id, 64);
             if (!ticketId) return json({ error: 'ticket_id is required' }, 400);
-            const [ticketResult, previewResult] = await Promise.all([
+            const [ticketResult, previewResult, unreadResult] = await Promise.all([
                 supabase
                     .from('support_tickets')
                     .select(ticketSelect)
@@ -289,10 +301,34 @@ Deno.serve(async (request) => {
                     .is('merged_into_ticket_id', null)
                     .maybeSingle(),
                 supabase.rpc('helpdesk_latest_message_previews', { p_ticket_ids: [ticketId] }),
+                supabase.rpc('helpdesk_ticket_unread_states', {
+                    p_ticket_ids: [ticketId],
+                    p_admin_user_id: actor.id,
+                }),
             ]);
             if (ticketResult.error) throw ticketResult.error;
             if (previewResult.error) throw previewResult.error;
-            return json({ ticket: ticketResult.data, preview: previewResult.data?.[0] ?? null });
+            if (unreadResult.error) throw unreadResult.error;
+            return json({
+                ticket: ticketResult.data,
+                preview: previewResult.data?.[0] ?? null,
+                unread_state: unreadResult.data?.[0] ?? null,
+            });
+        }
+
+        if (action === 'mark_read') {
+            const ticketId = cleanString(payload.ticket_id, 64);
+            if (!/^[0-9a-f-]{36}$/i.test(ticketId)) return json({ error: 'A valid ticket_id is required' }, 400);
+            const lastReadAt = new Date().toISOString();
+            const { error } = await supabase
+                .from('support_ticket_read_receipts')
+                .upsert({
+                    ticket_id: ticketId,
+                    admin_user_id: actor.id,
+                    last_read_at: lastReadAt,
+                }, { onConflict: 'ticket_id,admin_user_id' });
+            if (error) throw error;
+            return json({ ticket_id: ticketId, last_read_at: lastReadAt, is_unread: false });
         }
 
         if (action === 'update_ticket') {

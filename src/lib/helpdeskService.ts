@@ -42,6 +42,13 @@ export interface HelpdeskPresence {
     cloud_admin_users?: { id: string; full_name: string; email: string } | Array<{ id: string; full_name: string; email: string }> | null;
 }
 
+export interface HelpdeskTicketUnreadState {
+    ticket_id: string;
+    last_customer_message_at?: string | null;
+    last_read_at?: string | null;
+    is_unread: boolean;
+}
+
 interface FunctionErrorPayload {
     error?: string;
     detail?: string;
@@ -72,6 +79,7 @@ export async function fetchHelpdeskBootstrap(query = '') {
         teams: HelpdeskTeamOption[];
         templates: HelpdeskReplyTemplate[];
         previews: unknown[];
+        unread_states: HelpdeskTicketUnreadState[];
     }>('bootstrap', { query });
 }
 
@@ -79,7 +87,12 @@ export async function fetchHelpdeskTicketSnapshot(ticketId: string) {
     return invokeHelpdesk<{
         ticket: unknown | null;
         preview: unknown | null;
+        unread_state: HelpdeskTicketUnreadState | null;
     }>('ticket_snapshot', { ticket_id: ticketId });
+}
+
+export async function markHelpdeskTicketRead(ticketId: string) {
+    return invokeHelpdesk<HelpdeskTicketUnreadState>('mark_read', { ticket_id: ticketId });
 }
 
 export async function fetchSupportMessages(ticketId: string) {

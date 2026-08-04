@@ -3,13 +3,14 @@ import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-const [component, service, api, deliveryWebhook, migration, optimizationMigration, config, workflow] = await Promise.all([
+const [component, service, api, deliveryWebhook, migration, optimizationMigration, unreadMigration, config, workflow] = await Promise.all([
     read('src/pages/SupportCommandCenter.tsx'),
     read('src/lib/helpdeskService.ts'),
     read('supabase/functions/helpdesk-api/index.ts'),
     read('supabase/functions/process-resend-delivery/index.ts'),
     read('supabase/migrations/20260804005059_helpdesk_ticketing_parity.sql'),
     read('supabase/migrations/20260804023000_helpdesk_performance_hardening.sql'),
+    read('supabase/migrations/20260804133607_helpdesk_ticket_read_receipts.sql'),
     read('supabase/config.toml'),
     read('.github/workflows/deploy-supabase-functions.yml'),
 ]);
@@ -27,6 +28,7 @@ for (const action of [
     'save_draft',
     'load_workspace',
     'heartbeat',
+    'mark_read',
     'merge_tickets',
     'create_upload_urls',
 ]) {
@@ -56,6 +58,17 @@ assert.ok(component.includes('support_tickets_incremental_secure'), 'HelpDesk mu
 assert.equal(component.includes("table: 'support_contacts'"), false, 'HelpDesk must not subscribe globally to support contacts');
 assert.equal(component.includes("table: 'ai_ticket_insights'"), false, 'HelpDesk must not subscribe globally to AI insights');
 assert.ok(api.includes("action === 'ticket_snapshot'"), 'HelpDesk API must expose point ticket refreshes');
+for (const unreadContract of [
+    'support_ticket_read_receipts',
+    'helpdesk_ticket_unread_states',
+    'ticket_messages_client_ticket_created_idx',
+    'touch_support_ticket_on_customer_message_trigger',
+]) {
+    assert.ok(unreadMigration.includes(unreadContract), `Unread migration is missing ${unreadContract}`);
+}
+assert.ok(service.includes('markHelpdeskTicketRead'), 'HelpDesk service must expose mark-as-read');
+assert.ok(component.includes('sin leer'), 'HelpDesk UI must show the unread count');
+assert.ok(component.includes('Nuevo'), 'HelpDesk UI must highlight unread tickets');
 assert.match(migration, /Tenants can view messages[\s\S]*?visibility = 'public'/, 'Private notes must be hidden from tenant message reads');
 assert.match(migration, /Tenants can insert messages[\s\S]*?visibility = 'public'[\s\S]*?sender_type = 'Client'/, 'Tenant message inserts must remain public client messages');
 
