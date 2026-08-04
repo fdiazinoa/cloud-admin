@@ -20,6 +20,7 @@
     "test:helpdesk-ticketing": "node scripts/test-helpdesk-ticketing-parity.mjs",
     "test:internal-requests": "node scripts/test-internal-requests.mjs",
     "test:knowledge-center": "node scripts/test-knowledge-center.mjs",
+    "test:calendar-meetings": "node scripts/test-calendar-meetings.mjs",
     "check:supabase-keys": "node scripts/check-supabase-keys.mjs",
     "verify:supabase-security": "node scripts/verify-supabase-security.mjs"
   },

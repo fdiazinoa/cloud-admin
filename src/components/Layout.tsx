@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Activity, BookOpen, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
+import { Activity, BookOpen, CalendarDays, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
 
 interface LayoutProps {
     adminName?: string | null;
@@ -27,6 +27,7 @@ const navItems = [
     { path: '/pos-apk', label: 'APK POS', icon: Smartphone },
     { path: '/support', label: 'Helpdesk & Soporte', icon: Headset },
     { path: '/conocimiento', label: 'Manuales y videos', icon: BookOpen },
+    { path: '/calendario', label: 'Implementaciones', icon: CalendarDays },
     { path: '/mejoras', label: 'Mejoras solicitadas', icon: Lightbulb },
     { path: '/solicitudes-internas', label: 'Solicitudes internas', icon: ClipboardList },
     { path: '/configuracion', label: 'Configuración', icon: Settings },
