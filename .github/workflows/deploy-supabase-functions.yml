@@ -72,6 +72,9 @@ jobs:
       - name: Deploy secure helpdesk API
         run: supabase functions deploy helpdesk-api --project-ref "$SUPABASE_PROJECT_REF"
 
+      - name: Deploy internal requests API
+        run: supabase functions deploy internal-requests-api --project-ref "$SUPABASE_PROJECT_REF"
+
       - name: Deploy internal knowledge API
         run: supabase functions deploy knowledge-api --project-ref "$SUPABASE_PROJECT_REF"
 

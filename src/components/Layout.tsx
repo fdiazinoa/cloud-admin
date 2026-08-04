@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Activity, BookOpen, CalendarDays, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
+import { Activity, BookOpen, CalendarDays, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
 
 interface LayoutProps {
     adminName?: string | null;
@@ -29,6 +29,7 @@ const navItems = [
     { path: '/conocimiento', label: 'Manuales y videos', icon: BookOpen },
     { path: '/calendario', label: 'Implementaciones', icon: CalendarDays },
     { path: '/mejoras', label: 'Mejoras solicitadas', icon: Lightbulb },
+    { path: '/solicitudes-internas', label: 'Solicitudes internas', icon: ClipboardList },
     { path: '/configuracion', label: 'Configuración', icon: Settings },
     { path: '/observabilidad', label: 'Observabilidad', icon: Activity },
     { path: '/accesos', label: 'Usuarios y perfiles', icon: UserCog },

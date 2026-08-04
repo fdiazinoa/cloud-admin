@@ -15,6 +15,7 @@ const SupportCommandCenter = lazy(() => import('./pages/SupportCommandCenter'));
 const CustomerImprovements = lazy(() => import('./pages/CustomerImprovements').then((module) => ({ default: module.CustomerImprovements })));
 const AccessManagement = lazy(() => import('./pages/AccessManagement').then((module) => ({ default: module.AccessManagement })));
 const OperationalObservability = lazy(() => import('./pages/OperationalObservability').then((module) => ({ default: module.OperationalObservability })));
+const InternalRequests = lazy(() => import('./pages/InternalRequests').then((module) => ({ default: module.InternalRequests })));
 const KnowledgeCenter = lazy(() => import('./pages/KnowledgeCenter').then((module) => ({ default: module.KnowledgeCenter })));
 const ImplementationCalendar = lazy(() => import('./pages/ImplementationCalendar').then((module) => ({ default: module.ImplementationCalendar })));
 
@@ -197,6 +198,7 @@ function App() {
                     <Route path="conocimiento" element={cloudAdminSession.profile?.permissions.support ? <KnowledgeCenter /> : <Navigate to="/" replace />} />
                     <Route path="calendario" element={cloudAdminSession.profile?.permissions.support ? <ImplementationCalendar /> : <Navigate to="/" replace />} />
                     <Route path="mejoras" element={<CustomerImprovements />} />
+                    <Route path="solicitudes-internas" element={cloudAdminSession.profile?.permissions.improvements ? <InternalRequests /> : <Navigate to="/" replace />} />
                     <Route path="configuracion" element={<Configuration />} />
                     <Route path="observabilidad" element={<OperationalObservability />} />
                     <Route path="accesos" element={<AccessManagement />} />
