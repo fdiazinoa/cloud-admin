@@ -1,4 +1,4 @@
-name: Deploy Supabase Edge Functions
+name: Deploy Supabase schema and Edge Functions
 
 on:
   push:
@@ -7,16 +7,18 @@ on:
     paths:
       - supabase/config.toml
       - supabase/functions/**
+      - supabase/migrations/**
       - .github/workflows/deploy-supabase-functions.yml
   workflow_dispatch:
 
 jobs:
   deploy:
-    name: Deploy HelpDesk functions
+    name: Deploy database and HelpDesk functions
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,6 +32,21 @@ jobs:
         run: |
           test -n "$SUPABASE_ACCESS_TOKEN"
           test -n "$SUPABASE_PROJECT_REF"
+          test -n "$SUPABASE_DB_PASSWORD"
+
+      - name: Link production project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Preview pending migrations
+        run: supabase db push --linked --password "$SUPABASE_DB_PASSWORD" --dry-run
+
+      - name: Apply pending migrations
+        run: supabase db push --linked --password "$SUPABASE_DB_PASSWORD" --yes
+
+      - name: Validate Resend webhook secret
+        run: |
+          supabase secrets list --project-ref "$SUPABASE_PROJECT_REF" --output json \
+            | jq -e 'any(.[]; .name == "RESEND_WEBHOOK_SECRET")'
 
       - name: Deploy inbound email processor
         run: supabase functions deploy process-inbound-email --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
