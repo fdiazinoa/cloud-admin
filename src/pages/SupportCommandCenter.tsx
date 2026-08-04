@@ -3,28 +3,60 @@ import {
     AlertTriangle,
     Archive,
     BatteryLow,
+    CheckCircle2,
     Clock3,
     ExternalLink,
+    FileText,
     Filter,
+    Forward,
+    GitMerge,
     Image as ImageIcon,
-    Link2,
     Lightbulb,
     Loader2,
     Mail,
     MessageSquare,
     MonitorSmartphone,
     Paperclip,
+    RefreshCw,
+    ReplyAll,
+    Search,
     Send,
     Sparkles,
+    StickyNote,
+    Tag,
     UserPlus,
+    Users,
     Wand2,
     WifiOff,
     X,
 } from 'lucide-react';
-import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
+import {
+    addPrivateHelpdeskNote,
+    addPublicHelpdeskReply,
+    bulkUpdateHelpdeskTickets,
+    createHelpdeskImprovement,
+    createPreventiveHelpdeskTicket,
+    fetchHelpdeskBootstrap,
+    fetchSupportMessages,
+    generateHelpdeskDraft,
+    heartbeatHelpdeskTicket,
+    loadHelpdeskWorkspace,
+    mergeHelpdeskTickets,
+    resolveHelpdeskTicket,
+    saveHelpdeskContact,
+    saveHelpdeskDraft,
+    sendHelpdeskReply,
+    updateHelpdeskTicket,
+    uploadHelpdeskAttachments,
+    type HelpdeskAgentOption,
+    type HelpdeskPresence,
+    type HelpdeskReplyMode,
+    type HelpdeskReplyTemplate,
+    type HelpdeskTeamOption,
+} from '../lib/helpdeskService';
 
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
-const HELPDESK_ATTACHMENTS_BUCKET = 'helpdesk-attachments';
 const MAX_REPLY_ATTACHMENTS = 4;
 const MAX_REPLY_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_REPLY_IMAGE_TYPES = new Set([
@@ -92,6 +124,14 @@ interface Ticket {
     assignment_status?: string | null;
     external_sender_email?: string | null;
     technical_context: TechnicalContext;
+    tags?: string[];
+    assignee_id?: string | null;
+    team_id?: string | null;
+    assignee?: HelpdeskAgentOption | null;
+    support_team?: HelpdeskTeamOption | null;
+    last_delivery_status?: string | null;
+    last_delivery_error?: string | null;
+    merged_into_ticket_id?: string | null;
     created_at: string;
     insight?: AiTicketInsight | null;
 }
@@ -101,6 +141,13 @@ interface Message {
     sender_type: 'Admin' | 'Client' | 'System';
     message: string;
     attachments?: unknown;
+    visibility?: 'public' | 'private';
+    message_kind?: string;
+    delivery_status?: string | null;
+    delivery_attempts?: number;
+    delivery_error?: string | null;
+    cc?: string[];
+    bcc?: string[];
     created_at: string;
 }
 
@@ -137,16 +184,12 @@ interface ImprovementDraft {
     priority: ImprovementPriority;
 }
 
-interface DraftResponse {
-    draft?: string;
-    error?: string;
-    detail?: string;
-}
-
-interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight'> {
+interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight' | 'assignee' | 'support_team'> {
     tenants?: { name?: string | null } | { name?: string | null }[] | null;
     support_contacts?: SupportContact | SupportContact[] | null;
     ai_ticket_insights?: AiTicketInsight | AiTicketInsight[] | null;
+    assignee?: HelpdeskAgentOption | HelpdeskAgentOption[] | null;
+    support_team?: HelpdeskTeamOption | HelpdeskTeamOption[] | null;
 }
 
 interface TicketMessagePreview {
@@ -435,14 +478,17 @@ function normalizeMessageAttachments(value: unknown): MessageAttachment[] {
         .filter((attachment) => Boolean(attachment.name || attachment.path || attachment.signed_url));
 }
 
-function sanitizeAttachmentFileName(fileName: string) {
-    const cleaned = fileName.trim().replace(/[^\w.\-() ]+/g, '_');
-    return cleaned || 'imagen.png';
+function getMessageDeliveryRecipient(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+    const recipient = (value as Record<string, unknown>).to;
+    return typeof recipient === 'string' ? recipient : '';
 }
 
-function buildOutboundAttachmentPath(ticketId: string, fileName: string) {
-    const extension = fileName.includes('.') ? fileName.split('.').pop() : 'png';
-    return `tickets/${ticketId}/outbound/${crypto.randomUUID()}.${extension}`;
+function parseEmailList(value: string) {
+    return Array.from(new Set(value
+        .split(/[;,\s]+/)
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))));
 }
 
 function formatAttachmentSize(sizeBytes?: number) {
@@ -542,7 +588,26 @@ function buildContextualFallbackDraft(ticket: Ticket, messages: Message[]) {
 const SupportCommandCenter: React.FC = () => {
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+    const [agents, setAgents] = useState<HelpdeskAgentOption[]>([]);
+    const [teams, setTeams] = useState<HelpdeskTeamOption[]>([]);
+    const [replyTemplates, setReplyTemplates] = useState<HelpdeskReplyTemplate[]>([]);
+    const [searchInput, setSearchInput] = useState('');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
+    const [isRefreshingTickets, setIsRefreshingTickets] = useState(false);
+    const [refreshVersion, setRefreshVersion] = useState(0);
     const [replyText, setReplyText] = useState('');
+    const [replyMode, setReplyMode] = useState<HelpdeskReplyMode>('reply');
+    const [ccText, setCcText] = useState('');
+    const [bccText, setBccText] = useState('');
+    const [forwardTo, setForwardTo] = useState('');
+    const [isPrivateNote, setIsPrivateNote] = useState(false);
+    const [showReplyOptions, setShowReplyOptions] = useState(false);
+    const [workspacePresence, setWorkspacePresence] = useState<HelpdeskPresence[]>([]);
+    const [currentActorId, setCurrentActorId] = useState<string | null>(null);
+    const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [bulkActionError, setBulkActionError] = useState<string | null>(null);
+    const [tagInput, setTagInput] = useState('');
     const [pendingReplyAttachments, setPendingReplyAttachments] = useState<PendingReplyAttachment[]>([]);
     const [replyAttachmentError, setReplyAttachmentError] = useState<string | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
@@ -565,6 +630,7 @@ const SupportCommandCenter: React.FC = () => {
     const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
     const replyFileInputRef = useRef<HTMLInputElement>(null);
     const pendingReplyAttachmentsRef = useRef<PendingReplyAttachment[]>([]);
+    const searchDebounceRef = useRef<number | undefined>(undefined);
 
     const selectedTicketId = selectedTicket?.id;
 
@@ -612,110 +678,54 @@ const SupportCommandCenter: React.FC = () => {
         let realtimeRefreshTimer: number | undefined;
 
         const fetchTickets = async () => {
-            const { data, error } = await supabaseAdmin.from('support_tickets')
-                .select(`
-                    id,
-                    ticket_number,
-                    tenant_id,
-                    category,
-                    priority,
-                    status,
-                    resolution_status,
-                    customer_rating,
-                    subject,
-                    source,
-                    assignment_status,
-                    external_sender_email,
-                    technical_context,
-                    created_at,
-                    tenants (
-                        name
-                    ),
-                    support_contacts (
-                        id,
-                        email,
-                        name,
-                        company_name,
-                        phone,
-                        metadata,
-                        tenant_id
-                    ),
-                    ai_ticket_insights (
-                        sentiment,
-                        sentiment_score,
-                        summary,
-                        suggested_replies,
-                        confidence,
-                        next_best_action,
-                        urgency_reason,
-                        affected_module,
-                        detected_contact_name,
-                        detected_company,
-                        detected_phone,
-                        detected_identifiers,
-                        incident_fingerprint,
-                        duplicate_signal,
-                        ai_tags
-                    )
-                `)
-                .order('created_at', { ascending: false });
+            setIsRefreshingTickets(true);
+            try {
+                const response = await fetchHelpdeskBootstrap(searchQuery);
+                if (!mounted) return;
 
-            if (error) {
-                console.error('Admin: error fetching support tickets', error);
-                return;
-            }
+                const mappedTickets = (response.tickets as TicketRow[]).map((ticket) => {
+                    const tenant = normalizeRelation(ticket.tenants);
+                    const contact = normalizeRelation(ticket.support_contacts);
+                    const insight = normalizeRelation(ticket.ai_ticket_insights);
+                    const assignee = normalizeRelation(ticket.assignee);
+                    const supportTeam = normalizeRelation(ticket.support_team);
+                    return {
+                        ...ticket,
+                        source: ticket.source || 'POS',
+                        tenant_name: tenant?.name || 'Sin tenant asignado',
+                        contact,
+                        insight,
+                        assignee,
+                        support_team: supportTeam,
+                        technical_context: ticket.technical_context || {},
+                    };
+                });
 
-            if (!mounted) return;
-
-            const mappedTickets = ((data ?? []) as TicketRow[]).map((ticket) => {
-                const tenant = normalizeRelation(ticket.tenants);
-                const contact = normalizeRelation(ticket.support_contacts);
-                const insight = normalizeRelation(ticket.ai_ticket_insights);
-
-                return {
-                    ...ticket,
-                    source: ticket.source || 'POS',
-                    tenant_name: tenant?.name || 'Sin tenant asignado',
-                    contact,
-                    insight,
-                    technical_context: ticket.technical_context || {},
-                };
-            });
-
-            setTickets(mappedTickets);
-            setSelectedTicket((current) => {
-                if (!current) return current;
-                return mappedTickets.find((ticket) => ticket.id === current.id) ?? current;
-            });
-
-            const ticketIds = mappedTickets.map((ticket) => ticket.id);
-            if (ticketIds.length > 0) {
-                const { data: messageRows, error: previewError } = await supabaseAdmin
-                    .from('ticket_messages')
-                    .select('ticket_id, message, sender_type, created_at')
-                    .in('ticket_id', ticketIds)
-                    .order('created_at', { ascending: false });
-
-                if (previewError) {
-                    console.error('Admin: error fetching ticket previews', previewError);
-                } else if (mounted) {
-                    setLastMessageByTicketId(buildLatestMessagePreviewMap(messageRows ?? []));
-                }
-            } else if (mounted) {
-                setLastMessageByTicketId({});
+                setTickets(mappedTickets);
+                setAgents(response.agents);
+                setTeams(response.teams);
+                setReplyTemplates(response.templates);
+                setLastMessageByTicketId(buildLatestMessagePreviewMap(response.previews as Array<{ ticket_id?: string | null; message?: string | null; sender_type?: string | null; created_at?: string | null }>));
+                setSelectedTicket((current) => current
+                    ? mappedTickets.find((ticket) => ticket.id === current.id) ?? null
+                    : current);
+                setSelectedTicketIds((current) => current.filter((id) => mappedTickets.some((ticket) => ticket.id === id)));
+            } catch (error) {
+                console.error('Admin: error fetching secure helpdesk workspace', error);
+                if (mounted) setBulkActionError(error instanceof Error ? error.message : 'No se pudo cargar el HelpDesk.');
+            } finally {
+                if (mounted) setIsRefreshingTickets(false);
             }
         };
 
         const scheduleTicketsRefresh = () => {
             window.clearTimeout(realtimeRefreshTimer);
-            realtimeRefreshTimer = window.setTimeout(() => {
-                void fetchTickets();
-            }, 350);
+            realtimeRefreshTimer = window.setTimeout(() => void fetchTickets(), 350);
         };
 
-        fetchTickets();
+        void fetchTickets();
 
-        const channel = supabaseAdmin.channel('support_tickets_global')
+        const channel = supabase.channel('support_tickets_global_secure')
             .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_tickets' }, scheduleTicketsRefresh)
             .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_contacts' }, scheduleTicketsRefresh)
             .on('postgres_changes', { event: '*', schema: 'landlord', table: 'ai_ticket_insights' }, scheduleTicketsRefresh)
@@ -724,12 +734,21 @@ const SupportCommandCenter: React.FC = () => {
         return () => {
             mounted = false;
             window.clearTimeout(realtimeRefreshTimer);
-            supabaseAdmin.removeChannel(channel);
+            void supabase.removeChannel(channel);
         };
-    }, []);
+    }, [refreshVersion, searchQuery]);
+
+    useEffect(() => {
+        window.clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = window.setTimeout(() => setSearchQuery(searchInput.trim()), 350);
+        return () => window.clearTimeout(searchDebounceRef.current);
+    }, [searchInput]);
 
     useEffect(() => {
         if (!selectedTicketId) {
+            setMessages([]);
+            setWorkspacePresence([]);
+            setCurrentActorId(null);
             return;
         }
 
@@ -737,72 +756,90 @@ const SupportCommandCenter: React.FC = () => {
 
         const fetchMessages = async () => {
             try {
-                const response = await fetch(`${supabaseProjectUrl}/functions/v1/get-support-messages`, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ ticket_id: selectedTicketId }),
-                });
-
-                if (response.ok) {
-                    const payload = await response.json() as { messages?: Message[] };
-                    if (mounted) setMessages(payload.messages ?? []);
-                    return;
-                }
-
-                console.error('Admin: error fetching signed support messages', response.statusText);
+                const response = await fetchSupportMessages(selectedTicketId);
+                if (mounted) setMessages((response.messages ?? []) as Message[]);
             } catch (error) {
-                console.error('Admin: unexpected error fetching signed support messages', error);
+                console.error('Admin: error fetching support messages', error);
+                if (mounted) setReplyAttachmentError(error instanceof Error ? error.message : 'No se pudo cargar la conversación.');
             }
-
-            const { data, error } = await supabaseAdmin.from('ticket_messages')
-                .select('*')
-                .eq('ticket_id', selectedTicketId)
-                .order('created_at', { ascending: true });
-
-            if (error) {
-                console.error('Admin: error fetching ticket messages', error);
-                return;
-            }
-
-            if (mounted) setMessages((data ?? []) as Message[]);
         };
 
-        fetchMessages();
+        void fetchMessages();
 
-        const msgChannel = supabaseAdmin.channel(`support_messages_${selectedTicketId}`)
+        const msgChannel = supabase.channel(`support_messages_secure_${selectedTicketId}`)
             .on('postgres_changes', {
-                event: 'INSERT',
+                event: '*',
                 schema: 'landlord',
                 table: 'ticket_messages',
                 filter: `ticket_id=eq.${selectedTicketId}`,
-            }, (payload) => {
-                if (mounted) {
-                    const nextMessage = payload.new as Message;
-                    if (normalizeMessageAttachments(nextMessage.attachments).length) {
-                        void fetchMessages();
-                        return;
-                    }
-                    setMessages((previous) => [...previous, nextMessage]);
-                    setLastMessageByTicketId((current) => ({
-                        ...current,
-                        [selectedTicketId]: {
-                            message: nextMessage.message,
-                            sender_type: nextMessage.sender_type,
-                            created_at: nextMessage.created_at,
-                        },
-                    }));
-                }
-            })
+            }, () => void fetchMessages())
             .subscribe();
 
         return () => {
             mounted = false;
-            supabaseAdmin.removeChannel(msgChannel);
+            void supabase.removeChannel(msgChannel);
         };
     }, [selectedTicketId]);
+
+    useEffect(() => {
+        if (!selectedTicketId) return;
+        let mounted = true;
+
+        const refreshWorkspace = async (restoreDraft: boolean) => {
+            try {
+                const workspace = await loadHelpdeskWorkspace(selectedTicketId);
+                if (!mounted) return;
+                setWorkspacePresence(workspace.presence);
+                setCurrentActorId(workspace.actor_id);
+                if (restoreDraft && workspace.draft) {
+                    setReplyText(workspace.draft.body ?? '');
+                    setReplyMode(workspace.draft.mode ?? 'reply');
+                    setCcText((workspace.draft.cc ?? []).join(', '));
+                    setBccText((workspace.draft.bcc ?? []).join(', '));
+                    setForwardTo(workspace.draft.forward_to ?? '');
+                    setDraftStatus('saved');
+                }
+            } catch (error) {
+                console.error('Admin: error loading collaborative workspace', error);
+            }
+        };
+
+        void refreshWorkspace(true);
+        const heartbeat = window.setInterval(async () => {
+            try {
+                await heartbeatHelpdeskTicket(selectedTicketId);
+                await refreshWorkspace(false);
+            } catch (error) {
+                console.error('Admin: helpdesk heartbeat failed', error);
+            }
+        }, 15_000);
+
+        return () => {
+            mounted = false;
+            window.clearInterval(heartbeat);
+        };
+    }, [selectedTicketId]);
+
+    useEffect(() => {
+        if (!selectedTicketId) return;
+        const timer = window.setTimeout(async () => {
+            setDraftStatus('saving');
+            try {
+                await saveHelpdeskDraft(selectedTicketId, {
+                    body: replyText,
+                    mode: replyMode,
+                    cc: parseEmailList(ccText),
+                    bcc: parseEmailList(bccText),
+                    forwardTo,
+                });
+                setDraftStatus('saved');
+            } catch (error) {
+                console.error('Admin: error saving helpdesk draft', error);
+                setDraftStatus('error');
+            }
+        }, 900);
+        return () => window.clearTimeout(timer);
+    }, [bccText, ccText, forwardTo, replyMode, replyText, selectedTicketId]);
 
     const ticketStats = useMemo(() => {
         return {
@@ -933,34 +970,7 @@ const SupportCommandCenter: React.FC = () => {
     };
 
     const uploadPendingReplyAttachments = async (ticketId: string) => {
-        const uploaded: MessageAttachment[] = [];
-
-        for (const pending of pendingReplyAttachments) {
-            const safeName = sanitizeAttachmentFileName(pending.file.name);
-            const path = buildOutboundAttachmentPath(ticketId, safeName);
-            const { error } = await supabaseAdmin.storage
-                .from(HELPDESK_ATTACHMENTS_BUCKET)
-                .upload(path, pending.file, {
-                    contentType: pending.file.type,
-                    upsert: false,
-                });
-
-            if (error) {
-                throw new Error(`No se pudo subir ${safeName}: ${error.message}`);
-            }
-
-            uploaded.push({
-                id: pending.id,
-                name: safeName,
-                mime_type: pending.file.type,
-                size_bytes: pending.file.size,
-                bucket: HELPDESK_ATTACHMENTS_BUCKET,
-                path,
-                uploaded_at: new Date().toISOString(),
-            });
-        }
-
-        return uploaded;
+        return uploadHelpdeskAttachments(ticketId, pendingReplyAttachments.map((pending) => pending.file));
     };
 
     const handleSendReply = async () => {
@@ -978,62 +988,36 @@ const SupportCommandCenter: React.FC = () => {
         setReplyAttachmentError(null);
 
         try {
+            if (isPrivateNote && hasAttachments) {
+                throw new Error('Las notas internas no admiten adjuntos por ahora.');
+            }
             const uploadedAttachments = hasAttachments
                 ? await uploadPendingReplyAttachments(selectedTicket.id)
                 : [];
 
-            if (recipientEmail) {
-                const response = await fetch(`${supabaseProjectUrl}/functions/v1/send-support-reply`, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        ticket_id: selectedTicket.id,
-                        message: messageText,
-                        attachments: uploadedAttachments,
-                    }),
+            if (isPrivateNote) {
+                await addPrivateHelpdeskNote(selectedTicket.id, messageText);
+            } else if (recipientEmail || replyMode === 'forward') {
+                await sendHelpdeskReply({
+                    ticketId: selectedTicket.id,
+                    message: messageText,
+                    attachments: uploadedAttachments,
+                    mode: replyMode,
+                    cc: parseEmailList(ccText),
+                    bcc: parseEmailList(bccText),
+                    forwardTo,
                 });
-
-                if (!response.ok) {
-                    const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
-                    console.error('Admin: error notifying support reply', payload ?? response.statusText);
-                    setReplyText(savedReplyText);
-                    setPendingReplyAttachments(savedAttachments);
-                    setReplyAttachmentError(payload?.detail || payload?.error || 'No se pudo enviar la respuesta con adjuntos.');
-                    return;
-                }
-
-                clearPendingReplyAttachments();
-                return;
+            } else {
+                await addPublicHelpdeskReply(selectedTicket.id, messageText, uploadedAttachments);
             }
-
-            const { error } = await supabaseAdmin.from('ticket_messages').insert({
-                ticket_id: selectedTicket.id,
-                message: messageText,
-                sender_type: 'Admin',
-                attachments: {
-                    channel: 'realtime',
-                    notify_client: true,
-                    delivery_status: 'inserted',
-                    files: uploadedAttachments,
-                    notification: {
-                        play_sound: true,
-                        sound: 'support-reply',
-                    },
-                },
-            });
-
-            if (error) {
-                console.error('Admin: error sending support reply', error);
-                setReplyText(savedReplyText);
-                setPendingReplyAttachments(savedAttachments);
-                setReplyAttachmentError(error.message);
-                return;
-            }
-
             clearPendingReplyAttachments();
+            setCcText('');
+            setBccText('');
+            setForwardTo('');
+            setDraftStatus('idle');
+            const response = await fetchSupportMessages(selectedTicket.id);
+            setMessages((response.messages ?? []) as Message[]);
+            setRefreshVersion((value) => value + 1);
         } catch (error) {
             console.error('Admin: unexpected error sending support reply', error);
             setReplyText(savedReplyText);
@@ -1050,20 +1034,7 @@ const SupportCommandCenter: React.FC = () => {
         if (newStatus === 'Resuelto') {
             setIsResolvingTicket(true);
             try {
-                const response = await fetch(`${supabaseProjectUrl}/functions/v1/resolve-support-ticket`, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${supabaseServiceRoleKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ ticket_id: selectedTicket.id }),
-                });
-
-                if (!response.ok) {
-                    const payload = await response.json().catch(() => null) as { detail?: string; error?: string } | null;
-                    console.error('Admin: error resolving support ticket', payload ?? response.statusText);
-                    return;
-                }
+                await resolveHelpdeskTicket(selectedTicket.id);
 
                 setSelectedTicket({
                     ...selectedTicket,
@@ -1079,16 +1050,12 @@ const SupportCommandCenter: React.FC = () => {
             return;
         }
 
-        const { error } = await supabaseAdmin
-            .from('support_tickets')
-            .update({
+        try {
+            await updateHelpdeskTicket(selectedTicket.id, {
                 status: newStatus,
                 resolution_status: newStatus === 'En_Proceso' ? 'reopened' : 'open',
-                resolution_feedback_token_hash: null,
-            })
-            .eq('id', selectedTicket.id);
-
-        if (error) {
+            });
+        } catch (error) {
             console.error('Admin: error updating ticket status', error);
             return;
         }
@@ -1122,61 +1089,29 @@ const SupportCommandCenter: React.FC = () => {
         setIsCreatingContact(true);
 
         const contactPayload = {
+            contact_id: selectedTicket.contact?.id ?? null,
             email: contactForm.email.trim().toLowerCase(),
-            name: contactForm.name.trim() || null,
-            phone: contactForm.phone.trim() || null,
-            company_name: contactForm.companyName.trim() || null,
-            source: 'Email',
-            metadata: {
-                ...(selectedTicket.contact?.metadata || {}),
-                sla: contactForm.sla,
-                converted_from: 'command_center',
-                converted_from_ticket_id: selectedTicket.id,
-                converted_at: new Date().toISOString(),
-            },
+            name: contactForm.name.trim(),
+            phone: contactForm.phone.trim(),
+            company_name: contactForm.companyName.trim(),
+            sla: contactForm.sla,
         };
 
-        const contactRequest = selectedTicket.contact?.id
-            ? supabaseAdmin
-                .from('support_contacts')
-                .update(contactPayload)
-                .eq('id', selectedTicket.contact.id)
-                .select('id, email, name, company_name, phone, metadata, tenant_id')
-                .single()
-            : supabaseAdmin
-                .from('support_contacts')
-                .upsert(contactPayload, { onConflict: 'email' })
-                .select('id, email, name, company_name, phone, metadata, tenant_id')
-                .single();
-
-        const { data: contact, error: contactError } = await contactRequest;
-
-        if (contactError) {
-            console.error('Admin: error creating support contact', contactError);
-            setIsCreatingContact(false);
-            return;
-        }
-
-        const { error: ticketError } = await supabaseAdmin
-            .from('support_tickets')
-            .update({
-                contact_id: contact.id,
-                assignment_status: selectedTicket.tenant_id || contact.tenant_id ? 'assigned' : 'needs_assignment',
-            })
-            .eq('id', selectedTicket.id);
-
-        if (ticketError) {
-            console.error('Admin: error linking support contact', ticketError);
-        } else {
+        try {
+            const response = await saveHelpdeskContact(selectedTicket.id, contactPayload);
+            const contact = response.contact as unknown as SupportContact;
             setSelectedTicket({
                 ...selectedTicket,
                 contact,
-                assignment_status: selectedTicket.tenant_id || contact.tenant_id ? 'assigned' : 'needs_assignment',
+                assignment_status: response.assignment_status,
             });
             setIsContactModalOpen(false);
+            setRefreshVersion((value) => value + 1);
+        } catch (error) {
+            console.error('Admin: error creating support contact', error);
+        } finally {
+            setIsCreatingContact(false);
         }
-
-        setIsCreatingContact(false);
     };
 
     const generateDraft = async () => {
@@ -1186,19 +1121,9 @@ const SupportCommandCenter: React.FC = () => {
         setIsGeneratingDraft(true);
 
         try {
-            const response = await fetch(`${supabaseProjectUrl}/functions/v1/generate-support-draft`, {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${supabaseServiceRoleKey}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ ticket_id: selectedTicket.id }),
-            });
-
-            const payload = await response.json().catch(() => null) as DraftResponse | null;
-
-            if (!response.ok || !payload?.draft) {
-                console.error('Admin: error generating support draft', payload ?? response.statusText);
+            const payload = await generateHelpdeskDraft(selectedTicket.id);
+            if (!payload.draft) {
+                console.error('Admin: error generating support draft', payload);
                 setReplyText(fallbackDraft);
                 return;
             }
@@ -1260,99 +1185,122 @@ const SupportCommandCenter: React.FC = () => {
 
         const duplicateGroupKey = normalizeDuplicateKey(`${selectedTicket.id}-${title}`);
         const payload = {
-            ticket_id: selectedTicket.id,
-            tenant_id: selectedTicket.tenant_id,
-            contact_id: selectedTicket.contact?.id,
-            source: 'HelpDesk manual',
-            status: 'Nueva',
             priority: improvementDraft.priority,
             title,
-            request_text: requestedCapability,
-            ai_summary: null,
             requested_capability: requestedCapability,
             affected_module: affectedModule || selectedTicket.insight?.affected_module || selectedTicket.category,
             customer_impact: customerImpact || 'Registrada manualmente desde HelpDesk para evaluacion de producto.',
             duplicate_group_key: duplicateGroupKey,
-            ai_confidence: null,
-            detected_by_ai: false,
         };
 
-        let improvementId: string | null = null;
-        let alreadyExisted = false;
-
-        const { data: existing, error: existingError } = await supabaseAdmin
-            .from('customer_improvement_requests')
-            .select('id')
-            .eq('ticket_id', selectedTicket.id)
-            .eq('duplicate_group_key', duplicateGroupKey)
-            .maybeSingle();
-
-        if (existingError) {
-            console.error('Admin: error checking duplicate customer improvement', existingError);
-            setImprovementError('No se pudo validar si la mejora ya existia.');
-            setIsSavingImprovement(false);
-            return;
-        }
-
-        if (existing?.id) {
-            improvementId = existing.id;
-            alreadyExisted = true;
-        } else {
-            const { data: inserted, error: insertError } = await supabaseAdmin
-                .from('customer_improvement_requests')
-                .insert(payload)
-                .select('id')
-                .single();
-
-            if (insertError) {
-                console.error('Admin: error creating customer improvement', insertError);
-                setImprovementError('No se pudo registrar la mejora solicitada.');
-                setIsSavingImprovement(false);
-                return;
-            }
-
-            improvementId = inserted.id;
-        }
-
-        const message = alreadyExisted
-            ? `Confirmamos que tu solicitud "${title}" ya estaba registrada como mejora funcional para evaluacion del equipo de producto. Te avisaremos cuando tengamos una decision o avance.`
-            : `Registramos tu solicitud "${title}" como mejora funcional para evaluacion del equipo de producto. Te avisaremos cuando tengamos una decision o avance.`;
-
-        const { error: messageError } = await supabaseAdmin.from('ticket_messages').insert({
-            ticket_id: selectedTicket.id,
-            message,
-            sender_type: 'Admin',
-            attachments: {
-                channel: 'customer_improvement',
-                event: alreadyExisted ? 'customer_improvement_already_registered' : 'customer_improvement_registered',
-                improvement_request_id: improvementId,
-                manual: true,
-                notify_client: true,
-                notification: {
-                    badge: true,
-                    increment_unread: true,
-                    play_sound: true,
-                    sound: 'support-improvement-registered',
-                    title: 'Solicitud registrada como mejora',
-                    body: message,
-                },
-                client_alert: {
-                    badge: true,
-                    increment_unread: true,
-                },
-            },
-        });
-
-        if (messageError) {
-            console.error('Admin: error notifying customer improvement', messageError);
-            setImprovementNotice('La mejora fue registrada, pero no se pudo insertar la notificacion en el ticket.');
-        } else {
-            setImprovementNotice(alreadyExisted ? 'La mejora ya existia; se notifico al cliente.' : 'Mejora registrada y cliente notificado.');
+        try {
+            const result = await createHelpdeskImprovement(selectedTicket.id, payload);
+            setImprovementNotice(result.already_existed ? 'La mejora ya existia; se notifico al cliente.' : 'Mejora registrada y cliente notificado.');
             setIsImprovementModalOpen(false);
             setImprovementDraft(initialImprovementDraft);
+        } catch (error) {
+            console.error('Admin: error creating customer improvement', error);
+            setImprovementError(error instanceof Error ? error.message : 'No se pudo registrar la mejora solicitada.');
+        } finally {
+            setIsSavingImprovement(false);
         }
+    };
 
-        setIsSavingImprovement(false);
+    const refreshTickets = () => setRefreshVersion((value) => value + 1);
+
+    const updateSelectedTicketFields = async (fields: Record<string, unknown>) => {
+        if (!selectedTicket) return;
+        setBulkActionError(null);
+        try {
+            await updateHelpdeskTicket(selectedTicket.id, fields);
+            setSelectedTicket((current) => current ? { ...current, ...fields } as Ticket : current);
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo actualizar el ticket.');
+        }
+    };
+
+    const runBulkUpdate = async (fields: Record<string, unknown>) => {
+        if (!selectedTicketIds.length) return;
+        setBulkActionError(null);
+        try {
+            await bulkUpdateHelpdeskTickets(selectedTicketIds, fields);
+            setSelectedTicketIds([]);
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo completar la acción masiva.');
+        }
+    };
+
+    const mergeSelectedTickets = async () => {
+        if (selectedTicketIds.length < 2) return;
+        const targetTicketId = selectedTicketIds.includes(selectedTicket?.id ?? '')
+            ? selectedTicket!.id
+            : selectedTicketIds[0];
+        if (!window.confirm(`Se conservará ${tickets.find((ticket) => ticket.id === targetTicketId)?.ticket_number ?? targetTicketId} y se fusionarán ${selectedTicketIds.length - 1} duplicados. ¿Continuar?`)) return;
+        setBulkActionError(null);
+        try {
+            await mergeHelpdeskTickets(targetTicketId, selectedTicketIds);
+            setSelectedTicketIds([]);
+            setSelectedTicket(tickets.find((ticket) => ticket.id === targetTicketId) ?? null);
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudieron fusionar los tickets.');
+        }
+    };
+
+    const addTagToSelectedTicket = async () => {
+        const tag = tagInput.trim().toLowerCase().replace(/[^a-z0-9áéíóúüñ_-]+/gi, '-');
+        if (!selectedTicket || !tag) return;
+        const tags = Array.from(new Set([...(selectedTicket.tags ?? []), tag]));
+        await updateSelectedTicketFields({ tags });
+        setTagInput('');
+    };
+
+    const createPreventiveTicket = async () => {
+        if (!selectedTicket) return;
+        try {
+            await createPreventiveHelpdeskTicket({
+                subject: `Seguimiento preventivo: ${selectedTicket.subject}`,
+                tenantId: selectedTicket.tenant_id,
+                contactId: selectedTicket.contact?.id,
+                priority: selectedTicket.priority === 'Critica' ? 'Alta' : 'Media',
+                category: selectedTicket.category,
+            });
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo crear el ticket preventivo.');
+        }
+    };
+
+    const retryDelivery = async (message: Message) => {
+        if (!selectedTicket || !['failed', 'bounced'].includes(message.delivery_status ?? '')) return;
+        setReplyAttachmentError(null);
+        try {
+            const retryMode: HelpdeskReplyMode = message.message_kind === 'forward' || message.message_kind === 'reply_all'
+                ? message.message_kind
+                : 'reply';
+            await sendHelpdeskReply({
+                ticketId: selectedTicket.id,
+                message: message.message,
+                attachments: normalizeMessageAttachments(message.attachments).filter((attachment): attachment is MessageAttachment & Required<Pick<MessageAttachment, 'id' | 'name' | 'mime_type' | 'size_bytes' | 'bucket' | 'path' | 'uploaded_at'>> => Boolean(attachment.id && attachment.name && attachment.mime_type && attachment.size_bytes && attachment.bucket && attachment.path && attachment.uploaded_at)),
+                mode: retryMode,
+                cc: message.cc ?? [],
+                bcc: message.bcc ?? [],
+                forwardTo: retryMode === 'forward' ? getMessageDeliveryRecipient(message.attachments) : '',
+                messageId: message.id,
+            });
+            const response = await fetchSupportMessages(selectedTicket.id);
+            setMessages((response.messages ?? []) as Message[]);
+        } catch (error) {
+            setReplyAttachmentError(error instanceof Error ? error.message : 'No se pudo reintentar la entrega.');
+        }
+    };
+
+    const applyReplyTemplate = (templateId: string) => {
+        const template = replyTemplates.find((item) => item.id === templateId);
+        if (!template || !selectedTicket) return;
+        setReplyText(template.body.replaceAll('{{cliente}}', getContactLabel(selectedTicket)));
     };
 
     return (
@@ -1370,6 +1318,18 @@ const SupportCommandCenter: React.FC = () => {
                     </div>
 
                     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/90 p-3">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+                            <input
+                                value={searchInput}
+                                onChange={(event) => setSearchInput(event.target.value)}
+                                placeholder="Buscar ticket, cliente o mensaje"
+                                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                            />
+                            <button type="button" onClick={refreshTickets} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Actualizar tickets">
+                                <RefreshCw size={14} className={isRefreshingTickets ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
                         <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
                             <Filter size={12} />
                             Filtros
@@ -1423,8 +1383,26 @@ const SupportCommandCenter: React.FC = () => {
                             Mostrando <span className="font-bold text-slate-800">{filteredTickets.length}</span> de{' '}
                             <span className="font-bold text-slate-800">{tickets.length}</span> tickets
                         </p>
+                        {bulkActionError && <p className="text-xs font-medium text-red-600">{bulkActionError}</p>}
                     </div>
                 </div>
+
+                {selectedTicketIds.length > 0 && (
+                    <div className="shrink-0 border-b border-blue-200 bg-blue-50 p-3">
+                        <div className="mb-2 flex items-center justify-between text-xs font-bold text-blue-800">
+                            <span>{selectedTicketIds.length} seleccionados</span>
+                            <button type="button" onClick={() => setSelectedTicketIds([])} className="text-blue-600 hover:text-blue-900">Limpiar</button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                            <button type="button" onClick={() => void runBulkUpdate({ status: 'En_Proceso' })} className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-[11px] font-bold text-blue-700">En proceso</button>
+                            <button type="button" onClick={() => void runBulkUpdate({ status: 'Cerrado' })} className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-[11px] font-bold text-blue-700">Cerrar</button>
+                            <button type="button" onClick={() => void runBulkUpdate({ assignment_status: 'spam' })} className="rounded-lg border border-red-200 bg-white px-2 py-1.5 text-[11px] font-bold text-red-700">Spam</button>
+                        </div>
+                        <button type="button" disabled={selectedTicketIds.length < 2} onClick={() => void mergeSelectedTickets()} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-700 px-2 py-1.5 text-xs font-bold text-white disabled:opacity-40">
+                            <GitMerge size={13} /> Fusionar duplicados
+                        </button>
+                    </div>
+                )}
 
                 <div className="min-h-0 flex-1 overflow-y-auto p-3">
                     {filteredTickets.length === 0 ? (
@@ -1452,6 +1430,14 @@ const SupportCommandCenter: React.FC = () => {
                             >
                                 <div className="mb-2 flex items-center justify-between gap-2">
                                     <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedTicketIds.includes(ticket.id)}
+                                            onClick={(event) => event.stopPropagation()}
+                                            onChange={(event) => setSelectedTicketIds((current) => event.target.checked ? [...current, ticket.id] : current.filter((id) => id !== ticket.id))}
+                                            aria-label={`Seleccionar ${getTicketNumberLabel(ticket)}`}
+                                            className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                                        />
                                         <span className={`shrink-0 text-xs font-black ${closed && emphasizeClosed && !urgent ? 'text-slate-500' : 'text-slate-500'}`}>
                                             {getTicketNumberLabel(ticket)}
                                         </span>
@@ -1590,15 +1576,24 @@ const SupportCommandCenter: React.FC = () => {
                                 const attachments = normalizeMessageAttachments(message.attachments);
                                 const isAdminMessage = message.sender_type === 'Admin';
                                 const isSystemMessage = message.sender_type === 'System';
+                                const isPrivateMessage = message.visibility === 'private';
 
                                 return (
                                     <div key={message.id} className={`flex ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}>
-                                        <div className={`max-w-[min(72%,640px)] rounded-2xl px-4 py-3 text-sm shadow-sm ${isAdminMessage ? 'rounded-br-md bg-blue-600 text-white' : isSystemMessage ? 'max-w-xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
+                                        <div className={`max-w-[min(72%,640px)] rounded-2xl px-4 py-3 text-sm shadow-sm ${isPrivateMessage ? 'rounded-br-md border border-amber-300 bg-amber-50 text-amber-950' : isAdminMessage ? 'rounded-br-md bg-blue-600 text-white' : isSystemMessage ? 'max-w-xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
                                             <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide opacity-75">
-                                                <span>{isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}</span>
+                                                <span>{isPrivateMessage ? 'Nota interna' : isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}</span>
                                                 <span className="font-medium normal-case tracking-normal">{formatTime(message.created_at)}</span>
                                             </div>
                                             <p className="whitespace-pre-wrap break-words leading-relaxed">{message.message}</p>
+
+                                            {isAdminMessage && !isPrivateMessage && message.delivery_status && (
+                                                <div className={`mt-2 flex items-center justify-end gap-1 text-[10px] font-semibold ${['failed', 'bounced'].includes(message.delivery_status) ? 'text-red-100' : 'opacity-75'}`}>
+                                                    {message.delivery_status === 'sent' || message.delivery_status === 'delivered' ? <CheckCircle2 size={11} /> : ['failed', 'bounced'].includes(message.delivery_status) ? <AlertTriangle size={11} /> : <Clock3 size={11} />}
+                                                    {message.delivery_status === 'bounced' ? 'Correo rebotado' : message.delivery_status === 'failed' ? 'Falló la entrega' : message.delivery_status === 'delivered' ? 'Entregado' : message.delivery_status === 'queued' ? 'En cola' : 'Enviado'}
+                                                    {['failed', 'bounced'].includes(message.delivery_status) && <button type="button" onClick={() => void retryDelivery(message)} className="ml-1 rounded border border-white/30 px-1.5 py-0.5 hover:bg-white/10">Reintentar</button>}
+                                                </div>
+                                            )}
 
                                             {attachments.length ? (
                                                 <div className="mt-3 grid gap-2">
@@ -1668,6 +1663,35 @@ const SupportCommandCenter: React.FC = () => {
 
                         <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-4">
                             <div className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                                {workspacePresence.some((presence) => presence.admin_user_id !== currentActorId) && (
+                                    <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                                        <Users size={14} />
+                                        {workspacePresence.filter((presence) => presence.admin_user_id !== currentActorId).map((presence) => normalizeRelation(presence.cloud_admin_users)?.full_name ?? 'Otro agente').join(', ')} también está viendo este ticket.
+                                    </div>
+                                )}
+                                <div className="mb-3 flex flex-wrap items-center gap-2">
+                                    <button type="button" onClick={() => { setIsPrivateNote(false); setReplyMode('reply'); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${!isPrivateNote && replyMode === 'reply' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Send size={12} /> Responder</button>
+                                    <button type="button" onClick={() => { setIsPrivateNote(false); setReplyMode('reply_all'); setShowReplyOptions(true); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${!isPrivateNote && replyMode === 'reply_all' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><ReplyAll size={12} /> Responder a todos</button>
+                                    <button type="button" onClick={() => { setIsPrivateNote(false); setReplyMode('forward'); setShowReplyOptions(true); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${replyMode === 'forward' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Forward size={12} /> Reenviar</button>
+                                    <button type="button" onClick={() => { setIsPrivateNote(true); setReplyMode('reply'); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isPrivateNote ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600'}`}><StickyNote size={12} /> Nota interna</button>
+                                    <FileText className="ml-auto text-slate-400" size={14} />
+                                    <select defaultValue="" onChange={(event) => { applyReplyTemplate(event.target.value); event.target.value = ''; }} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600">
+                                        <option value="">Plantilla…</option>
+                                        {replyTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+                                    </select>
+                                </div>
+                                {showReplyOptions && !isPrivateNote && (
+                                    <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                                        {replyMode === 'forward' ? (
+                                            <label className="sm:col-span-2"><span className="mb-1 block text-[10px] font-bold uppercase text-slate-400">Reenviar a</span><input value={forwardTo} onChange={(event) => setForwardTo(event.target.value)} type="email" className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs outline-none focus:border-blue-400" placeholder="persona@empresa.com" /></label>
+                                        ) : (
+                                            <>
+                                                <label><span className="mb-1 block text-[10px] font-bold uppercase text-slate-400">CC</span><input value={ccText} onChange={(event) => setCcText(event.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs outline-none focus:border-blue-400" placeholder="correo1@empresa.com, correo2…" /></label>
+                                                <label><span className="mb-1 block text-[10px] font-bold uppercase text-slate-400">BCC</span><input value={bccText} onChange={(event) => setBccText(event.target.value)} className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs outline-none focus:border-blue-400" /></label>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
                                 {selectedTicket.insight?.suggested_replies?.length ? (
                                     <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
                                         {selectedTicket.insight.suggested_replies.slice(0, 3).map((reply) => (
@@ -1721,13 +1745,13 @@ const SupportCommandCenter: React.FC = () => {
                                     <p className="mb-3 text-xs font-medium text-red-600">{replyAttachmentError}</p>
                                 ) : null}
 
-                                <div className="overflow-hidden rounded-xl border border-slate-300 bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
+                                <div className={`overflow-hidden rounded-xl border bg-white focus-within:ring-2 ${isPrivateNote ? 'border-amber-300 focus-within:border-amber-500 focus-within:ring-amber-200' : 'border-slate-300 focus-within:border-blue-500 focus-within:ring-blue-500/30'}`}>
                                     <textarea
                                         ref={replyTextareaRef}
                                         rows={1}
                                         value={replyText}
                                         onChange={(event) => setReplyText(event.target.value)}
-                                        placeholder="Escribe tu respuesta…"
+                                        placeholder={isPrivateNote ? 'Escribe una nota visible solo para el equipo…' : replyMode === 'forward' ? 'Agrega contexto al reenvío…' : 'Escribe tu respuesta…'}
                                         className="max-h-[240px] min-h-[44px] w-full resize-none overflow-hidden border-0 px-3 py-2.5 text-sm leading-5 outline-none focus:ring-0"
                                     />
                                     <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-2 py-2">
@@ -1751,6 +1775,10 @@ const SupportCommandCenter: React.FC = () => {
                                                 <Wand2 size={14} />
                                                 {isGeneratingDraft ? 'Generando...' : 'Borrador IA'}
                                             </button>
+                                            <span className="hidden items-center gap-1 text-[10px] font-medium text-slate-400 sm:inline-flex">
+                                                {draftStatus === 'saving' ? <Loader2 className="animate-spin" size={11} /> : draftStatus === 'saved' ? <CheckCircle2 size={11} /> : null}
+                                                {draftStatus === 'saving' ? 'Guardando…' : draftStatus === 'saved' ? 'Borrador guardado' : draftStatus === 'error' ? 'Error al guardar' : ''}
+                                            </span>
                                         </div>
                                         <button
                                             type="button"
@@ -1758,7 +1786,7 @@ const SupportCommandCenter: React.FC = () => {
                                             disabled={isSendingReply || (!replyText.trim() && pendingReplyAttachments.length === 0)}
                                             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                                         >
-                                            {isSendingReply ? 'Enviando...' : getTicketRecipientEmail(selectedTicket) ? 'Enviar y notificar' : 'Enviar'}
+                                            {isSendingReply ? 'Enviando...' : isPrivateNote ? 'Guardar nota' : replyMode === 'forward' ? 'Reenviar' : getTicketRecipientEmail(selectedTicket) ? 'Enviar y notificar' : 'Enviar'}
                                             <Send size={14} />
                                         </button>
                                     </div>
@@ -1782,6 +1810,44 @@ const SupportCommandCenter: React.FC = () => {
                     </div>
 
                     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+                        <section>
+                            <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-500"><Users size={13} /> Asignación</h4>
+                            <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <select
+                                    value={selectedTicket.team_id ?? ''}
+                                    onChange={(event) => void updateSelectedTicketFields({ team_id: event.target.value || null })}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-blue-400"
+                                >
+                                    <option value="">Sin equipo</option>
+                                    {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                                </select>
+                                <select
+                                    value={selectedTicket.assignee_id ?? ''}
+                                    onChange={(event) => void updateSelectedTicketFields({ assignee_id: event.target.value || null, assignment_status: event.target.value ? 'assigned' : 'needs_assignment' })}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-blue-400"
+                                >
+                                    <option value="">Sin agente</option>
+                                    {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.full_name}</option>)}
+                                </select>
+                            </div>
+                        </section>
+
+                        <section>
+                            <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-500"><Tag size={13} /> Etiquetas</h4>
+                            <div className="rounded-lg border border-slate-200 bg-white p-3">
+                                <div className="mb-2 flex flex-wrap gap-1">
+                                    {(selectedTicket.tags ?? []).map((tag) => (
+                                        <button key={tag} type="button" title="Quitar etiqueta" onClick={() => void updateSelectedTicketFields({ tags: (selectedTicket.tags ?? []).filter((item) => item !== tag) })} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600 hover:border-red-200 hover:text-red-600">{tag} ×</button>
+                                    ))}
+                                    {!selectedTicket.tags?.length && <span className="text-xs text-slate-400">Sin etiquetas</span>}
+                                </div>
+                                <div className="flex gap-1.5">
+                                    <input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addTagToSelectedTicket(); } }} placeholder="Agregar etiqueta" className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400" />
+                                    <button type="button" onClick={() => void addTagToSelectedTicket()} className="rounded-lg bg-slate-900 px-2.5 text-xs font-bold text-white">+</button>
+                                </div>
+                            </div>
+                        </section>
+
                         {selectedTicket.insight && (
                             <section>
                                 <h4 className="mb-2 text-xs font-semibold text-slate-500">IA operativa</h4>
@@ -1902,11 +1968,11 @@ const SupportCommandCenter: React.FC = () => {
                                     Marcar como mejora
                                     <Lightbulb size={13} />
                                 </button>
-                                <button className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-600 hover:bg-slate-50">
-                                    Forzar Sync Inbox
-                                    <Link2 size={13} />
+                                <button onClick={refreshTickets} className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-600 hover:bg-slate-50">
+                                    Actualizar bandeja
+                                    <RefreshCw size={13} />
                                 </button>
-                                <button className="flex w-full items-center justify-between rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-left text-xs font-medium text-violet-700 hover:bg-violet-100">
+                                <button onClick={() => void createPreventiveTicket()} className="flex w-full items-center justify-between rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-left text-xs font-medium text-violet-700 hover:bg-violet-100">
                                     Crear ticket preventivo
                                     <Sparkles size={13} />
                                 </button>
