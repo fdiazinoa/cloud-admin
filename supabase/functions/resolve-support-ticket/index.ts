@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.98.0';
+import { createHelpdeskAdminClient, isAuthorizationError, requireHelpdeskActor } from '../_shared/helpdesk-auth.ts';
 
 declare const Deno: {
     env: {
@@ -149,25 +149,7 @@ function buildThreadHeaders(ticket: SupportTicket) {
 }
 
 async function assertAuthorized(request: Request) {
-    const authorization = request.headers.get('authorization') ?? '';
-    const bearerToken = authorization.replace(/^Bearer\s+/i, '').trim();
-    if (!bearerToken) {
-        throw new Error('Unauthorized resolve request');
-    }
-
-    if (bearerToken === getEnv('SUPABASE_SERVICE_ROLE_KEY')) return;
-
-    const authProbe = createClient(getEnv('SUPABASE_URL'), bearerToken, {
-        auth: { autoRefreshToken: false, persistSession: false },
-        db: { schema: 'landlord' },
-    });
-    const { data, error } = await authProbe
-        .from('support_integration_settings')
-        .select('id')
-        .eq('id', 'helpdesk')
-        .maybeSingle();
-
-    if (error || !data) throw new Error('Unauthorized resolve request');
+    return requireHelpdeskActor(request);
 }
 
 function buildFeedbackUrl(ticketId: string, token: string, params: Record<string, string>) {
@@ -278,7 +260,7 @@ Deno.serve(async (request) => {
     }
 
     try {
-        await assertAuthorized(request);
+        const actor = await assertAuthorized(request);
 
         const payload = await request.json() as ResolvePayload;
         const ticketId = payload.ticket_id?.trim();
@@ -287,14 +269,7 @@ Deno.serve(async (request) => {
         }
         const shouldNotifyEmail = payload.notify_email === true;
 
-        const supabase = createClient(
-            getEnv('SUPABASE_URL'),
-            getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-            {
-                auth: { autoRefreshToken: false, persistSession: false },
-                db: { schema: 'landlord' },
-            },
-        );
+        const supabase = createHelpdeskAdminClient();
 
         const { data: ticket, error: ticketError } = await supabase
             .from('support_tickets')
@@ -346,7 +321,13 @@ Deno.serve(async (request) => {
         await supabase.from('ticket_messages').insert({
             ticket_id: supportTicket.id,
             sender_type: 'Admin',
+            sender_id: actor.authUserId,
+            created_by: actor.id,
             message: notificationMessage,
+            visibility: 'public',
+            message_kind: 'resolution_feedback_request',
+            delivery_status: 'internal',
+            delivery_channel: 'in_app',
             attachments: {
                 channel: 'resolution',
                 delivery_status: 'in_app',
@@ -439,8 +420,8 @@ Deno.serve(async (request) => {
         });
     } catch (error) {
         return json({
-            error: 'Could not resolve support ticket',
+            error: isAuthorizationError(error) ? 'unauthorized' : 'Could not resolve support ticket',
             detail: describeError(error),
-        }, 500);
+        }, isAuthorizationError(error) ? 401 : 500);
     }
 });

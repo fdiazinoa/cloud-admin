@@ -189,7 +189,7 @@ function App() {
                     <Route path="tenants" element={<Tenants />} />
                     <Route path="plans" element={<Plans />} />
                     <Route path="pos-apk" element={<PosApkReleases />} />
-                    <Route path="support" element={<SupportCommandCenter />} />
+                    <Route path="support" element={cloudAdminSession.profile?.permissions.support ? <SupportCommandCenter /> : <Navigate to="/" replace />} />
                     <Route path="mejoras" element={<CustomerImprovements />} />
                     <Route path="configuracion" element={<Configuration />} />
                     <Route path="observabilidad" element={<OperationalObservability />} />
