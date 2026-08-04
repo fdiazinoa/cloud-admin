@@ -59,3 +59,7 @@ export const supabaseAdmin = createClient(supabaseProjectUrl, supabaseServiceRol
     auth: { autoRefreshToken: false, persistSession: false },
     db: { schema: 'landlord' }
 });
+
+export const authorizeAdminRealtime = () => (
+    supabaseAdmin.realtime.setAuth(supabaseServiceRoleKey)
+);
