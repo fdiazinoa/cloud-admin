@@ -21,6 +21,9 @@ verify_jwt = true
 [functions.knowledge-api]
 verify_jwt = true
 
+[functions.calendar-api]
+verify_jwt = true
+
 [functions.process-resend-delivery]
 verify_jwt = false
 
