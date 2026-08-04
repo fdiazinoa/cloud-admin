@@ -1,4 +1,4 @@
-import { createHelpdeskAdminClient, isAuthorizationError, requireHelpdeskActor } from '../_shared/helpdesk-auth.ts';
+import { assertHelpdeskTicketAccess, createHelpdeskAdminClient, isAuthorizationError, requireHelpdeskActor } from '../_shared/helpdesk-auth.ts';
 
 declare const Deno: {
     env: {
@@ -496,7 +496,7 @@ Deno.serve(async (request) => {
     }
 
     try {
-        await assertAuthorized(request);
+        const actor = await assertAuthorized(request);
 
         const payload = await request.json() as DraftPayload;
         const ticketId = payload.ticket_id?.trim();
@@ -505,6 +505,7 @@ Deno.serve(async (request) => {
         }
 
         const supabase = createHelpdeskAdminClient();
+        await assertHelpdeskTicketAccess(supabase, actor, [ticketId]);
 
         const { data: ticket, error: ticketError } = await supabase
             .from('support_tickets')
