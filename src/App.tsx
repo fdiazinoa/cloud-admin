@@ -15,6 +15,7 @@ const SupportCommandCenter = lazy(() => import('./pages/SupportCommandCenter'));
 const CustomerImprovements = lazy(() => import('./pages/CustomerImprovements').then((module) => ({ default: module.CustomerImprovements })));
 const AccessManagement = lazy(() => import('./pages/AccessManagement').then((module) => ({ default: module.AccessManagement })));
 const OperationalObservability = lazy(() => import('./pages/OperationalObservability').then((module) => ({ default: module.OperationalObservability })));
+const KnowledgeCenter = lazy(() => import('./pages/KnowledgeCenter').then((module) => ({ default: module.KnowledgeCenter })));
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -192,6 +193,7 @@ function App() {
                     <Route path="plans" element={<Plans />} />
                     <Route path="pos-apk" element={<PosApkReleases />} />
                     <Route path="support" element={cloudAdminSession.profile?.permissions.support ? <SupportCommandCenter /> : <Navigate to="/" replace />} />
+                    <Route path="conocimiento" element={cloudAdminSession.profile?.permissions.support ? <KnowledgeCenter /> : <Navigate to="/" replace />} />
                     <Route path="mejoras" element={<CustomerImprovements />} />
                     <Route path="configuracion" element={<Configuration />} />
                     <Route path="observabilidad" element={<OperationalObservability />} />
