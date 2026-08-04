@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.98.0';
+import { createHelpdeskAdminClient, isAuthorizationError, requireHelpdeskActor } from '../_shared/helpdesk-auth.ts';
 
 declare const Deno: {
     env: {
@@ -29,6 +29,18 @@ interface MessageRow {
     sender_type: 'Admin' | 'Client' | 'System';
     message: string;
     attachments?: unknown;
+    visibility?: 'public' | 'private';
+    message_kind?: string;
+    delivery_status?: string | null;
+    delivery_channel?: string | null;
+    provider_message_id?: string | null;
+    delivery_attempts?: number;
+    delivery_error?: string | null;
+    delivered_at?: string | null;
+    failed_at?: string | null;
+    cc?: string[];
+    bcc?: string[];
+    created_by?: string | null;
     created_at: string;
 }
 
@@ -53,12 +65,6 @@ function json(body: unknown, status = 200) {
     });
 }
 
-function getEnv(name: string) {
-    const value = Deno.env.get(name);
-    if (!value) throw new Error(`Missing required environment variable: ${name}`);
-    return value;
-}
-
 function describeError(error: unknown) {
     if (error instanceof Error) return error.message;
     if (error && typeof error === 'object') {
@@ -77,25 +83,7 @@ function describeError(error: unknown) {
 }
 
 async function assertAuthorized(request: Request) {
-    const authorization = request.headers.get('authorization') ?? '';
-    const bearerToken = authorization.replace(/^Bearer\s+/i, '').trim();
-    if (!bearerToken) {
-        throw new Error('Unauthorized support messages request');
-    }
-
-    if (bearerToken === getEnv('SUPABASE_SERVICE_ROLE_KEY')) return;
-
-    const authProbe = createClient(getEnv('SUPABASE_URL'), bearerToken, {
-        auth: { autoRefreshToken: false, persistSession: false },
-        db: { schema: 'landlord' },
-    });
-    const { error } = await authProbe
-        .from('support_integration_settings')
-        .select('id')
-        .eq('id', 'helpdesk')
-        .maybeSingle();
-
-    if (error) throw new Error('Unauthorized support messages request');
+    return requireHelpdeskActor(request);
 }
 
 function normalizeAttachments(value: unknown): AttachmentMetadata[] {
@@ -116,7 +104,7 @@ function normalizeAttachments(value: unknown): AttachmentMetadata[] {
         .filter((attachment) => Boolean(attachment.name || attachment.path));
 }
 
-async function signAttachments(supabase: ReturnType<typeof createClient>, attachments: AttachmentMetadata[]) {
+async function signAttachments(supabase: ReturnType<typeof createHelpdeskAdminClient>, attachments: AttachmentMetadata[]) {
     return Promise.all(attachments.map(async (attachment) => {
         const mimeTypeAllowed = attachment.mime_type ? ALLOWED_IMAGE_MIME_TYPES.has(attachment.mime_type) : true;
         if (!attachment.bucket || !attachment.path || !mimeTypeAllowed) {
@@ -140,7 +128,7 @@ async function signAttachments(supabase: ReturnType<typeof createClient>, attach
     }));
 }
 
-async function hydrateMessageAttachments(supabase: ReturnType<typeof createClient>, value: unknown) {
+async function hydrateMessageAttachments(supabase: ReturnType<typeof createHelpdeskAdminClient>, value: unknown) {
     if (Array.isArray(value)) {
         return signAttachments(supabase, normalizeAttachments(value));
     }
@@ -181,18 +169,29 @@ Deno.serve(async (request) => {
             return json({ error: 'ticket_id is required' }, 400);
         }
 
-        const supabase = createClient(
-            getEnv('SUPABASE_URL'),
-            getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-            {
-                auth: { autoRefreshToken: false, persistSession: false },
-                db: { schema: 'landlord' },
-            },
-        );
+        const supabase = createHelpdeskAdminClient();
 
         const { data, error } = await supabase
             .from('ticket_messages')
-            .select('id, sender_type, message, attachments, created_at')
+            .select(`
+                id,
+                sender_type,
+                message,
+                attachments,
+                visibility,
+                message_kind,
+                delivery_status,
+                delivery_channel,
+                provider_message_id,
+                delivery_attempts,
+                delivery_error,
+                delivered_at,
+                failed_at,
+                cc,
+                bcc,
+                created_by,
+                created_at
+            `)
             .eq('ticket_id', ticketId)
             .order('created_at', { ascending: true });
 
@@ -206,7 +205,7 @@ Deno.serve(async (request) => {
         return json({ messages });
     } catch (error) {
         const detail = describeError(error);
-        const isUnauthorized = detail.toLowerCase().includes('unauthorized');
+        const isUnauthorized = isAuthorizationError(error);
         console.error('Support messages: request failed', detail);
         return json(
             { error: isUnauthorized ? 'unauthorized' : 'Unable to load support messages', detail },

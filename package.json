@@ -16,6 +16,7 @@
     "test:erp-orphaned-delete-version-trigger": "node scripts/test-erp-orphaned-delete-version-trigger.mjs",
     "cleanup:tenant-pos-registry": "node scripts/cleanup-tenant-pos-registry.mjs",
     "test:terminal-fiscal-config": "node scripts/test-terminal-fiscal-config.mjs",
+    "test:helpdesk-ticketing": "node scripts/test-helpdesk-ticketing-parity.mjs",
     "check:supabase-keys": "node scripts/check-supabase-keys.mjs",
     "verify:supabase-security": "node scripts/verify-supabase-security.mjs"
   },

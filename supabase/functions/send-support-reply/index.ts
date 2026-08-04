@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.98.0';
+import { createHelpdeskAdminClient, isAuthorizationError, requireHelpdeskActor } from '../_shared/helpdesk-auth.ts';
 
 declare const Deno: {
     env: {
@@ -22,6 +22,10 @@ interface ReplyPayload {
     message?: string;
     message_id?: string;
     attachments?: OutboundAttachment[];
+    mode?: 'reply' | 'reply_all' | 'forward';
+    cc?: string[];
+    bcc?: string[];
+    forward_to?: string;
 }
 
 interface ResendAttachment {
@@ -48,6 +52,7 @@ interface SupportTicket {
     subject: string;
     source: string;
     external_sender_email?: string | null;
+    first_response_at?: string | null;
     technical_context?: {
         email_thread_message_ids?: string[];
         resend_message_id?: string;
@@ -59,6 +64,7 @@ interface SupportTicket {
 interface AdminMessage {
     id: string;
     message: string;
+    delivery_attempts?: number | null;
 }
 
 interface IntegrationSettingsRow {
@@ -145,14 +151,25 @@ function formatFromAddress(name: string, email: string) {
     return `${cleanName} <${email.trim().toLowerCase()}>`;
 }
 
-function buildThreadSubject(ticket: SupportTicket) {
+function buildThreadSubject(ticket: SupportTicket, mode: ReplyPayload['mode'] = 'reply') {
     const ticketToken = `[Ticket #${ticket.ticket_number ?? ticket.id.slice(0, 8)}]`;
     const cleanSubject = ticket.subject
         .replace(/^\s*(re|fw|fwd):\s*/i, '')
         .replace(ticketToken, '')
         .trim() || 'Solicitud tecnica';
 
-    return `${ticketToken} Re: ${cleanSubject}`;
+    return `${ticketToken} ${mode === 'forward' ? 'Fwd' : 'Re'}: ${cleanSubject}`;
+}
+
+function normalizeEmail(value: unknown) {
+    if (typeof value !== 'string') return '';
+    const email = value.trim().toLowerCase().slice(0, 254);
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+function normalizeEmails(value: unknown) {
+    if (!Array.isArray(value)) return [];
+    return Array.from(new Set(value.map(normalizeEmail).filter(Boolean))).slice(0, 20);
 }
 
 function normalizeOutboundAttachments(value: unknown): OutboundAttachment[] {
@@ -183,7 +200,7 @@ function bytesToBase64(bytes: Uint8Array) {
 }
 
 async function buildResendAttachments(
-    supabase: ReturnType<typeof createClient>,
+    supabase: ReturnType<typeof createHelpdeskAdminClient>,
     attachments: OutboundAttachment[],
 ): Promise<ResendAttachment[]> {
     const output: ResendAttachment[] = [];
@@ -234,25 +251,7 @@ function buildThreadHeaders(ticket: SupportTicket) {
 }
 
 async function assertAuthorized(request: Request) {
-    const authorization = request.headers.get('authorization') ?? '';
-    const bearerToken = authorization.replace(/^Bearer\s+/i, '').trim();
-    if (!bearerToken) {
-        throw new Error('Unauthorized support reply request');
-    }
-
-    if (bearerToken === getEnv('SUPABASE_SERVICE_ROLE_KEY')) return;
-
-    const authProbe = createClient(getEnv('SUPABASE_URL'), bearerToken, {
-        auth: { autoRefreshToken: false, persistSession: false },
-        db: { schema: 'landlord' },
-    });
-    const { error } = await authProbe
-        .from('support_integration_settings')
-        .select('id')
-        .eq('id', 'helpdesk')
-        .maybeSingle();
-
-    if (error) throw new Error('Unauthorized support reply request');
+    return requireHelpdeskActor(request);
 }
 
 Deno.serve(async (request) => {
@@ -265,12 +264,15 @@ Deno.serve(async (request) => {
     }
 
     try {
-        await assertAuthorized(request);
+        const actor = await assertAuthorized(request);
 
         const payload = await request.json() as ReplyPayload;
         const ticketId = payload.ticket_id?.trim();
         const replyText = payload.message?.trim();
         const existingMessageId = payload.message_id?.trim();
+        const mode = payload.mode === 'forward' || payload.mode === 'reply_all' ? payload.mode : 'reply';
+        const cc = normalizeEmails(payload.cc);
+        const bcc = normalizeEmails(payload.bcc);
 
         const outboundAttachments = normalizeOutboundAttachments(payload.attachments);
 
@@ -278,14 +280,7 @@ Deno.serve(async (request) => {
             return json({ error: 'ticket_id and message, message_id, or attachments are required' }, 400);
         }
 
-        const supabase = createClient(
-            getEnv('SUPABASE_URL'),
-            getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-            {
-                auth: { autoRefreshToken: false, persistSession: false },
-                db: { schema: 'landlord' },
-            },
-        );
+        const supabase = createHelpdeskAdminClient();
 
         const { data: ticket, error: ticketError } = await supabase
             .from('support_tickets')
@@ -295,6 +290,7 @@ Deno.serve(async (request) => {
                 subject,
                 source,
                 external_sender_email,
+                first_response_at,
                 technical_context,
                 support_contacts (
                     email
@@ -307,7 +303,9 @@ Deno.serve(async (request) => {
 
         const supportTicket = ticket as SupportTicket;
         const contact = normalizeRelation(supportTicket.support_contacts);
-        const recipientEmail = contact?.email || supportTicket.external_sender_email;
+        const recipientEmail = mode === 'forward'
+            ? normalizeEmail(payload.forward_to)
+            : normalizeEmail(contact?.email || supportTicket.external_sender_email);
         if (!recipientEmail) {
             return json({ error: 'Ticket does not have a recipient email' }, 400);
         }
@@ -316,7 +314,7 @@ Deno.serve(async (request) => {
         if (existingMessageId) {
             const { data: messageRow, error: messageError } = await supabase
                 .from('ticket_messages')
-                .select('id, message')
+                .select('id, message, delivery_attempts')
                 .eq('id', existingMessageId)
                 .eq('ticket_id', ticketId)
                 .eq('sender_type', 'Admin')
@@ -330,6 +328,62 @@ Deno.serve(async (request) => {
             || (outboundAttachments.length ? 'Imagen adjunta enviada por soporte.' : '');
         if (!messageText) {
             return json({ error: 'Reply message is empty' }, 400);
+        }
+
+        const emailSubject = buildThreadSubject(supportTicket, mode);
+        const queuedMetadata = {
+            channel: 'email',
+            source: supportTicket.source,
+            subject: emailSubject,
+            to: recipientEmail,
+            cc,
+            bcc,
+            mode,
+            delivery_status: 'queued',
+            notified_client: true,
+            notify_client: true,
+            files: outboundAttachments,
+            notification: {
+                play_sound: true,
+                sound: 'support-reply',
+            },
+        };
+
+        if (!adminMessage) {
+            const { data: savedMessage, error: messageError } = await supabase
+                .from('ticket_messages')
+                .insert({
+                    ticket_id: supportTicket.id,
+                    message: messageText,
+                    sender_type: 'Admin',
+                    sender_id: actor.authUserId,
+                    created_by: actor.id,
+                    visibility: 'public',
+                    message_kind: mode,
+                    delivery_status: 'queued',
+                    delivery_channel: 'email',
+                    delivery_attempts: 0,
+                    cc,
+                    bcc,
+                    attachments: queuedMetadata,
+                })
+                .select('id, message, delivery_attempts')
+                .single();
+            if (messageError) throw messageError;
+            adminMessage = savedMessage as AdminMessage;
+        } else {
+            const { error: queueError } = await supabase
+                .from('ticket_messages')
+                .update({
+                    delivery_status: 'queued',
+                    delivery_error: null,
+                    failed_at: null,
+                    cc,
+                    bcc,
+                    attachments: { ...queuedMetadata, retry: true },
+                })
+                .eq('id', adminMessage.id);
+            if (queueError) throw queueError;
         }
 
         const { data: settings, error: settingsError } = await supabase
@@ -358,31 +412,60 @@ Deno.serve(async (request) => {
         const replyToAddress = settingsRow.resend_inbound_email ?? getEnv('HELPDESK_INBOUND_EMAIL');
 
         const resendAttachments = await buildResendAttachments(supabase, outboundAttachments);
-        const emailSubject = buildThreadSubject(supportTicket);
         const resendBody: Record<string, unknown> = {
             from: fromAddress,
             to: [recipientEmail],
             subject: emailSubject,
             text: messageText,
             reply_to: [replyToAddress],
-            headers: buildThreadHeaders(supportTicket),
         };
+
+        if (mode !== 'forward') resendBody.headers = buildThreadHeaders(supportTicket);
+        if (cc.length) resendBody.cc = cc;
+        if (bcc.length) resendBody.bcc = bcc;
 
         if (resendAttachments.length) {
             resendBody.attachments = resendAttachments;
         }
 
-        const resendResponse = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-                Authorization: `Bearer ${resendApiKey}`,
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(resendBody),
-        });
+        const nextAttempt = (adminMessage.delivery_attempts ?? 0) + 1;
+        let resendResponse: Response;
+        try {
+            resendResponse = await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${resendApiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(resendBody),
+            });
 
-        if (!resendResponse.ok) {
-            throw new Error(`Resend failed: ${await resendResponse.text()}`);
+            if (!resendResponse.ok) {
+                throw new Error(`Resend failed: ${await resendResponse.text()}`);
+            }
+        } catch (deliveryError) {
+            const detail = describeError(deliveryError);
+            await Promise.all([
+                supabase.from('ticket_messages').update({
+                    delivery_status: 'failed',
+                    delivery_attempts: nextAttempt,
+                    delivery_error: detail,
+                    failed_at: new Date().toISOString(),
+                    attachments: { ...queuedMetadata, delivery_status: 'failed', delivery_error: detail },
+                }).eq('id', adminMessage.id),
+                supabase.from('support_tickets').update({
+                    last_delivery_status: 'failed',
+                    last_delivery_error: detail,
+                }).eq('id', supportTicket.id),
+                supabase.from('support_delivery_attempts').insert({
+                    ticket_id: supportTicket.id,
+                    message_id: adminMessage.id,
+                    attempted_by: actor.id,
+                    status: 'failed',
+                    error_message: detail,
+                }),
+            ]);
+            return json({ error: 'Could not deliver support reply', detail, message_id: adminMessage.id }, 502);
         }
 
         const resendPayload = await resendResponse.json() as { id?: string };
@@ -402,33 +485,39 @@ Deno.serve(async (request) => {
             },
         };
 
-        if (!adminMessage) {
-            const { data: savedMessage, error: messageError } = await supabase
-                .from('ticket_messages')
-                .insert({
-                    ticket_id: supportTicket.id,
-                    message: messageText,
-                    sender_type: 'Admin',
-                    attachments: deliveryMetadata,
-                })
-                .select('id')
-                .single();
-
-            if (messageError) throw messageError;
-            adminMessage = savedMessage as AdminMessage;
-        } else {
-            const { error: updateError } = await supabase
-                .from('ticket_messages')
-                .update({
-                    attachments: {
-                        ...deliveryMetadata,
-                        sent_retroactively: true,
-                    },
-                })
-                .eq('id', adminMessage.id);
-
-            if (updateError) throw updateError;
-        }
+        const sentAt = new Date().toISOString();
+        const results = await Promise.all([
+            supabase.from('ticket_messages').update({
+                delivery_status: 'sent',
+                delivery_channel: 'email',
+                provider_message_id: resendPayload.id ?? null,
+                delivery_attempts: nextAttempt,
+                delivery_error: null,
+                delivered_at: sentAt,
+                failed_at: null,
+                cc,
+                bcc,
+                attachments: { ...deliveryMetadata, mode, cc, bcc },
+            }).eq('id', adminMessage.id),
+            supabase.from('support_tickets').update({
+                first_response_at: supportTicket.first_response_at ?? sentAt,
+                last_response_at: sentAt,
+                last_delivery_status: 'sent',
+                last_delivery_error: null,
+            }).eq('id', supportTicket.id),
+            supabase.from('support_delivery_attempts').insert({
+                ticket_id: supportTicket.id,
+                message_id: adminMessage.id,
+                attempted_by: actor.id,
+                status: 'sent',
+                provider_message_id: resendPayload.id ?? null,
+            }),
+            supabase.from('support_ticket_drafts').delete()
+                .eq('ticket_id', supportTicket.id)
+                .eq('admin_user_id', actor.id),
+        ]);
+        const resultError = results.find((result) => result.error)?.error;
+        if (resultError) throw resultError;
 
         return json({
             ok: true,
@@ -437,8 +526,8 @@ Deno.serve(async (request) => {
         });
     } catch (error) {
         return json({
-            error: 'Could not send support reply',
+            error: isAuthorizationError(error) ? 'unauthorized' : 'Could not send support reply',
             detail: describeError(error),
-        }, 500);
+        }, isAuthorizationError(error) ? 401 : 500);
     }
 });
