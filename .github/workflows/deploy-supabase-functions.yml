@@ -78,5 +78,8 @@ jobs:
       - name: Deploy internal knowledge API
         run: supabase functions deploy knowledge-api --project-ref "$SUPABASE_PROJECT_REF"
 
+      - name: Deploy Google Calendar API
+        run: supabase functions deploy calendar-api --project-ref "$SUPABASE_PROJECT_REF"
+
       - name: Deploy Resend delivery webhook
         run: supabase functions deploy process-resend-delivery --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
