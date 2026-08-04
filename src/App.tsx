@@ -236,7 +236,12 @@ function LoginScreen({ error, onLogin }: { error: string | null; onLogin: (email
     return (
         <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-900">
             <form onSubmit={submit} className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-7 shadow-2xl">
-                <div>
+                <div className="text-center">
+                    <img
+                        src="/login-logo.png"
+                        alt="Cloud Admin"
+                        className="mx-auto h-24 w-24 object-contain"
+                    />
                     <p className="text-xs font-black uppercase tracking-[0.28em] text-indigo-600">CLIC-CLOUD</p>
                     <h1 className="mt-3 text-2xl font-black text-slate-950">Acceso Cloud-Admin</h1>
                     <p className="mt-1 text-sm text-slate-500">Inicia sesión con tu usuario autorizado.</p>

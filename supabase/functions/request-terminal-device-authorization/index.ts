@@ -69,6 +69,7 @@ interface PublicTerminalRecord {
 
 interface ErpTenantRecord {
     id: string;
+    config?: Record<string, unknown> | null;
 }
 
 interface ErpTerminalRecord {
@@ -223,6 +224,11 @@ function isPosTenant(tenant: TenantRecord) {
         return tenant.contracted_product === 'POS_ONLY' || tenant.contracted_product === 'POS_ERP';
     }
     return tenant.type === 'pos_only' || tenant.type === 'full';
+}
+
+function isOperationalTenantStatus(status?: string | null) {
+    const normalized = (status || '').trim().toUpperCase();
+    return normalized === 'ACTIVE' || normalized === 'TRIAL';
 }
 
 function sameDeviceId(left?: string | null, right?: string | null) {
@@ -654,6 +660,24 @@ async function preservePublicTerminalCatalog(
     return { preserved: true, terminal_id: terminal.id, terminal_code: terminalCode, store_id: terminal.store_id };
 }
 
+async function reactivatePublicTenantCatalog(
+    supabase: ReturnType<typeof createClient>,
+    tenant: TenantRecord,
+) {
+    const tenantName = getTextCandidate(tenant.name, tenant.id) || tenant.id;
+    const tenantCode = buildCatalogCode(getTextCandidate(tenant.slug, tenantName), tenant.id.slice(0, 8).toUpperCase());
+    const { error } = await supabase
+        .schema('public')
+        .from('tenants')
+        .upsert({
+            id: tenant.id,
+            code: tenantCode,
+            name: tenantName,
+            is_active: true,
+        }, { onConflict: 'id' });
+    if (error) throw error;
+}
+
 async function fetchFirstAvailableErpRoute(
     baseUrl: string,
     paths: string[],
@@ -696,6 +720,80 @@ async function resolveErpTenantId(
     }
 
     return cloudTenantId;
+}
+
+function getCloudAdminTenantIdFromErpConfig(config: Record<string, unknown> | null | undefined) {
+    if (!config) return null;
+    for (const key of ['cloudAdminTenantId', 'cloud_admin_tenant_id', 'cloudTenantId', 'cloud_tenant_id']) {
+        const value = config[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+}
+
+async function resolveCloudTenantForDeviceAuthorization(
+    supabase: ReturnType<typeof createClient>,
+    requestedTenantId: string,
+) {
+    const { data: directTenant, error: directTenantError } = await supabase
+        .from('tenants')
+        .select('id')
+        .eq('id', requestedTenantId)
+        .maybeSingle();
+    if (directTenantError) throw directTenantError;
+    if (directTenant?.id) {
+        return {
+            tenantId: requestedTenantId,
+            erpTenantId: await resolveErpTenantId(supabase, requestedTenantId),
+            source: 'landlord_tenant_id',
+        };
+    }
+
+    const { data: erpTenantData, error: erpTenantError } = await supabase
+        .schema('public')
+        .from('erp_tenants')
+        .select('id,config')
+        .eq('id', requestedTenantId)
+        .maybeSingle();
+    if (erpTenantError) throw erpTenantError;
+
+    const erpTenant = erpTenantData as ErpTenantRecord | null;
+    if (!erpTenant?.id) {
+        return {
+            tenantId: null,
+            erpTenantId: null,
+            source: 'not_found',
+        };
+    }
+
+    const cloudAdminTenantId = getCloudAdminTenantIdFromErpConfig(erpTenant.config);
+    if (!cloudAdminTenantId) {
+        return {
+            tenantId: null,
+            erpTenantId: erpTenant.id,
+            source: 'erp_tenant_without_cloud_mapping',
+        };
+    }
+
+    const { data: mappedTenant, error: mappedTenantError } = await supabase
+        .from('tenants')
+        .select('id')
+        .eq('id', cloudAdminTenantId)
+        .maybeSingle();
+    if (mappedTenantError) throw mappedTenantError;
+    if (!mappedTenant?.id) {
+        return {
+            tenantId: null,
+            erpTenantId: erpTenant.id,
+            source: 'erp_tenant_cloud_mapping_not_found',
+        };
+    }
+
+    return {
+        tenantId: mappedTenant.id,
+        erpTenantId: erpTenant.id,
+        source: 'erp_tenant_cloud_mapping',
+    };
 }
 
 async function insertDeviceAudit(
@@ -1105,7 +1203,7 @@ Deno.serve(async (request) => {
         });
 
         const body = await request.json().catch(() => ({})) as DeviceActionRequest;
-        const tenantId = body.tenant_id?.trim();
+        const requestedTenantId = body.tenant_id?.trim();
         let terminalId = body.terminal_id?.trim();
         const registryId = body.registry_id?.trim() || null;
         const terminalName = body.terminal_name?.trim() || null;
@@ -1118,12 +1216,29 @@ Deno.serve(async (request) => {
             || request.headers.get('x-actor-source')
             || 'cloud-admin';
 
-        if (!tenantId || !terminalId || !requestedAction) {
+        if (!requestedTenantId || !terminalId || !requestedAction) {
             return json({
                 error: 'VALIDATION_ERROR',
                 message: 'Selecciona tenant, terminal y accion.',
             }, 400);
         }
+
+        const tenantResolution = await resolveCloudTenantForDeviceAuthorization(supabase, requestedTenantId);
+        if (!tenantResolution.tenantId) {
+            logCloudAdminDeviceEvent('cloud_admin_device_authorization_tenant_rejected', {
+                requested_tenant_id: requestedTenantId,
+                erp_tenant_id: tenantResolution.erpTenantId,
+                reason: tenantResolution.source,
+                source: 'request-terminal-device-authorization',
+            });
+            return json({
+                error: tenantResolution.source === 'not_found' ? 'TENANT_NOT_FOUND' : 'TENANT_NOT_AUTHORIZED',
+                message: 'Tenant no encontrado o no autorizado para esta activacion.',
+            }, tenantResolution.source === 'not_found' ? 404 : 403);
+        }
+
+        const tenantId = tenantResolution.tenantId;
+        const resolvedErpTenantId = tenantResolution.erpTenantId;
 
         if (!['TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE', 'GENERATE_PAIRING_CODE', 'CLEAR_TERMINAL_DEVICES'].includes(requestedAction)) {
             return json({ error: 'INVALID_ACTION', message: 'Accion de autorizacion no soportada.' }, 400);
@@ -1132,6 +1247,7 @@ Deno.serve(async (request) => {
         if (requiresRequestDeviceId(requestedAction) && !deviceId) {
             logCloudAdminDeviceEvent('cloud_admin_device_id_missing', {
                 tenant_id: tenantId,
+                requested_tenant_id: requestedTenantId,
                 terminal_id: terminalId,
                 registry_id: registryId,
                 terminal_name: terminalName,
@@ -1141,6 +1257,7 @@ Deno.serve(async (request) => {
             });
             logCloudAdminDeviceEvent('cloud_admin_erp_repair_skipped_missing_device', {
                 tenant_id: tenantId,
+                requested_tenant_id: requestedTenantId,
                 terminal_id: terminalId,
                 requested_action: requestedAction,
                 reason: 'missing_request_device_id',
@@ -1164,15 +1281,17 @@ Deno.serve(async (request) => {
         if (tenantError) throw tenantError;
         const tenant = tenantData as TenantRecord | null;
         if (!tenant) return json({ error: 'TENANT_NOT_FOUND', message: 'Tenant no encontrado.' }, 404);
-        if (tenant.status !== 'ACTIVE') {
+        if (!isOperationalTenantStatus(tenant.status)) {
             return json({
                 error: 'TENANT_NOT_ACTIVE',
-                message: 'No se permite reautorizar si el tenant no esta activo.',
+                message: 'No se permite reautorizar si el tenant esta suspendido o inactivo.',
             }, 400);
         }
         if (!isPosTenant(tenant)) {
             return json({ error: 'LICENSE_NOT_ALLOWED', message: 'La licencia actual no permite reautorizar esta terminal.' }, 403);
         }
+
+        await reactivatePublicTenantCatalog(supabase, tenant);
 
         const registry = await loadRegistry(supabase, tenantId, terminalId, registryId);
         let terminalQuery = supabase
@@ -1432,7 +1551,7 @@ Deno.serve(async (request) => {
         }
 
         const erpTenantId = action === 'TAKEOVER' || action === 'ROTATE_TOKEN'
-            ? await resolveErpTenantId(supabase, tenantId)
+            ? resolvedErpTenantId || await resolveErpTenantId(supabase, tenantId)
             : null;
         const preErpConsolidation = action === 'TAKEOVER' && deviceId
             ? await consolidateErpTerminalDeviceDuplicates(supabase, {

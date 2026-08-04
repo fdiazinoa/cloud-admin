@@ -680,6 +680,11 @@ function normalizeOptional(value?: string | null): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function isOperationalTenantStatus(status?: string | null): boolean {
+    const normalized = (status || "").trim().toUpperCase();
+    return normalized === "ACTIVE" || normalized === "TRIAL";
+}
+
 function generateTempPassword(): string {
     const length = 14;
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -1278,7 +1283,6 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             return currentTime > newestTime ? current : newest;
         });
 
-        const deviceToken = primaryTerminal.device_token || primaryTerminal.device_id || primaryTerminal.current_device_id || null;
         const registriesMap = new Map<string, TenantTerminalRegistryEntry>();
 
         for (const terminal of terminalsGroup) {
@@ -1290,7 +1294,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
                      }
                 }
             }
-            const dt = terminal.device_token || terminal.device_id || terminal.current_device_id;
+            const dt = terminal.device_id || terminal.current_device_id;
             if (dt && registriesByDeviceId.has(dt)) {
                 for (const reg of registriesByDeviceId.get(dt)!) {
                      if (reg.id) {
@@ -1317,13 +1321,18 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         );
         const terminalName = getHumanTerminalName(primaryTerminal, registry, erpBinding);
         const visibleRegistries = getVisibleRegistries(consolidatedRegistries, erpBinding);
+        const catalogDeviceId = erpBinding?.deviceId
+            || registry?.authorized_device_id
+            || registry?.current_device_id
+            || registry?.device_id
+            || null;
 
         snapshots.push({
             id: primaryTerminal.id,
             tenant_id: primaryTerminal.tenant_id,
             terminal_id: erpBinding?.erpTerminalId || primaryTerminal.id,
             name: terminalName,
-            device_token: deviceToken,
+            device_token: catalogDeviceId,
             is_active: primaryTerminal.config?.is_active ?? primaryTerminal.is_active ?? primaryTerminal.active ?? true,
             last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.last_heartbeat_at || primaryTerminal.updated_at || null,
             created_at: primaryTerminal.created_at || null,
@@ -1760,8 +1769,8 @@ export async function syncTerminalAuthorizedDevice(input: {
 
     if (tenantError) throw tenantError;
     if (!tenant) throw new Error("Tenant no encontrado.");
-    if (tenant.status !== "ACTIVE") {
-        throw new Error("No se puede sincronizar si el tenant no esta activo.");
+    if (!isOperationalTenantStatus(tenant.status)) {
+        throw new Error("No se puede sincronizar si el tenant esta suspendido o inactivo.");
     }
     if (tenant.contracted_product !== "POS_ONLY") {
         throw new Error("Sincronizar device autorizado solo aplica a tenants POS_ONLY.");

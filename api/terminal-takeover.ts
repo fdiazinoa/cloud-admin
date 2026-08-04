@@ -39,9 +39,7 @@ type RegistryRecord = {
 type PublicTerminalRecord = {
     id: string;
     tenant_id: string;
-    device_token?: string | null;
-    device_id?: string | null;
-    current_device_id?: string | null;
+    code?: string | null;
     name?: string | null;
     terminal_name?: string | null;
     label?: string | null;
@@ -216,13 +214,6 @@ function isUuid(value: string) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function getPublicTerminalDeviceId(terminal: PublicTerminalRecord | null) {
-    return terminal?.device_token
-        || terminal?.device_id
-        || terminal?.current_device_id
-        || null;
-}
-
 function getTerminalMatchScore(
     terminal: ErpTerminalRecord,
     candidates: Set<string>,
@@ -335,9 +326,7 @@ async function resolveErpTerminal(
         params.registry?.terminal_id,
         params.registry?.device_id,
         params.publicTerminal?.id,
-        params.publicTerminal?.device_token,
-        params.publicTerminal?.device_id,
-        params.publicTerminal?.current_device_id,
+        params.publicTerminal?.code,
     ].map(normalizedText).filter(Boolean));
 
     const terminalName = params.registry?.terminal_name
@@ -535,7 +524,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         }
 
         const erpTerminalId = erpTerminal.id;
-        const previousDeviceId = erpTerminal.device_id || registry?.device_id || getPublicTerminalDeviceId(publicTerminal);
+        const previousDeviceId = erpTerminal.device_id || registry?.device_id || null;
         if (previousDeviceId && previousDeviceId === newDeviceId) {
             sendJson(response, 400, {
                 error: "SAME_DEVICE_ID",
