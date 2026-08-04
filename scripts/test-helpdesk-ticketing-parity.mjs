@@ -53,6 +53,14 @@ for (const functionName of ['helpdesk-api', 'send-support-reply', 'get-support-m
 }
 assert.match(config, /\[functions\.process-resend-delivery\][\s\S]*?verify_jwt = false/, 'Signed Resend webhook must accept external requests');
 assert.match(workflow, /functions deploy process-resend-delivery[^\n]*--no-verify-jwt/, 'Resend delivery webhook deployment must disable platform JWT verification');
+for (const deploymentContract of [
+    'supabase/migrations/**',
+    'SUPABASE_DB_PASSWORD',
+    'supabase db push --linked',
+    'Validate Resend webhook secret',
+]) {
+    assert.ok(workflow.includes(deploymentContract), `Production deployment is missing ${deploymentContract}`);
+}
 for (const contract of ['svix-id', 'svix-timestamp', 'svix-signature', 'constantTimeEqual', 'support_webhook_events', 'deliveryRanks']) {
     assert.ok(deliveryWebhook.includes(contract), `Delivery webhook is missing ${contract}`);
 }
