@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.98.0';
+import { createHelpdeskAdminClient, isAuthorizationError, requireHelpdeskActor } from '../_shared/helpdesk-auth.ts';
 
 declare const Deno: {
     env: {
@@ -257,25 +257,7 @@ async function decryptSecret(row: SecretRow) {
 }
 
 async function assertAuthorized(request: Request) {
-    const authorization = request.headers.get('authorization') ?? '';
-    const bearerToken = authorization.replace(/^Bearer\s+/i, '').trim();
-    if (!bearerToken) {
-        throw new Error('Unauthorized draft request');
-    }
-
-    if (bearerToken === getEnv('SUPABASE_SERVICE_ROLE_KEY')) return;
-
-    const authProbe = createClient(getEnv('SUPABASE_URL'), bearerToken, {
-        auth: { autoRefreshToken: false, persistSession: false },
-        db: { schema: 'landlord' },
-    });
-    const { data, error } = await authProbe
-        .from('support_integration_settings')
-        .select('id')
-        .eq('id', 'helpdesk')
-        .maybeSingle();
-
-    if (error || !data) throw new Error('Unauthorized draft request');
+    return requireHelpdeskActor(request);
 }
 
 function getTicketOwner(ticket: SupportTicket) {
@@ -366,7 +348,7 @@ function buildKnowledgeSearchText(ticket: SupportTicket, messages: MessageRow[])
 }
 
 async function fetchKnowledgeMatches(
-    supabase: ReturnType<typeof createClient>,
+    supabase: ReturnType<typeof createHelpdeskAdminClient>,
     ticket: SupportTicket,
     messages: MessageRow[],
 ) {
@@ -522,14 +504,7 @@ Deno.serve(async (request) => {
             return json({ error: 'ticket_id is required' }, 400);
         }
 
-        const supabase = createClient(
-            getEnv('SUPABASE_URL'),
-            getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-            {
-                auth: { autoRefreshToken: false, persistSession: false },
-                db: { schema: 'landlord' },
-            },
-        );
+        const supabase = createHelpdeskAdminClient();
 
         const { data: ticket, error: ticketError } = await supabase
             .from('support_tickets')
@@ -647,8 +622,8 @@ Deno.serve(async (request) => {
     } catch (error) {
         console.error('generate-support-draft failed', error);
         return json({
-            error: 'Could not generate support draft',
+            error: isAuthorizationError(error) ? 'unauthorized' : 'Could not generate support draft',
             detail: describeError(error),
-        }, 500);
+        }, isAuthorizationError(error) ? 401 : 500);
     }
 });
