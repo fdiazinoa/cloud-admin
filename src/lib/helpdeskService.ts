@@ -75,6 +75,13 @@ export async function fetchHelpdeskBootstrap(query = '') {
     }>('bootstrap', { query });
 }
 
+export async function fetchHelpdeskTicketSnapshot(ticketId: string) {
+    return invokeHelpdesk<{
+        ticket: unknown | null;
+        preview: unknown | null;
+    }>('ticket_snapshot', { ticket_id: ticketId });
+}
+
 export async function fetchSupportMessages(ticketId: string) {
     return invokeFunction<{ messages?: unknown[] }>('get-support-messages', { ticket_id: ticketId });
 }
@@ -140,7 +147,7 @@ export async function loadHelpdeskWorkspace(ticketId: string) {
 }
 
 export async function heartbeatHelpdeskTicket(ticketId: string) {
-    return invokeHelpdesk<{ ok: true }>('heartbeat', { ticket_id: ticketId });
+    return invokeHelpdesk<{ ok: true; presence: HelpdeskPresence[] }>('heartbeat', { ticket_id: ticketId });
 }
 
 export async function mergeHelpdeskTickets(targetTicketId: string, ticketIds: string[]) {

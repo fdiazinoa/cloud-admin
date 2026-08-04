@@ -3,12 +3,13 @@ import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-const [component, service, api, deliveryWebhook, migration, config, workflow] = await Promise.all([
+const [component, service, api, deliveryWebhook, migration, optimizationMigration, config, workflow] = await Promise.all([
     read('src/pages/SupportCommandCenter.tsx'),
     read('src/lib/helpdeskService.ts'),
     read('supabase/functions/helpdesk-api/index.ts'),
     read('supabase/functions/process-resend-delivery/index.ts'),
-    read('supabase/migrations/20260803235805_helpdesk_ticketing_parity.sql'),
+    read('supabase/migrations/20260804005059_helpdesk_ticketing_parity.sql'),
+    read('supabase/migrations/20260804023000_helpdesk_performance_hardening.sql'),
     read('supabase/config.toml'),
     read('.github/workflows/deploy-supabase-functions.yml'),
 ]);
@@ -43,6 +44,18 @@ for (const capability of [
 ]) {
     assert.ok(migration.includes(capability), `Migration is missing ${capability}`);
 }
+for (const optimization of [
+    'helpdesk_latest_message_previews',
+    'support_tickets_active_updated_idx',
+    'ticket_messages_message_trgm_idx',
+    '(select auth.uid())',
+]) {
+    assert.ok(optimizationMigration.includes(optimization), `Optimization migration is missing ${optimization}`);
+}
+assert.ok(component.includes('support_tickets_incremental_secure'), 'HelpDesk must use incremental ticket refreshes');
+assert.equal(component.includes("table: 'support_contacts'"), false, 'HelpDesk must not subscribe globally to support contacts');
+assert.equal(component.includes("table: 'ai_ticket_insights'"), false, 'HelpDesk must not subscribe globally to AI insights');
+assert.ok(api.includes("action === 'ticket_snapshot'"), 'HelpDesk API must expose point ticket refreshes');
 assert.match(migration, /Tenants can view messages[\s\S]*?visibility = 'public'/, 'Private notes must be hidden from tenant message reads');
 assert.match(migration, /Tenants can insert messages[\s\S]*?visibility = 'public'[\s\S]*?sender_type = 'Client'/, 'Tenant message inserts must remain public client messages');
 
