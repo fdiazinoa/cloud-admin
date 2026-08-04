@@ -72,5 +72,8 @@ jobs:
       - name: Deploy secure helpdesk API
         run: supabase functions deploy helpdesk-api --project-ref "$SUPABASE_PROJECT_REF"
 
+      - name: Deploy internal requests API
+        run: supabase functions deploy internal-requests-api --project-ref "$SUPABASE_PROJECT_REF"
+
       - name: Deploy Resend delivery webhook
         run: supabase functions deploy process-resend-delivery --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
