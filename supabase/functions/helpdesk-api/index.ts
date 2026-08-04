@@ -1,4 +1,10 @@
-import { createHelpdeskAdminClient, isAuthorizationError, requireHelpdeskActor } from '../_shared/helpdesk-auth.ts';
+import {
+    assertHelpdeskTicketAccess,
+    createHelpdeskAdminClient,
+    isAuthorizationError,
+    requireHelpdeskActor,
+    type HelpdeskActor,
+} from '../_shared/helpdesk-auth.ts';
 
 declare const Deno: {
     serve(handler: (request: Request) => Response | Promise<Response>): void;
@@ -183,18 +189,25 @@ function filterMutableFields(fields: unknown) {
 async function fetchBootstrap(
     supabase: ReturnType<typeof createHelpdeskAdminClient>,
     query: string,
-    adminUserId: string,
+    actor: HelpdeskActor,
 ) {
+    let ticketsQuery = supabase
+        .from('support_tickets')
+        .select(ticketSelect)
+        .is('merged_into_ticket_id', null)
+        .order('updated_at', { ascending: false })
+        .limit(500);
+    if (!actor.canViewAllDepartments) {
+        ticketsQuery = ticketsQuery.in('team_id', actor.departmentIds.length
+            ? actor.departmentIds
+            : ['00000000-0000-0000-0000-000000000000']);
+    }
+
     const [ticketsResult, agentsResult, teamsResult, templatesResult] = await Promise.all([
-        supabase
-            .from('support_tickets')
-            .select(ticketSelect)
-            .is('merged_into_ticket_id', null)
-            .order('updated_at', { ascending: false })
-            .limit(500),
+        ticketsQuery,
         supabase
             .from('cloud_admin_users')
-            .select('id, full_name, email, status, profile_id')
+            .select('id, full_name, email, status, profile_id, helpdesk_all_departments, support_team_members(team_id)')
             .eq('status', 'active')
             .order('full_name'),
         supabase
@@ -236,6 +249,9 @@ async function fetchBootstrap(
             const contactValue = record.support_contacts;
             const contact = Array.isArray(contactValue) ? contactValue[0] : contactValue;
             const contactRecord = contact && typeof contact === 'object' ? contact as Record<string, unknown> : {};
+            const tenantValue = record.tenants;
+            const tenant = Array.isArray(tenantValue) ? tenantValue[0] : tenantValue;
+            const tenantRecord = tenant && typeof tenant === 'object' ? tenant as Record<string, unknown> : {};
             const haystack = [
                 record.ticket_number,
                 record.subject,
@@ -244,6 +260,7 @@ async function fetchBootstrap(
                 contactRecord.name,
                 contactRecord.email,
                 contactRecord.company_name,
+                tenantRecord.name,
             ].filter(Boolean).join(' ').toLocaleLowerCase('es');
             return haystack.includes(normalizedQuery) || messageTicketIds.has(String(record.id));
         });
@@ -257,7 +274,7 @@ async function fetchBootstrap(
             supabase.rpc('helpdesk_latest_message_previews', { p_ticket_ids: ticketIds }),
             supabase.rpc('helpdesk_ticket_unread_states', {
                 p_ticket_ids: ticketIds,
-                p_admin_user_id: adminUserId,
+                p_admin_user_id: actor.id,
             }),
         ]);
         if (previewResult.error) throw previewResult.error;
@@ -273,6 +290,10 @@ async function fetchBootstrap(
         templates: templatesResult.data ?? [],
         previews,
         unread_states: unreadStates,
+        actor_access: {
+            all_departments: actor.canViewAllDepartments,
+            department_ids: actor.departmentIds,
+        },
     };
 }
 
@@ -286,8 +307,34 @@ Deno.serve(async (request) => {
         const action = cleanString(payload.action, 60);
         const supabase = createHelpdeskAdminClient();
 
+        const ticketScopedActions = new Set([
+            'ticket_snapshot',
+            'mark_read',
+            'update_ticket',
+            'add_note',
+            'add_public_reply',
+            'save_contact',
+            'create_improvement',
+            'save_draft',
+            'load_workspace',
+            'heartbeat',
+            'create_upload_urls',
+        ]);
+        if (ticketScopedActions.has(action) && payload.ticket_id) {
+            await assertHelpdeskTicketAccess(supabase, actor, [cleanString(payload.ticket_id, 64)]);
+        }
+        if (action === 'bulk_update') {
+            await assertHelpdeskTicketAccess(supabase, actor, cleanIds(payload.ticket_ids));
+        }
+        if (action === 'merge_tickets') {
+            await assertHelpdeskTicketAccess(supabase, actor, [
+                cleanString(payload.target_ticket_id, 64),
+                ...cleanIds(payload.ticket_ids),
+            ]);
+        }
+
         if (action === 'bootstrap') {
-            return json(await fetchBootstrap(supabase, payload.query ?? '', actor.id));
+            return json(await fetchBootstrap(supabase, payload.query ?? '', actor));
         }
 
         if (action === 'ticket_snapshot') {

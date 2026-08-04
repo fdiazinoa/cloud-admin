@@ -3,6 +3,7 @@ import {
     AlertTriangle,
     Archive,
     BatteryLow,
+    Bell,
     CheckCircle2,
     Clock3,
     ExternalLink,
@@ -17,6 +18,10 @@ import {
     MessageSquare,
     MonitorSmartphone,
     Paperclip,
+    PanelLeftClose,
+    PanelLeftOpen,
+    PanelRightClose,
+    PanelRightOpen,
     RefreshCw,
     ReplyAll,
     Search,
@@ -316,6 +321,16 @@ function truncatePreview(value: string, maxLength = 110) {
     const normalized = value.replace(/\s+/g, ' ').trim();
     if (!normalized) return '';
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized;
+}
+
+function renderHighlightedText(value: string, query: string) {
+    const needle = query.trim();
+    if (!needle) return value;
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = value.split(new RegExp(`(${escaped})`, 'gi'));
+    return parts.map((part, index) => part.toLocaleLowerCase('es') === needle.toLocaleLowerCase('es')
+        ? <mark key={`${part}-${index}`} className="rounded bg-yellow-200 px-0.5 text-inherit">{part}</mark>
+        : part);
 }
 
 function getSenderPreviewLabel(senderType: Message['sender_type']) {
@@ -654,6 +669,18 @@ const SupportCommandCenter: React.FC = () => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [filterStatus, setFilterStatus] = useState('Todos');
     const [filterSource, setFilterSource] = useState('Todos');
+    const [filterTeam, setFilterTeam] = useState('Todos');
+    const [filterAssignee, setFilterAssignee] = useState('Todos');
+    const [filterTenant, setFilterTenant] = useState('Todos');
+    const [filterContact, setFilterContact] = useState('Todos');
+    const [filterDateFrom, setFilterDateFrom] = useState('');
+    const [filterDateTo, setFilterDateTo] = useState('');
+    const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+    const [showTicketList, setShowTicketList] = useState(true);
+    const [showContextPanel, setShowContextPanel] = useState(true);
+    const [actorDepartmentAccess, setActorDepartmentAccess] = useState<{ all: boolean; ids: string[] }>({ all: false, ids: [] });
+    const [conversationSearch, setConversationSearch] = useState('');
+    const [conversationMatchIndex, setConversationMatchIndex] = useState(0);
     const [quickFilter, setQuickFilter] = useState<'none' | 'critical' | 'unassigned'>('none');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
@@ -674,6 +701,7 @@ const SupportCommandCenter: React.FC = () => {
     const searchDebounceRef = useRef<number | undefined>(undefined);
     const searchQueryRef = useRef('');
     const lastSavedDraftRef = useRef<string | null>(null);
+    const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     const selectedTicketId = selectedTicket?.id;
 
@@ -735,6 +763,10 @@ const SupportCommandCenter: React.FC = () => {
                 setTickets(mappedTickets);
                 setAgents(response.agents);
                 setTeams(response.teams);
+                setActorDepartmentAccess({
+                    all: response.actor_access.all_departments,
+                    ids: response.actor_access.department_ids,
+                });
                 setReplyTemplates(response.templates);
                 setLastMessageByTicketId(buildLatestMessagePreviewMap(response.previews as Array<{ ticket_id?: string | null; message?: string | null; sender_type?: string | null; created_at?: string | null }>));
                 setSelectedTicket((current) => current
@@ -759,6 +791,12 @@ const SupportCommandCenter: React.FC = () => {
     useEffect(() => {
         searchQueryRef.current = searchQuery;
     }, [searchQuery]);
+
+    useEffect(() => {
+        setConversationSearch('');
+        setConversationMatchIndex(0);
+        messageElementRefs.current = {};
+    }, [selectedTicketId]);
 
     useEffect(() => {
         const refreshTimers = new Map<string, number>();
@@ -802,6 +840,8 @@ const SupportCommandCenter: React.FC = () => {
                 }
             } catch (error) {
                 console.error('Admin: error refreshing changed support ticket', error);
+                const message = error instanceof Error ? error.message : String(error ?? '');
+                if (/forbidden|unauthorized/i.test(message)) removeTicket(ticketId);
             }
         };
 
@@ -1039,15 +1079,64 @@ const SupportCommandCenter: React.FC = () => {
         }));
     }, [filterSource, filterStatus, quickFilter, ticketStats]);
 
+    const tenantOptions = useMemo(() => Array.from(new Set(tickets.map((ticket) => ticket.tenant_name).filter(Boolean))).sort(), [tickets]);
+    const contactOptions = useMemo(() => {
+        const options = new Map<string, string>();
+        tickets.forEach((ticket) => {
+            const value = ticket.contact?.id || ticket.contact?.email || ticket.external_sender_email;
+            if (!value) return;
+            options.set(value, ticket.contact?.name || ticket.contact?.company_name || ticket.contact?.email || ticket.external_sender_email || value);
+        });
+        return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, 'es'));
+    }, [tickets]);
+
+    const departmentUnreadCounts = useMemo(() => {
+        const counts: Record<string, number> = {};
+        tickets.forEach((ticket) => {
+            if (ticket.team_id && ticket.is_unread) counts[ticket.team_id] = (counts[ticket.team_id] ?? 0) + 1;
+        });
+        return counts;
+    }, [tickets]);
+
+    const conversationMatches = useMemo(() => {
+        const needle = conversationSearch.trim().toLocaleLowerCase('es');
+        if (!needle) return [];
+        return messages.filter((message) => message.message.toLocaleLowerCase('es').includes(needle));
+    }, [conversationSearch, messages]);
+
+    useEffect(() => {
+        if (!conversationMatches.length) {
+            setConversationMatchIndex(0);
+            return;
+        }
+        setConversationMatchIndex((current) => Math.min(current, conversationMatches.length - 1));
+    }, [conversationMatches.length]);
+
+    const goToConversationMatch = (direction: 1 | -1) => {
+        if (!conversationMatches.length) return;
+        const nextIndex = (conversationMatchIndex + direction + conversationMatches.length) % conversationMatches.length;
+        setConversationMatchIndex(nextIndex);
+        messageElementRefs.current[conversationMatches[nextIndex].id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+
     const filteredTickets = useMemo(() => {
         return tickets.filter((ticket) => {
             const statusMatches = filterStatus === 'Todos' || ticket.status === filterStatus;
             const sourceMatches = filterSource === 'Todos' || ticket.source === filterSource;
+            const teamMatches = filterTeam === 'Todos' || (filterTeam === 'Sin_departamento' ? !ticket.team_id : ticket.team_id === filterTeam);
+            const assigneeMatches = filterAssignee === 'Todos' || (filterAssignee === 'Sin_asignar' ? !ticket.assignee_id : ticket.assignee_id === filterAssignee);
+            const tenantMatches = filterTenant === 'Todos' || ticket.tenant_name === filterTenant;
+            const contactValue = ticket.contact?.id || ticket.contact?.email || ticket.external_sender_email;
+            const contactMatches = filterContact === 'Todos' || contactValue === filterContact;
+            const createdAt = new Date(ticket.created_at).getTime();
+            const fromMatches = !filterDateFrom || createdAt >= new Date(`${filterDateFrom}T00:00:00`).getTime();
+            const toMatches = !filterDateTo || createdAt <= new Date(`${filterDateTo}T23:59:59.999`).getTime();
             const criticalMatches = quickFilter !== 'critical' || ticket.priority === 'Critica';
             const unassignedMatches = quickFilter !== 'unassigned' || ticket.assignment_status === 'needs_assignment';
-            return statusMatches && sourceMatches && criticalMatches && unassignedMatches;
+            return statusMatches && sourceMatches && teamMatches && assigneeMatches && tenantMatches
+                && contactMatches && fromMatches && toMatches && criticalMatches && unassignedMatches;
         });
-    }, [filterSource, filterStatus, quickFilter, tickets]);
+    }, [filterAssignee, filterContact, filterDateFrom, filterDateTo, filterSource, filterStatus, filterTeam, filterTenant, quickFilter, tickets]);
 
     const clearPendingReplyAttachments = () => {
         pendingReplyAttachments.forEach((attachment) => {
@@ -1445,7 +1534,8 @@ const SupportCommandCenter: React.FC = () => {
     };
 
     return (
-        <div className="flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
+        <div className="relative flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
+            {showTicketList ? (
             <aside className="flex min-h-0 w-[380px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm">
                 <div className="shrink-0 border-b border-slate-100 p-4">
                     <div className="mb-4 flex items-start justify-between gap-3">
@@ -1453,8 +1543,13 @@ const SupportCommandCenter: React.FC = () => {
                             <h1 className="text-xl font-bold text-slate-900">Command Center</h1>
                             <p className="text-sm text-slate-500">Soporte POS, ERP y email externo</p>
                         </div>
-                        <div className="rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-violet-700">
-                            <Sparkles size={18} />
+                        <div className="flex items-center gap-1">
+                            <button type="button" onClick={() => setShowTicketList(false)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title="Ocultar lista de tickets">
+                                <PanelLeftClose size={17} />
+                            </button>
+                            <div className="rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-violet-700">
+                                <Sparkles size={18} />
+                            </div>
                         </div>
                     </div>
 
@@ -1471,9 +1566,27 @@ const SupportCommandCenter: React.FC = () => {
                                 <RefreshCw size={14} className={isRefreshingTickets ? 'animate-spin' : ''} />
                             </button>
                         </div>
-                        <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                            <Filter size={12} />
-                            Filtros
+                        <div className="flex flex-wrap gap-1.5">
+                            {teams
+                                .filter((team) => actorDepartmentAccess.all || actorDepartmentAccess.ids.includes(team.id))
+                                .map((team) => (
+                                    <button
+                                        key={team.id}
+                                        type="button"
+                                        onClick={() => setFilterTeam((current) => current === team.id ? 'Todos' : team.id)}
+                                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold ${filterTeam === team.id ? 'border-indigo-400 bg-indigo-100 text-indigo-800' : 'border-slate-200 bg-white text-slate-600'}`}
+                                    >
+                                        <Bell size={10} />
+                                        {team.name}
+                                        {departmentUnreadCounts[team.id] ? <span className="rounded-full bg-indigo-600 px-1.5 text-white">{departmentUnreadCounts[team.id]}</span> : null}
+                                    </button>
+                                ))}
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+                            <span className="flex items-center gap-2"><Filter size={12} />Filtros</span>
+                            <button type="button" onClick={() => setShowAdvancedFilters((current) => !current)} className="rounded px-1.5 py-1 text-indigo-600 hover:bg-indigo-50">
+                                {showAdvancedFilters ? 'Menos' : 'Más filtros'}
+                            </button>
                         </div>
 
                         <div className="grid gap-2 sm:grid-cols-2">
@@ -1519,6 +1632,51 @@ const SupportCommandCenter: React.FC = () => {
                                 </select>
                             </div>
                         </div>
+
+                        {showAdvancedFilters ? (
+                            <div className="grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-2">
+                                <FilterSelect label="Departamento" value={filterTeam} onChange={setFilterTeam}>
+                                    <option value="Todos">Todos</option>
+                                    <option value="Sin_departamento">Sin departamento</option>
+                                    {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                                </FilterSelect>
+                                <FilterSelect label="Persona asignada" value={filterAssignee} onChange={setFilterAssignee}>
+                                    <option value="Todos">Todas</option>
+                                    <option value="Sin_asignar">Sin asignar</option>
+                                    {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.full_name}</option>)}
+                                </FilterSelect>
+                                <FilterSelect label="Cliente" value={filterContact} onChange={setFilterContact}>
+                                    <option value="Todos">Todos</option>
+                                    {contactOptions.map((contact) => <option key={contact.value} value={contact.value}>{contact.label}</option>)}
+                                </FilterSelect>
+                                <FilterSelect label="Establecimiento" value={filterTenant} onChange={setFilterTenant}>
+                                    <option value="Todos">Todos</option>
+                                    {tenantOptions.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
+                                </FilterSelect>
+                                <label className="block">
+                                    <span className="mb-1 block text-[11px] font-semibold text-slate-600">Desde</span>
+                                    <input type="date" value={filterDateFrom} onChange={(event) => setFilterDateFrom(event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700" />
+                                </label>
+                                <label className="block">
+                                    <span className="mb-1 block text-[11px] font-semibold text-slate-600">Hasta</span>
+                                    <input type="date" value={filterDateTo} onChange={(event) => setFilterDateTo(event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700" />
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setFilterTeam('Todos');
+                                        setFilterAssignee('Todos');
+                                        setFilterContact('Todos');
+                                        setFilterTenant('Todos');
+                                        setFilterDateFrom('');
+                                        setFilterDateTo('');
+                                    }}
+                                    className="sm:col-span-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                                >
+                                    Limpiar filtros avanzados
+                                </button>
+                            </div>
+                        ) : null}
 
                         <p className="border-t border-slate-200 pt-2 text-[11px] font-medium text-slate-500">
                             Mostrando <span className="font-bold text-slate-800">{filteredTickets.length}</span> de{' '}
@@ -1633,6 +1791,15 @@ const SupportCommandCenter: React.FC = () => {
                                     )}
                                 </p>
 
+                                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
+                                    <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-indigo-700">
+                                        {ticket.support_team?.name || 'Sin departamento'}
+                                    </span>
+                                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-600">
+                                        {ticket.assignee?.full_name || 'Sin persona asignada'}
+                                    </span>
+                                </div>
+
                                 <div className="mt-3 flex items-center justify-between gap-2 text-[11px]">
                                     <span className={`rounded-full border px-2 py-0.5 font-medium ${sentimentStyles[sentiment]}`}>
                                         {sentimentLabels[sentiment]}
@@ -1647,6 +1814,7 @@ const SupportCommandCenter: React.FC = () => {
                     })}
                 </div>
             </aside>
+            ) : null}
 
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
                 {selectedTicket ? (
@@ -1686,6 +1854,14 @@ const SupportCommandCenter: React.FC = () => {
                                 </div>
 
                                 <div className="flex shrink-0 gap-2">
+                                    {!showTicketList ? (
+                                        <button type="button" onClick={() => setShowTicketList(true)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title="Mostrar lista de tickets">
+                                            <PanelLeftOpen size={15} />
+                                        </button>
+                                    ) : null}
+                                    <button type="button" onClick={() => setShowContextPanel((current) => !current)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title={showContextPanel ? 'Ocultar contexto' : 'Mostrar contexto'}>
+                                        {showContextPanel ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+                                    </button>
                                     <button onClick={() => updateStatus('En_Proceso')} disabled={isResolvingTicket} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
                                         En proceso
                                     </button>
@@ -1718,6 +1894,28 @@ const SupportCommandCenter: React.FC = () => {
                             )}
                         </div>
 
+                        <div className="flex shrink-0 items-center gap-2 border-y border-slate-100 bg-white px-4 py-2">
+                            <div className="relative min-w-0 flex-1">
+                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={13} />
+                                <input
+                                    value={conversationSearch}
+                                    onChange={(event) => setConversationSearch(event.target.value)}
+                                    placeholder="Buscar dentro de esta conversación"
+                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-indigo-400 focus:bg-white"
+                                />
+                            </div>
+                            {conversationSearch.trim() ? (
+                                <>
+                                    <span className="shrink-0 text-[11px] font-bold text-slate-500">
+                                        {conversationMatches.length ? `${conversationMatchIndex + 1}/${conversationMatches.length}` : '0 resultados'}
+                                    </span>
+                                    <button type="button" disabled={!conversationMatches.length} onClick={() => goToConversationMatch(-1)} className="rounded border border-slate-200 px-2 py-1 text-xs font-black text-slate-600 disabled:opacity-40" aria-label="Coincidencia anterior">↑</button>
+                                    <button type="button" disabled={!conversationMatches.length} onClick={() => goToConversationMatch(1)} className="rounded border border-slate-200 px-2 py-1 text-xs font-black text-slate-600 disabled:opacity-40" aria-label="Coincidencia siguiente">↓</button>
+                                    <button type="button" onClick={() => setConversationSearch('')} className="rounded p-1 text-slate-400 hover:bg-slate-100" aria-label="Limpiar búsqueda"><X size={13} /></button>
+                                </>
+                            ) : null}
+                        </div>
+
                         <div ref={messagesPaneRef} className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_120px)] px-4 py-4">
                             {messages.length === 0 ? (
                                 <div className="flex h-full min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500">
@@ -1732,13 +1930,17 @@ const SupportCommandCenter: React.FC = () => {
                                 const isPrivateMessage = message.visibility === 'private';
 
                                 return (
-                                    <div key={message.id} className={`flex ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}>
+                                    <div
+                                        key={message.id}
+                                        ref={(element) => { messageElementRefs.current[message.id] = element; }}
+                                        className={`flex rounded-2xl ${conversationMatches[conversationMatchIndex]?.id === message.id ? 'ring-2 ring-yellow-300 ring-offset-2' : ''} ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}
+                                    >
                                         <div className={`max-w-[min(72%,640px)] rounded-2xl px-4 py-3 text-sm shadow-sm ${isPrivateMessage ? 'rounded-br-md border border-amber-300 bg-amber-50 text-amber-950' : isAdminMessage ? 'rounded-br-md bg-blue-600 text-white' : isSystemMessage ? 'max-w-xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
                                             <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide opacity-75">
                                                 <span>{isPrivateMessage ? 'Nota interna' : isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}</span>
                                                 <span className="font-medium normal-case tracking-normal">{formatTime(message.created_at)}</span>
                                             </div>
-                                            <p className="whitespace-pre-wrap break-words leading-relaxed">{message.message}</p>
+                                            <p className="whitespace-pre-wrap break-words leading-relaxed">{renderHighlightedText(message.message, conversationSearch)}</p>
 
                                             {isAdminMessage && !isPrivateMessage && message.delivery_status && (
                                                 <div className={`mt-2 flex items-center justify-end gap-1 text-[10px] font-semibold ${['failed', 'bounced'].includes(message.delivery_status) ? 'text-red-100' : 'opacity-75'}`}>
@@ -1949,38 +2151,52 @@ const SupportCommandCenter: React.FC = () => {
                     </>
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col items-center justify-center bg-slate-50 text-slate-400">
+                        {!showTicketList ? <button type="button" onClick={() => setShowTicketList(true)} className="mb-4 rounded-lg border border-slate-200 bg-white p-2 text-slate-500"><PanelLeftOpen size={17} /></button> : null}
                         <MessageSquare className="mb-4 text-slate-300" size={56} />
                         <p className="font-medium text-slate-600">Selecciona un ticket para comenzar</p>
                     </div>
                 )}
             </main>
 
-            {selectedTicket && (
+            {selectedTicket && showContextPanel && (
                 <aside className="flex min-h-0 w-[320px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
-                    <div className="shrink-0 border-b border-slate-100 p-4">
-                        <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800">Contexto</h3>
-                        <p className="mt-1 text-xs text-slate-500">Tenant, contacto y señales técnicas</p>
+                    <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 p-4">
+                        <div>
+                            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800">Contexto</h3>
+                            <p className="mt-1 text-xs text-slate-500">Tenant, contacto y señales técnicas</p>
+                        </div>
+                        <button type="button" onClick={() => setShowContextPanel(false)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:text-indigo-700" title="Ocultar contexto"><PanelRightClose size={15} /></button>
                     </div>
 
                     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
                         <section>
                             <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-500"><Users size={13} /> Asignación</h4>
                             <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Departamento / transferir a</p>
                                 <select
                                     value={selectedTicket.team_id ?? ''}
-                                    onChange={(event) => void updateSelectedTicketFields({ team_id: event.target.value || null })}
+                                    onChange={(event) => void updateSelectedTicketFields({
+                                        team_id: event.target.value || null,
+                                        assignee_id: null,
+                                        assignment_status: 'needs_assignment',
+                                    })}
                                     className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-blue-400"
                                 >
-                                    <option value="">Sin equipo</option>
+                                    <option value="">Sin departamento</option>
                                     {teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
                                 </select>
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Persona asignada</p>
                                 <select
                                     value={selectedTicket.assignee_id ?? ''}
                                     onChange={(event) => void updateSelectedTicketFields({ assignee_id: event.target.value || null, assignment_status: event.target.value ? 'assigned' : 'needs_assignment' })}
                                     className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-blue-400"
                                 >
                                     <option value="">Sin agente</option>
-                                    {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.full_name}</option>)}
+                                    {agents
+                                        .filter((agent) => agent.helpdesk_all_departments
+                                            || !selectedTicket.team_id
+                                            || agent.support_team_members?.some((membership) => membership.team_id === selectedTicket.team_id))
+                                        .map((agent) => <option key={agent.id} value={agent.id}>{agent.full_name}</option>)}
                                 </select>
                             </div>
                         </section>
@@ -2345,3 +2561,19 @@ const SupportCommandCenter: React.FC = () => {
 };
 
 export default SupportCommandCenter;
+
+function FilterSelect({ label, value, onChange, children }: {
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+    children: React.ReactNode;
+}) {
+    return (
+        <label className="block">
+            <span className="mb-1 block text-[11px] font-semibold text-slate-600">{label}</span>
+            <select value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700">
+                {children}
+            </select>
+        </label>
+    );
+}

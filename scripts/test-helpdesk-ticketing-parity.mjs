@@ -3,14 +3,22 @@ import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-const [component, service, api, deliveryWebhook, migration, optimizationMigration, unreadMigration, config, workflow] = await Promise.all([
+const [component, service, api, auth, accessPage, accessService, messagesApi, draftApi, replyApi, resolveApi, deliveryWebhook, migration, optimizationMigration, unreadMigration, departmentMigration, config, workflow] = await Promise.all([
     read('src/pages/SupportCommandCenter.tsx'),
     read('src/lib/helpdeskService.ts'),
     read('supabase/functions/helpdesk-api/index.ts'),
+    read('supabase/functions/_shared/helpdesk-auth.ts'),
+    read('src/pages/AccessManagement.tsx'),
+    read('src/lib/accessService.ts'),
+    read('supabase/functions/get-support-messages/index.ts'),
+    read('supabase/functions/generate-support-draft/index.ts'),
+    read('supabase/functions/send-support-reply/index.ts'),
+    read('supabase/functions/resolve-support-ticket/index.ts'),
     read('supabase/functions/process-resend-delivery/index.ts'),
     read('supabase/migrations/20260804005059_helpdesk_ticketing_parity.sql'),
     read('supabase/migrations/20260804023000_helpdesk_performance_hardening.sql'),
     read('supabase/migrations/20260804133607_helpdesk_ticket_read_receipts.sql'),
+    read('supabase/migrations/20260804182549_helpdesk_department_access.sql'),
     read('supabase/config.toml'),
     read('.github/workflows/deploy-supabase-functions.yml'),
 ]);
@@ -69,6 +77,27 @@ for (const unreadContract of [
 assert.ok(service.includes('markHelpdeskTicketRead'), 'HelpDesk service must expose mark-as-read');
 assert.ok(component.includes('sin leer'), 'HelpDesk UI must show the unread count');
 assert.ok(component.includes('Nuevo'), 'HelpDesk UI must highlight unread tickets');
+for (const departmentContract of [
+    'helpdesk_all_departments',
+    'Administración (Gerencia)',
+    'MSmall',
+    'cloud_admin_can_access_support_ticket',
+    'support_team_members',
+    'assign_default_helpdesk_department_trigger',
+]) {
+    assert.ok(departmentMigration.includes(departmentContract), `Department migration is missing ${departmentContract}`);
+}
+for (const protectedFunction of [api, messagesApi, draftApi, replyApi, resolveApi]) {
+    assert.ok(protectedFunction.includes('assertHelpdeskTicketAccess'), 'Every HelpDesk ticket API must enforce department access');
+}
+assert.ok(auth.includes('canViewAllDepartments'), 'HelpDesk actor must expose global department access');
+for (const departmentUi of ['Departamentos visibles', 'Acceso avanzado a todos', 'Nuevo departamento']) {
+    assert.ok(accessPage.includes(departmentUi), `Access management is missing ${departmentUi}`);
+}
+assert.ok(accessService.includes('syncUserDepartments'), 'Access management must persist department memberships');
+for (const commandCenterFeature of ['Más filtros', 'Buscar dentro de esta conversación', 'Sin persona asignada', 'PanelLeftClose', 'departmentUnreadCounts']) {
+    assert.ok(component.includes(commandCenterFeature), `Command Center is missing ${commandCenterFeature}`);
+}
 assert.match(migration, /Tenants can view messages[\s\S]*?visibility = 'public'/, 'Private notes must be hidden from tenant message reads');
 assert.match(migration, /Tenants can insert messages[\s\S]*?visibility = 'public'[\s\S]*?sender_type = 'Client'/, 'Tenant message inserts must remain public client messages');
 
