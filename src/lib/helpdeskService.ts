@@ -51,6 +51,19 @@ export interface HelpdeskTicketUnreadState {
     is_unread: boolean;
 }
 
+interface HelpdeskBootstrapResponse {
+    tickets: unknown[];
+    agents: HelpdeskAgentOption[];
+    teams: HelpdeskTeamOption[];
+    templates: HelpdeskReplyTemplate[];
+    previews: unknown[];
+    unread_states: HelpdeskTicketUnreadState[];
+    actor_access: {
+        all_departments: boolean;
+        department_ids: string[];
+    };
+}
+
 interface FunctionErrorPayload {
     error?: string;
     detail?: string;
@@ -75,18 +88,22 @@ export async function invokeHelpdesk<T>(action: string, payload: Record<string, 
 }
 
 export async function fetchHelpdeskBootstrap(query = '') {
-    return invokeHelpdesk<{
-        tickets: unknown[];
-        agents: HelpdeskAgentOption[];
-        teams: HelpdeskTeamOption[];
-        templates: HelpdeskReplyTemplate[];
-        previews: unknown[];
-        unread_states: HelpdeskTicketUnreadState[];
-        actor_access: {
-            all_departments: boolean;
-            department_ids: string[];
-        };
-    }>('bootstrap', { query });
+    const response = await invokeHelpdesk<Partial<HelpdeskBootstrapResponse> | null>('bootstrap', { query });
+    const actorAccess = response?.actor_access;
+
+    if (!actorAccess || typeof actorAccess.all_departments !== 'boolean' || !Array.isArray(actorAccess.department_ids)) {
+        throw new Error('El servicio del HelpDesk está desactualizado. Recarga la página e intenta nuevamente.');
+    }
+
+    return {
+        tickets: Array.isArray(response.tickets) ? response.tickets : [],
+        agents: Array.isArray(response.agents) ? response.agents : [],
+        teams: Array.isArray(response.teams) ? response.teams : [],
+        templates: Array.isArray(response.templates) ? response.templates : [],
+        previews: Array.isArray(response.previews) ? response.previews : [],
+        unread_states: Array.isArray(response.unread_states) ? response.unread_states : [],
+        actor_access: actorAccess,
+    } satisfies HelpdeskBootstrapResponse;
 }
 
 export async function fetchHelpdeskTicketSnapshot(ticketId: string) {
