@@ -9,6 +9,7 @@ import {
     ExternalLink,
     FileText,
     Filter,
+    Focus,
     Forward,
     GitMerge,
     Image as ImageIcon,
@@ -311,6 +312,23 @@ function formatTime(value: string) {
         hour: '2-digit',
         minute: '2-digit',
     }).format(date);
+}
+
+function formatDuration(startValue: string, endValue?: string) {
+    const start = new Date(startValue).getTime();
+    const end = endValue ? new Date(endValue).getTime() : Date.now();
+    if (Number.isNaN(start) || Number.isNaN(end) || end < start) return 'N/D';
+
+    const totalMinutes = Math.max(0, Math.floor((end - start) / 60_000));
+    if (totalMinutes < 60) return `${totalMinutes} min`;
+
+    const totalHours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (totalHours < 24) return minutes ? `${totalHours} h ${minutes} min` : `${totalHours} h`;
+
+    const days = Math.floor(totalHours / 24);
+    const hours = totalHours % 24;
+    return hours ? `${days} d ${hours} h` : `${days} d`;
 }
 
 function formatStatusLabel(status: string) {
@@ -678,6 +696,7 @@ const SupportCommandCenter: React.FC = () => {
     const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
     const [showTicketList, setShowTicketList] = useState(true);
     const [showContextPanel, setShowContextPanel] = useState(true);
+    const [isFocusMode, setIsFocusMode] = useState(false);
     const [actorDepartmentAccess, setActorDepartmentAccess] = useState<{ all: boolean; ids: string[] }>({ all: false, ids: [] });
     const [conversationSearch, setConversationSearch] = useState('');
     const [conversationMatchIndex, setConversationMatchIndex] = useState(0);
@@ -704,6 +723,14 @@ const SupportCommandCenter: React.FC = () => {
     const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     const selectedTicketId = selectedTicket?.id;
+
+    useEffect(() => {
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setIsFocusMode(false);
+        };
+        window.addEventListener('keydown', handleEscape);
+        return () => window.removeEventListener('keydown', handleEscape);
+    }, []);
 
     useEffect(() => {
         const pane = messagesPaneRef.current;
@@ -1103,6 +1130,18 @@ const SupportCommandCenter: React.FC = () => {
         if (!needle) return [];
         return messages.filter((message) => message.message.toLocaleLowerCase('es').includes(needle));
     }, [conversationSearch, messages]);
+
+    const ticketTimeline = useMemo(() => {
+        if (!selectedTicket) return null;
+        const publicMessages = messages.filter((message) => message.visibility !== 'private');
+        const firstAgentReply = publicMessages.find((message) => message.sender_type === 'Admin');
+        const lastMessage = publicMessages[publicMessages.length - 1];
+        return {
+            firstResponse: firstAgentReply ? formatDuration(selectedTicket.created_at, firstAgentReply.created_at) : 'Pendiente',
+            openTime: formatDuration(selectedTicket.created_at, isClosedTicket(selectedTicket) ? lastMessage?.created_at : undefined),
+            lastActivity: lastMessage ? formatTime(lastMessage.created_at) : formatTime(selectedTicket.created_at),
+        };
+    }, [messages, selectedTicket]);
 
     useEffect(() => {
         if (!conversationMatches.length) {
@@ -1535,8 +1574,8 @@ const SupportCommandCenter: React.FC = () => {
 
     return (
         <div className="relative flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
-            {showTicketList ? (
-            <aside className="flex min-h-0 w-[380px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm">
+            {showTicketList && !isFocusMode ? (
+            <aside className="flex min-h-0 w-[350px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm">
                 <div className="shrink-0 border-b border-slate-100 p-4">
                     <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
@@ -1819,7 +1858,7 @@ const SupportCommandCenter: React.FC = () => {
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
                 {selectedTicket ? (
                     <>
-                        <div className="shrink-0 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white p-4">
+                        <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-4">
                             <div className="flex items-start justify-between gap-4">
                                 <div className="min-w-0">
                                     <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -1848,19 +1887,23 @@ const SupportCommandCenter: React.FC = () => {
                                         <span className="shrink-0 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-black text-slate-500">
                                             {getTicketNumberLabel(selectedTicket)}
                                         </span>
-                                        <h2 className="truncate text-lg font-bold text-slate-900">{getTicketOwner(selectedTicket)}</h2>
+                                        <h2 className="truncate text-xl font-black tracking-tight text-slate-950">{selectedTicket.subject}</h2>
                                     </div>
-                                    <p className="mt-1 text-sm text-slate-500">{selectedTicket.subject}</p>
+                                    <p className="mt-1 text-sm font-medium text-slate-500">{getTicketOwner(selectedTicket)}</p>
                                 </div>
 
                                 <div className="flex shrink-0 gap-2">
-                                    {!showTicketList ? (
-                                        <button type="button" onClick={() => setShowTicketList(true)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title="Mostrar lista de tickets">
+                                    {(!showTicketList || isFocusMode) ? (
+                                        <button type="button" onClick={() => { setShowTicketList(true); setIsFocusMode(false); }} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title="Mostrar lista de tickets">
                                             <PanelLeftOpen size={15} />
                                         </button>
                                     ) : null}
-                                    <button type="button" onClick={() => setShowContextPanel((current) => !current)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title={showContextPanel ? 'Ocultar contexto' : 'Mostrar contexto'}>
-                                        {showContextPanel ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+                                    <button type="button" onClick={() => setIsFocusMode((current) => !current)} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${isFocusMode ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:text-indigo-700'}`} title={isFocusMode ? 'Salir del modo concentración (Esc)' : 'Ocultar paneles laterales'}>
+                                        <Focus size={15} />
+                                        <span className="hidden xl:inline">{isFocusMode ? 'Salir de concentración' : 'Modo concentración'}</span>
+                                    </button>
+                                    <button type="button" onClick={() => { if (isFocusMode) { setIsFocusMode(false); setShowContextPanel(true); } else { setShowContextPanel((current) => !current); } }} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title={showContextPanel && !isFocusMode ? 'Ocultar contexto' : 'Mostrar contexto'}>
+                                        {showContextPanel && !isFocusMode ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
                                     </button>
                                     <button onClick={() => updateStatus('En_Proceso')} disabled={isResolvingTicket} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
                                         En proceso
@@ -1870,6 +1913,16 @@ const SupportCommandCenter: React.FC = () => {
                                     </button>
                                 </div>
                             </div>
+
+                            {ticketTimeline ? (
+                                <div className="mt-4 grid grid-cols-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80 sm:grid-cols-3 xl:grid-cols-5">
+                                    <TicketMetric label="Creado" value={formatTime(selectedTicket.created_at)} />
+                                    <TicketMetric label="Primera respuesta" value={ticketTimeline.firstResponse} />
+                                    <TicketMetric label="Tiempo abierto" value={ticketTimeline.openTime} />
+                                    <TicketMetric label="SLA" value={slaLabels[selectedTicket.contact?.metadata?.sla ?? 'standard'] ?? 'Estándar'} accent />
+                                    <TicketMetric label="Última actividad" value={ticketTimeline.lastActivity} />
+                                </div>
+                            ) : null}
 
                             {selectedTicket.resolution_status === 'pending_customer_confirmation' && (
                                 <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -1922,7 +1975,7 @@ const SupportCommandCenter: React.FC = () => {
                                     Aún no hay mensajes en este ticket.
                                 </div>
                             ) : null}
-                            <div className="mx-auto flex max-w-3xl flex-col gap-3">
+                            <div className="mx-auto flex max-w-4xl flex-col gap-3">
                             {messages.map((message) => {
                                 const attachments = normalizeMessageAttachments(message.attachments);
                                 const isAdminMessage = message.sender_type === 'Admin';
@@ -1935,7 +1988,7 @@ const SupportCommandCenter: React.FC = () => {
                                         ref={(element) => { messageElementRefs.current[message.id] = element; }}
                                         className={`flex rounded-2xl ${conversationMatches[conversationMatchIndex]?.id === message.id ? 'ring-2 ring-yellow-300 ring-offset-2' : ''} ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}
                                     >
-                                        <div className={`max-w-[min(72%,640px)] rounded-2xl px-4 py-3 text-sm shadow-sm ${isPrivateMessage ? 'rounded-br-md border border-amber-300 bg-amber-50 text-amber-950' : isAdminMessage ? 'rounded-br-md bg-blue-600 text-white' : isSystemMessage ? 'max-w-xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
+                                        <div className={`max-w-[min(82%,760px)] rounded-2xl px-4 py-3 text-sm shadow-sm ${isPrivateMessage ? 'rounded-br-md border border-amber-300 bg-amber-50 text-amber-950' : isAdminMessage ? 'rounded-br-md border border-blue-100 bg-blue-50 text-slate-800' : isSystemMessage ? 'max-w-xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
                                             <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide opacity-75">
                                                 <span>{isPrivateMessage ? 'Nota interna' : isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}</span>
                                                 <span className="font-medium normal-case tracking-normal">{formatTime(message.created_at)}</span>
@@ -1943,7 +1996,7 @@ const SupportCommandCenter: React.FC = () => {
                                             <p className="whitespace-pre-wrap break-words leading-relaxed">{renderHighlightedText(message.message, conversationSearch)}</p>
 
                                             {isAdminMessage && !isPrivateMessage && message.delivery_status && (
-                                                <div className={`mt-2 flex items-center justify-end gap-1 text-[10px] font-semibold ${['failed', 'bounced'].includes(message.delivery_status) ? 'text-red-100' : 'opacity-75'}`}>
+                                                <div className={`mt-2 flex items-center justify-end gap-1 text-[10px] font-semibold ${['failed', 'bounced'].includes(message.delivery_status) ? 'text-red-600' : 'text-slate-500'}`}>
                                                     {message.delivery_status === 'sent' || message.delivery_status === 'delivered' ? <CheckCircle2 size={11} /> : ['failed', 'bounced'].includes(message.delivery_status) ? <AlertTriangle size={11} /> : <Clock3 size={11} />}
                                                     {message.delivery_status === 'bounced' ? 'Correo rebotado' : message.delivery_status === 'failed' ? 'Falló la entrega' : message.delivery_status === 'delivered' ? 'Entregado' : message.delivery_status === 'queued' ? 'En cola' : 'Enviado'}
                                                     {['failed', 'bounced'].includes(message.delivery_status) && <button type="button" onClick={() => void retryDelivery(message)} className="ml-1 rounded border border-white/30 px-1.5 py-0.5 hover:bg-white/10">Reintentar</button>}
@@ -2017,7 +2070,7 @@ const SupportCommandCenter: React.FC = () => {
                         </div>
 
                         <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-4">
-                            <div className="mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                            <div className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                                 {workspacePresence.some((presence) => presence.admin_user_id !== currentActorId) && (
                                     <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
                                         <Users size={14} />
@@ -2158,8 +2211,8 @@ const SupportCommandCenter: React.FC = () => {
                 )}
             </main>
 
-            {selectedTicket && showContextPanel && (
-                <aside className="flex min-h-0 w-[320px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+            {selectedTicket && showContextPanel && !isFocusMode && (
+                <aside className="flex min-h-0 w-[300px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
                     <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 p-4">
                         <div>
                             <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800">Contexto</h3>
@@ -2561,6 +2614,15 @@ const SupportCommandCenter: React.FC = () => {
 };
 
 export default SupportCommandCenter;
+
+function TicketMetric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+    return (
+        <div className="min-w-0 border-b border-r border-slate-200 px-3 py-2.5 last:border-r-0 sm:border-b-0">
+            <p className="truncate text-[10px] font-black uppercase tracking-[0.12em] text-slate-400">{label}</p>
+            <p className={`mt-1 truncate text-xs font-bold ${accent ? 'text-amber-700' : 'text-slate-700'}`}>{value}</p>
+        </div>
+    );
+}
 
 function FilterSelect({ label, value, onChange, children }: {
     label: string;
