@@ -85,7 +85,12 @@ const ticketSelect = `
     created_at,
     updated_at,
     tenants (name),
-    support_contacts (id, email, name, company_name, phone, metadata, tenant_id),
+    support_contacts (
+        id, email, name, company_name, phone, metadata, tenant_id,
+        has_retainership, administrative_notes, store_created_at,
+        service_started_at, renewal_at, last_suspended_at,
+        customer_services (id, service_name, quantity, status, renewal_at, next_charge_at, additional_charge, scheduled_action, scheduled_action_at)
+    ),
     ai_ticket_insights (
         sentiment,
         sentiment_score,

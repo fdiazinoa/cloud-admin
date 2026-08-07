@@ -9,6 +9,7 @@ import { hasCloudAdminPermission } from './lib/cloudAdminPermissions'
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
 const Tenants = lazy(() => import('./pages/Tenants').then((module) => ({ default: module.Tenants })));
+const Customers = lazy(() => import('./pages/Customers').then((module) => ({ default: module.Customers })));
 const KillSwitch = lazy(() => import('./pages/KillSwitch').then((module) => ({ default: module.KillSwitch })));
 const Plans = lazy(() => import('./pages/Plans').then((module) => ({ default: module.Plans })));
 const Configuration = lazy(() => import('./pages/Configuration').then((module) => ({ default: module.Configuration })));
@@ -198,6 +199,7 @@ function App() {
                 >
                     <Route index element={<PermissionGate allowed={allowed('dashboard_view')}><Dashboard /></PermissionGate>} />
                     <Route path="tenants" element={<PermissionGate allowed={allowed('tenants_view')}><Tenants /></PermissionGate>} />
+                    <Route path="clientes" element={<PermissionGate allowed={allowed('tenants_view')}><Customers /></PermissionGate>} />
                     <Route path="plans" element={<PermissionGate allowed={allowed('plans_view')}><Plans /></PermissionGate>} />
                     <Route path="pos-apk" element={<PermissionGate allowed={allowed('apk_view')}><PosApkReleases /></PermissionGate>} />
                     <Route path="support" element={<PermissionGate allowed={allowed('support_view')}><SupportCommandCenter /></PermissionGate>} />
