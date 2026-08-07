@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Activity, BookOpen, CalendarDays, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
+import { Activity, BookOpen, CalendarDays, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Menu, Settings, Smartphone, Lightbulb, UserCog, X } from 'lucide-react';
 
 interface LayoutProps {
     adminName?: string | null;
@@ -51,6 +51,8 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
     const isImmersiveWorkspace = location.pathname === '/support';
     const isSupportRoute = location.pathname === '/support';
     const [supportHeaderStats, setSupportHeaderStats] = useState<SupportCenterHeaderStats | null>(null);
+    const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+    const currentLabel = navItems.find((item) => item.path === location.pathname)?.label || 'CLIC-CLOUD';
 
     useEffect(() => {
         const handleSupportHeaderStats = (event: Event) => {
@@ -84,7 +86,7 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                     <h1 className="text-xl font-bold tracking-tight text-indigo-400">CLIC-CLOUD</h1>
                     <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-semibold">Super Admin</p>
                 </div>
-                <nav className="flex-1 px-4 space-y-1">
+                <nav className="flex-1 space-y-1 overflow-y-auto px-4 pb-4">
                     {navItems.map((item) => (
                         <NavLink
                             key={item.path}
@@ -124,29 +126,39 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
             </aside>
             {/* END: Navigation Sidebar */}
 
+            {mobileNavigationOpen ? (
+                <div className="fixed inset-0 z-50 lg:hidden">
+                    <button type="button" aria-label="Cerrar navegación" onClick={() => setMobileNavigationOpen(false)} className="absolute inset-0 bg-slate-950/55 backdrop-blur-sm" />
+                    <aside className="relative flex h-full w-[min(86vw,320px)] flex-col border-r border-slate-800 bg-slate-900 text-white shadow-2xl">
+                        <div className="flex items-center justify-between p-5">
+                            <div><h1 className="text-lg font-black tracking-tight text-indigo-400">CLIC-CLOUD</h1><p className="mt-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Cloud Admin</p></div>
+                            <button type="button" onClick={() => setMobileNavigationOpen(false)} className="rounded-lg border border-slate-700 p-2 text-slate-300"><X size={18} /></button>
+                        </div>
+                        <nav className="flex-1 space-y-1 overflow-y-auto px-4 pb-4">
+                            {navItems.map((item) => (
+                                <NavLink key={item.path} to={item.path} end={item.path === '/'} onClick={() => setMobileNavigationOpen(false)} className={({ isActive }) => `flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium ${isActive ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>
+                                    <item.icon className="h-5 w-5" />{item.label}
+                                </NavLink>
+                            ))}
+                        </nav>
+                        <div className="border-t border-slate-800 p-4">
+                            <p className="truncate text-xs font-bold">{adminEmail || 'Sin correo'}</p><p className="mt-1 truncate text-[10px] text-slate-400">{adminRole || 'Cloud Admin'}</p>
+                            <button type="button" onClick={onSignOut} disabled={signingOut} className="mt-3 flex w-full items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-bold text-slate-200"><LogOut size={16} />{signingOut ? 'Cerrando...' : 'Cerrar sesión'}</button>
+                        </div>
+                    </aside>
+                </div>
+            ) : null}
+
             {/* BEGIN: Main Content Container */}
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 {/* BEGIN: Slim Header */}
-                <header className="min-h-16 border-b border-slate-200 bg-white/80 sticky top-0 z-10 flex items-center justify-between gap-4 px-8 py-2 backdrop-blur-md">
-                    <div className="flex min-w-0 flex-1 items-center gap-4 flex-wrap">
-                        <h2 className="text-lg font-semibold text-slate-800">Console Overview</h2>
-                        <div className="h-6 w-px bg-slate-200"></div>
-                        <div className="flex items-center gap-2">
-                            <label className="text-xs font-medium text-slate-500" htmlFor="periodo">Periodo:</label>
-                            <select
-                                className="text-xs font-semibold border-none bg-slate-100 rounded-md focus:ring-indigo-500 py-1 pl-2 pr-8 outline-none"
-                                id="periodo"
-                                defaultValue="30d"
-                            >
-                                <option value="hoy">Hoy</option>
-                                <option value="7d">7d</option>
-                                <option value="30d">30d</option>
-                                <option value="ano">Año</option>
-                            </select>
-                        </div>
+                <header className="sticky top-0 z-10 flex min-h-16 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 py-2 backdrop-blur-md sm:px-6 xl:px-8">
+                    <button type="button" onClick={() => setMobileNavigationOpen(true)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-700 shadow-sm lg:hidden" aria-label="Abrir navegación"><Menu size={19} /></button>
+                    <div className="flex min-w-0 flex-1 items-center gap-4">
+                        <h2 className="shrink-0 truncate text-base font-black text-slate-800 sm:text-lg">{currentLabel}</h2>
 
                         {isSupportRoute && supportHeaderStats ? (
-                            <div className="ml-auto flex items-center gap-2">
+                            <div className="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto py-1">
                                 <button
                                     type="button"
                                     onClick={() => triggerSupportQuickFilter('open')}
