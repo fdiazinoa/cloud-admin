@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Activity, BookOpen, CalendarDays, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
+import { Activity, BookOpen, Building2, CalendarDays, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
 import type { CloudAdminPermissionKey, CloudAdminPermissions } from '../types';
 import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
 
@@ -26,6 +26,7 @@ interface SupportCenterHeaderStats {
 const navItems: Array<{ path: string; label: string; icon: React.ComponentType<{ className?: string }>; permission: CloudAdminPermissionKey }> = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard_view' },
     { path: '/tenants', label: 'Tenants', icon: Users, permission: 'tenants_view' },
+    { path: '/clientes', label: 'Clientes', icon: Building2, permission: 'tenants_view' },
     { path: '/plans', label: 'Planes SaaS', icon: BadgeDollarSign, permission: 'plans_view' },
     { path: '/pos-apk', label: 'APK POS', icon: Smartphone, permission: 'apk_view' },
     { path: '/support', label: 'Helpdesk & Soporte', icon: Headset, permission: 'support_view' },
