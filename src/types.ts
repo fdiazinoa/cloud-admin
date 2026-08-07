@@ -352,9 +352,51 @@ export type CloudAdminPermissionKey =
     | 'billing'
     | 'settings'
     | 'kill_switch'
-    | 'users';
+    | 'users'
+    | 'dashboard_view'
+    | 'tenants_view'
+    | 'tenants_manage'
+    | 'tenants_delete'
+    | 'plans_view'
+    | 'plans_manage'
+    | 'support_view'
+    | 'support_manage'
+    | 'knowledge_view'
+    | 'knowledge_manage'
+    | 'calendar_view'
+    | 'calendar_manage'
+    | 'improvements_view'
+    | 'improvements_manage'
+    | 'internal_requests_view'
+    | 'internal_requests_manage'
+    | 'apk_view'
+    | 'apk_manage'
+    | 'observability_view'
+    | 'billing_view'
+    | 'billing_manage'
+    | 'settings_view'
+    | 'settings_manage'
+    | 'kill_switch_execute'
+    | 'users_view'
+    | 'users_manage'
+    | 'profiles_manage'
+    | 'audit_view';
 
 export type CloudAdminPermissions = Record<CloudAdminPermissionKey, boolean>;
+
+export interface CloudAdminAuditEvent {
+    id: string;
+    actor_admin_user_id?: string | null;
+    actor_email?: string | null;
+    action: string;
+    entity_type: string;
+    entity_id?: string | null;
+    before_data?: Record<string, unknown> | null;
+    after_data?: Record<string, unknown> | null;
+    request_ip?: string | null;
+    user_agent?: string | null;
+    created_at: string;
+}
 
 export interface CloudAdminProfile {
     id: string;
