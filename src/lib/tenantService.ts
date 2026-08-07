@@ -39,6 +39,7 @@ export interface DashboardStats {
     tenantGrowth: DashboardTrendPoint[];
     recentTickets: DashboardTicket[];
     expiringSubscriptions: DashboardExpiringSubscription[];
+    inactiveTenants: DashboardInactiveTenant[];
     supportSatisfaction: DashboardSupportSatisfaction;
     lastUpdatedAt: string;
 }
@@ -75,6 +76,14 @@ export interface DashboardExpiringSubscription {
     planName: string;
     endDate: string;
     daysRemaining: number;
+}
+
+export interface DashboardInactiveTenant {
+    tenantId: string;
+    tenantName: string;
+    lastActivityAt: string | null;
+    daysInactive: number;
+    status: string;
 }
 
 type CreateTenantInput = ProvisionTenantInput;
@@ -2128,7 +2137,7 @@ export async function requestTerminalFiscalConfig(
 
 export async function getDashboardStats(): Promise<DashboardStats> {
     const [tenantsRes, terminalsRes, subscriptionRows, ticketRows] = await Promise.all([
-        supabaseAdmin.from("tenants").select("id,name,status,created_at"),
+        supabaseAdmin.from("tenants").select("id,name,status,created_at,last_sync_received_at,cloud_channel"),
         supabaseAdmin.schema("public").from("terminals").select("id", { count: "exact", head: true }),
         getDashboardSubscriptions(),
         getDashboardTickets(),
@@ -2137,7 +2146,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     if (tenantsRes.error) throw tenantsRes.error;
     if (terminalsRes.error) throw terminalsRes.error;
 
-    const tenantRows = ((tenantsRes.data as Array<Pick<Tenant, "id" | "name" | "status" | "created_at">>) || []);
+    const tenantRows = ((tenantsRes.data as Array<Pick<Tenant, "id" | "name" | "status" | "created_at" | "last_sync_received_at" | "cloud_channel">>) || []);
     const tenantsById = new Map(tenantRows.map((tenant) => [tenant.id, tenant]));
     const activeTenants = tenantRows.filter((tenant) => tenant.status === "ACTIVE").length;
     const trialTenants = tenantRows.filter((tenant) => tenant.status === "TRIAL").length;
@@ -2177,6 +2186,30 @@ export async function getDashboardStats(): Promise<DashboardStats> {
             tenantName: ticket.tenant_id ? tenantsById.get(ticket.tenant_id)?.name || "Sin tenant asignado" : "Sin tenant asignado",
             createdAt: ticket.created_at,
         }));
+    const inactivityThreshold = Date.now() - (3 * 86400000);
+    const inactiveTenants = tenantRows
+        .filter((tenant) => ['ACTIVE', 'TRIAL'].includes(tenant.status) && tenant.cloud_channel !== 'NONE')
+        .map((tenant) => {
+            const lastActivityAt = tenant.last_sync_received_at || tenant.created_at;
+            return {
+                tenantId: tenant.id,
+                tenantName: tenant.name,
+                lastActivityAt: tenant.last_sync_received_at || null,
+                daysInactive: Math.max(0, Math.floor((Date.now() - new Date(lastActivityAt).getTime()) / 86400000)),
+                status: tenant.status,
+                activityTimestamp: new Date(lastActivityAt).getTime(),
+            };
+        })
+        .filter((tenant) => tenant.activityTimestamp < inactivityThreshold)
+        .sort((a, b) => a.activityTimestamp - b.activityTimestamp)
+        .slice(0, 10)
+        .map((tenant) => ({
+            tenantId: tenant.tenantId,
+            tenantName: tenant.tenantName,
+            lastActivityAt: tenant.lastActivityAt,
+            daysInactive: tenant.daysInactive,
+            status: tenant.status,
+        }));
 
     return {
         totalTenants: tenantRows.length,
@@ -2190,6 +2223,7 @@ export async function getDashboardStats(): Promise<DashboardStats> {
         tenantGrowth: buildTenantGrowth(tenantRows),
         recentTickets,
         expiringSubscriptions,
+        inactiveTenants,
         supportSatisfaction: buildSupportSatisfaction(ticketRows),
         lastUpdatedAt: new Date().toISOString(),
     };
