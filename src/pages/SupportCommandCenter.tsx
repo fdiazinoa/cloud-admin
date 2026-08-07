@@ -92,6 +92,23 @@ interface SupportContact {
     company_name?: string | null;
     phone?: string | null;
     tenant_id?: string | null;
+    has_retainership?: boolean | null;
+    administrative_notes?: string | null;
+    store_created_at?: string | null;
+    service_started_at?: string | null;
+    renewal_at?: string | null;
+    last_suspended_at?: string | null;
+    customer_services?: Array<{
+        id: string;
+        service_name: string;
+        quantity: number;
+        status: string;
+        renewal_at?: string | null;
+        next_charge_at?: string | null;
+        additional_charge?: number | null;
+        scheduled_action?: string | null;
+        scheduled_action_at?: string | null;
+    }> | null;
     metadata?: {
         sla?: string;
         [key: string]: unknown;
@@ -420,6 +437,11 @@ function getTicketNumberLabel(ticket: Ticket) {
 
 function getTicketRecipientEmail(ticket: Ticket) {
     return ticket.contact?.email || ticket.external_sender_email || '';
+}
+
+function formatCustomerDate(value?: string | null) {
+    if (!value) return 'No definida';
+    return new Intl.DateTimeFormat('es-DO', { dateStyle: 'medium' }).format(new Date(`${value.slice(0, 10)}T12:00:00`));
 }
 
 function normalizeDuplicateKey(value: string) {
@@ -2288,6 +2310,28 @@ const SupportCommandCenter: React.FC = () => {
                                 {selectedTicket.contact?.metadata?.sla && (
                                     <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-600">
                                         SLA: <span className="font-bold text-slate-800">{slaLabels[selectedTicket.contact.metadata.sla] ?? selectedTicket.contact.metadata.sla}</span>
+                                    </div>
+                                )}
+
+                                {selectedTicket.contact && (
+                                    <div className="mt-3 space-y-2 border-t border-slate-200 pt-3 text-xs">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-slate-500">Contrato</span>
+                                            <span className={`rounded-full px-2 py-0.5 font-bold ${selectedTicket.contact.has_retainership ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                                                {selectedTicket.contact.has_retainership ? 'Iguala' : 'Sin iguala'}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center justify-between"><span className="text-slate-500">Renovación</span><span className="font-bold text-slate-800">{formatCustomerDate(selectedTicket.contact.renewal_at)}</span></div>
+                                        <div>
+                                            <p className="mb-1 font-bold text-slate-700">Servicios activos</p>
+                                            <div className="flex flex-wrap gap-1">
+                                                {(selectedTicket.contact.customer_services ?? []).filter((service) => service.status === 'active').map((service) => (
+                                                    <span key={service.id} className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-1 font-bold text-indigo-700">{service.service_name} × {service.quantity}</span>
+                                                ))}
+                                                {!(selectedTicket.contact.customer_services ?? []).some((service) => service.status === 'active') ? <span className="text-slate-400">Sin servicios registrados</span> : null}
+                                            </div>
+                                        </div>
+                                        {selectedTicket.contact.administrative_notes ? <p className="rounded-lg border border-amber-100 bg-amber-50 p-2 text-amber-800">{selectedTicket.contact.administrative_notes}</p> : null}
                                     </div>
                                 )}
 

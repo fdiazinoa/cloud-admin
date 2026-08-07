@@ -7,6 +7,7 @@ import type { CloudAdminProfile, CloudAdminUser } from './types'
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
 const Tenants = lazy(() => import('./pages/Tenants').then((module) => ({ default: module.Tenants })));
+const Customers = lazy(() => import('./pages/Customers').then((module) => ({ default: module.Customers })));
 const KillSwitch = lazy(() => import('./pages/KillSwitch').then((module) => ({ default: module.KillSwitch })));
 const Plans = lazy(() => import('./pages/Plans').then((module) => ({ default: module.Plans })));
 const Configuration = lazy(() => import('./pages/Configuration').then((module) => ({ default: module.Configuration })));
@@ -192,6 +193,7 @@ function App() {
                 >
                     <Route index element={<Dashboard />} />
                     <Route path="tenants" element={<Tenants />} />
+                    <Route path="clientes" element={<Customers />} />
                     <Route path="plans" element={<Plans />} />
                     <Route path="pos-apk" element={<PosApkReleases />} />
                     <Route path="support" element={cloudAdminSession.profile?.permissions.support ? <SupportCommandCenter /> : <Navigate to="/" replace />} />
