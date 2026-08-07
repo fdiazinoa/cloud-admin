@@ -1,9 +1,11 @@
-import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { supabase, supabaseAdmin } from './lib/supabase'
 import type { CloudAdminProfile, CloudAdminUser } from './types'
+import type { CloudAdminPermissionKey } from './types'
+import { hasCloudAdminPermission } from './lib/cloudAdminPermissions'
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
 const Tenants = lazy(() => import('./pages/Tenants').then((module) => ({ default: module.Tenants })));
@@ -174,6 +176,9 @@ function App() {
         return <LoginScreen error={authError} onLogin={handleLogin} />;
     }
 
+    const permissions = cloudAdminSession.profile?.permissions;
+    const allowed = (permission: CloudAdminPermissionKey) => hasCloudAdminPermission(permissions, permission);
+
     return (
         <HashRouter>
             <Suspense fallback={<PageLoadingScreen />}>
@@ -185,30 +190,44 @@ function App() {
                             adminName={cloudAdminSession.adminUser.full_name}
                             adminEmail={cloudAdminSession.adminUser.email || cloudAdminSession.authUser.email}
                             adminRole={cloudAdminSession.profile?.name || 'Cloud Admin'}
+                            permissions={permissions}
                             signingOut={signingOut}
                             onSignOut={() => void handleSignOut()}
                         />
                     )}
                 >
-                    <Route index element={<Dashboard />} />
-                    <Route path="tenants" element={<Tenants />} />
-                    <Route path="plans" element={<Plans />} />
-                    <Route path="pos-apk" element={<PosApkReleases />} />
-                    <Route path="support" element={cloudAdminSession.profile?.permissions.support ? <SupportCommandCenter /> : <Navigate to="/" replace />} />
-                    <Route path="conocimiento" element={cloudAdminSession.profile?.permissions.support ? <KnowledgeCenter /> : <Navigate to="/" replace />} />
-                    <Route path="calendario" element={cloudAdminSession.profile?.permissions.support ? <ImplementationCalendar /> : <Navigate to="/" replace />} />
-                    <Route path="mejoras" element={<CustomerImprovements />} />
-                    <Route path="solicitudes-internas" element={cloudAdminSession.profile?.permissions.improvements ? <InternalRequests /> : <Navigate to="/" replace />} />
-                    <Route path="configuracion" element={<Configuration />} />
-                    <Route path="observabilidad" element={<OperationalObservability />} />
-                    <Route path="accesos" element={<AccessManagement />} />
-                    <Route path="kill-switch" element={<KillSwitch />} />
+                    <Route index element={<PermissionGate allowed={allowed('dashboard_view')}><Dashboard /></PermissionGate>} />
+                    <Route path="tenants" element={<PermissionGate allowed={allowed('tenants_view')}><Tenants /></PermissionGate>} />
+                    <Route path="plans" element={<PermissionGate allowed={allowed('plans_view')}><Plans /></PermissionGate>} />
+                    <Route path="pos-apk" element={<PermissionGate allowed={allowed('apk_view')}><PosApkReleases /></PermissionGate>} />
+                    <Route path="support" element={<PermissionGate allowed={allowed('support_view')}><SupportCommandCenter /></PermissionGate>} />
+                    <Route path="conocimiento" element={<PermissionGate allowed={allowed('knowledge_view')}><KnowledgeCenter /></PermissionGate>} />
+                    <Route path="calendario" element={<PermissionGate allowed={allowed('calendar_view')}><ImplementationCalendar /></PermissionGate>} />
+                    <Route path="mejoras" element={<PermissionGate allowed={allowed('improvements_view')}><CustomerImprovements /></PermissionGate>} />
+                    <Route path="solicitudes-internas" element={<PermissionGate allowed={allowed('internal_requests_view')}><InternalRequests /></PermissionGate>} />
+                    <Route path="configuracion" element={<PermissionGate allowed={allowed('settings_view')}><Configuration /></PermissionGate>} />
+                    <Route path="observabilidad" element={<PermissionGate allowed={allowed('observability_view')}><OperationalObservability /></PermissionGate>} />
+                    <Route path="accesos" element={<PermissionGate allowed={allowed('users_view')}><AccessManagement /></PermissionGate>} />
+                    <Route path="kill-switch" element={<PermissionGate allowed={allowed('kill_switch_execute')}><KillSwitch /></PermissionGate>} />
                 </Route>
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             </Suspense>
         </HashRouter>
     )
+}
+
+function PermissionGate({ allowed, children }: { allowed: boolean; children: ReactNode }) {
+    if (allowed) return children;
+    return (
+        <div className="flex min-h-[55vh] items-center justify-center p-6">
+            <div className="max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center shadow-sm">
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-600">Acceso restringido</p>
+                <h2 className="mt-2 text-xl font-black text-slate-900">Tu perfil no tiene permiso para este módulo</h2>
+                <p className="mt-2 text-sm text-slate-600">Solicita a un Supervisor o Propietario que revise los permisos de tu perfil.</p>
+            </div>
+        </div>
+    );
 }
 
 function PageLoadingScreen() {
