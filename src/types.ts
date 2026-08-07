@@ -64,6 +64,47 @@ export interface Tenant {
     created_at: string;
 }
 
+export type CustomerServiceStatus = 'planned' | 'active' | 'suspended' | 'cancelled';
+export type CustomerScheduledAction = 'charge' | 'suspend' | 'reactivate';
+
+export interface CustomerService {
+    id: string;
+    contact_id: string;
+    tenant_id?: string | null;
+    service_code: string;
+    service_name: string;
+    quantity: number;
+    status: CustomerServiceStatus;
+    started_at?: string | null;
+    renewal_at?: string | null;
+    next_charge_at?: string | null;
+    additional_charge: number;
+    scheduled_action?: CustomerScheduledAction | null;
+    scheduled_action_at?: string | null;
+    administrative_notes?: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CustomerRegistryEntry {
+    id: string;
+    email: string;
+    name?: string | null;
+    company_name?: string | null;
+    phone?: string | null;
+    tenant_id?: string | null;
+    has_retainership: boolean;
+    administrative_notes?: string | null;
+    store_created_at?: string | null;
+    service_started_at?: string | null;
+    renewal_at?: string | null;
+    last_suspended_at?: string | null;
+    created_at: string;
+    updated_at: string;
+    tenant?: Pick<Tenant, 'id' | 'name' | 'status' | 'contracted_product' | 'max_pos_terminals' | 'max_erp_users'> | null;
+    services: CustomerService[];
+}
+
 export interface Distributor {
     id: string;
     name: string;

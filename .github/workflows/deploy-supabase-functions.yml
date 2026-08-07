@@ -81,5 +81,8 @@ jobs:
       - name: Deploy Google Calendar API
         run: supabase functions deploy calendar-api --project-ref "$SUPABASE_PROJECT_REF"
 
+      - name: Deploy customer registry API
+        run: supabase functions deploy customer-registry-api --project-ref "$SUPABASE_PROJECT_REF"
+
       - name: Deploy Resend delivery webhook
         run: supabase functions deploy process-resend-delivery --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
