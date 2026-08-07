@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Activity, BookOpen, CalendarDays, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Settings, Smartphone, Lightbulb, UserCog } from 'lucide-react';
+import type { CloudAdminPermissionKey, CloudAdminPermissions } from '../types';
+import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
 
 interface LayoutProps {
     adminName?: string | null;
     adminEmail?: string | null;
     adminRole?: string | null;
+    permissions?: Partial<CloudAdminPermissions> | null;
     signingOut?: boolean;
     onSignOut: () => void;
 }
@@ -20,20 +23,20 @@ interface SupportCenterHeaderStats {
     quickFilter: 'none' | 'critical' | 'unassigned';
 }
 
-const navItems = [
-    { path: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { path: '/tenants', label: 'Tenants', icon: Users },
-    { path: '/plans', label: 'Planes SaaS', icon: BadgeDollarSign },
-    { path: '/pos-apk', label: 'APK POS', icon: Smartphone },
-    { path: '/support', label: 'Helpdesk & Soporte', icon: Headset },
-    { path: '/conocimiento', label: 'Manuales y videos', icon: BookOpen },
-    { path: '/calendario', label: 'Implementaciones', icon: CalendarDays },
-    { path: '/mejoras', label: 'Mejoras solicitadas', icon: Lightbulb },
-    { path: '/solicitudes-internas', label: 'Solicitudes internas', icon: ClipboardList },
-    { path: '/configuracion', label: 'Configuración', icon: Settings },
-    { path: '/observabilidad', label: 'Observabilidad', icon: Activity },
-    { path: '/accesos', label: 'Usuarios y perfiles', icon: UserCog },
-    { path: '/kill-switch', label: 'Kill Switch', icon: ShieldPlus },
+const navItems: Array<{ path: string; label: string; icon: React.ComponentType<{ className?: string }>; permission: CloudAdminPermissionKey }> = [
+    { path: '/', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard_view' },
+    { path: '/tenants', label: 'Tenants', icon: Users, permission: 'tenants_view' },
+    { path: '/plans', label: 'Planes SaaS', icon: BadgeDollarSign, permission: 'plans_view' },
+    { path: '/pos-apk', label: 'APK POS', icon: Smartphone, permission: 'apk_view' },
+    { path: '/support', label: 'Helpdesk & Soporte', icon: Headset, permission: 'support_view' },
+    { path: '/conocimiento', label: 'Manuales y videos', icon: BookOpen, permission: 'knowledge_view' },
+    { path: '/calendario', label: 'Implementaciones', icon: CalendarDays, permission: 'calendar_view' },
+    { path: '/mejoras', label: 'Mejoras solicitadas', icon: Lightbulb, permission: 'improvements_view' },
+    { path: '/solicitudes-internas', label: 'Solicitudes internas', icon: ClipboardList, permission: 'internal_requests_view' },
+    { path: '/configuracion', label: 'Configuración', icon: Settings, permission: 'settings_view' },
+    { path: '/observabilidad', label: 'Observabilidad', icon: Activity, permission: 'observability_view' },
+    { path: '/accesos', label: 'Usuarios y perfiles', icon: UserCog, permission: 'users_view' },
+    { path: '/kill-switch', label: 'Kill Switch', icon: ShieldPlus, permission: 'kill_switch_execute' },
 ];
 
 function getInitials(name?: string | null, email?: string | null) {
@@ -46,7 +49,7 @@ function getInitials(name?: string | null, email?: string | null) {
         .join('') || 'AD';
 }
 
-export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole, signingOut = false, onSignOut }) => {
+export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole, permissions, signingOut = false, onSignOut }) => {
     const location = useLocation();
     const isImmersiveWorkspace = location.pathname === '/support';
     const isSupportRoute = location.pathname === '/support';
@@ -85,7 +88,7 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                     <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest font-semibold">Super Admin</p>
                 </div>
                 <nav className="flex-1 px-4 space-y-1">
-                    {navItems.map((item) => (
+                    {navItems.filter((item) => hasCloudAdminPermission(permissions, item.permission)).map((item) => (
                         <NavLink
                             key={item.path}
                             to={item.path}
@@ -129,9 +132,9 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                 {/* BEGIN: Slim Header */}
                 <header className="min-h-16 border-b border-slate-200 bg-white/80 sticky top-0 z-10 flex items-center justify-between gap-4 px-8 py-2 backdrop-blur-md">
                     <div className="flex min-w-0 flex-1 items-center gap-4 flex-wrap">
-                        <h2 className="text-lg font-semibold text-slate-800">Console Overview</h2>
-                        <div className="h-6 w-px bg-slate-200"></div>
-                        <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-semibold text-slate-800">{isSupportRoute ? 'Centro de Comandos' : 'Console Overview'}</h2>
+                        {!isSupportRoute ? <div className="h-6 w-px bg-slate-200"></div> : null}
+                        {!isSupportRoute ? <div className="flex items-center gap-2">
                             <label className="text-xs font-medium text-slate-500" htmlFor="periodo">Periodo:</label>
                             <select
                                 className="text-xs font-semibold border-none bg-slate-100 rounded-md focus:ring-indigo-500 py-1 pl-2 pr-8 outline-none"
@@ -143,7 +146,7 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                                 <option value="30d">30d</option>
                                 <option value="ano">Año</option>
                             </select>
-                        </div>
+                        </div> : null}
 
                         {isSupportRoute && supportHeaderStats ? (
                             <div className="ml-auto flex items-center gap-2">

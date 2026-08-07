@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Building2, Check, Copy, Loader2, Save, ShieldCheck, Trash2, UserCog, Users } from 'lucide-react';
-import type { CloudAdminPermissions, CloudAdminProfile, CloudAdminUser, CloudAdminUserStatus, SupportDepartment } from '../types';
-import { accessService, emptyPermissions, permissionCatalog } from '../lib/accessService';
+import { Ban, Building2, Check, Copy, Loader2, Save, ScrollText, ShieldCheck, Trash2, UserCog, Users } from 'lucide-react';
+import type { CloudAdminAuditEvent, CloudAdminPermissions, CloudAdminProfile, CloudAdminUser, CloudAdminUserStatus, SupportDepartment } from '../types';
+import { emptyPermissions, permissionCatalog } from '../lib/accessService';
+import { accessApiService, type AccessActor } from '../lib/accessApiService';
+import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
 
 const defaultProfileForm = {
     code: '',
@@ -39,7 +41,9 @@ export const AccessManagement: React.FC = () => {
     const [profiles, setProfiles] = useState<CloudAdminProfile[]>([]);
     const [users, setUsers] = useState<CloudAdminUser[]>([]);
     const [departments, setDepartments] = useState<SupportDepartment[]>([]);
-    const [activeTab, setActiveTab] = useState<'users' | 'profiles' | 'departments'>('users');
+    const [auditEvents, setAuditEvents] = useState<CloudAdminAuditEvent[]>([]);
+    const [actor, setActor] = useState<AccessActor | null>(null);
+    const [activeTab, setActiveTab] = useState<'users' | 'profiles' | 'departments' | 'audit'>('users');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [editingProfile, setEditingProfile] = useState<CloudAdminProfile | null>(null);
@@ -50,7 +54,13 @@ export const AccessManagement: React.FC = () => {
     const [departmentForm, setDepartmentForm] = useState(defaultDepartmentForm);
     const [userNotice, setUserNotice] = useState<{ title: string; message: string; tempPassword?: string | null } | null>(null);
 
+    const canManageUsers = hasCloudAdminPermission(actor?.permissions, 'users_manage');
+    const canManageProfiles = hasCloudAdminPermission(actor?.permissions, 'profiles_manage');
+    const canViewAudit = hasCloudAdminPermission(actor?.permissions, 'audit_view');
+
     const activeProfiles = useMemo(() => profiles.filter((profile) => profile.is_active), [profiles]);
+    const assignableProfiles = useMemo(() => activeProfiles.filter((profile) => actor?.profileCode === 'owner'
+        || profile.level < (actor?.profileLevel ?? 0)), [activeProfiles, actor]);
     const stats = useMemo(() => ({
         users: users.length,
         activeUsers: users.filter((user) => user.status === 'active').length,
@@ -65,10 +75,11 @@ export const AccessManagement: React.FC = () => {
     const loadAccess = async () => {
         setLoading(true);
         try {
-            const data = await accessService.getAccessOverview();
+            const data = await accessApiService.getAccessOverview();
             setProfiles(data.profiles);
             setUsers(data.users);
             setDepartments(data.departments);
+            setActor(data.actor);
             setUserForm((current) => ({
                 ...current,
                 profileId: current.profileId || data.profiles.find((profile) => profile.code === 'support')?.id || data.profiles[0]?.id || '',
@@ -84,6 +95,19 @@ export const AccessManagement: React.FC = () => {
         }
     };
 
+    const openAudit = async () => {
+        setActiveTab('audit');
+        setLoading(true);
+        try {
+            const response = await accessApiService.listAuditEvents();
+            setAuditEvents(response.events);
+        } catch (error) {
+            alert(getErrorMessage(error));
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const resetProfileForm = () => {
         setEditingProfile(null);
         setProfileForm(defaultProfileForm);
@@ -93,7 +117,7 @@ export const AccessManagement: React.FC = () => {
         setEditingUser(null);
         setUserForm({
             ...defaultUserForm,
-            profileId: activeProfiles.find((profile) => profile.code === 'support')?.id || activeProfiles[0]?.id || '',
+            profileId: assignableProfiles.find((profile) => profile.code === 'support')?.id || assignableProfiles[0]?.id || '',
             departmentIds: departments.find((department) => department.code === 'support')
                 ? [departments.find((department) => department.code === 'support')!.id]
                 : [],
@@ -119,7 +143,7 @@ export const AccessManagement: React.FC = () => {
             email: user.email,
             fullName: user.full_name,
             phone: user.phone || '',
-            profileId: user.profile_id || activeProfiles[0]?.id || '',
+            profileId: user.profile_id || assignableProfiles[0]?.id || '',
             status: user.status,
             departmentIds: (user.departments ?? []).map((department) => department.id),
             helpdeskAllDepartments: user.helpdesk_all_departments ?? false,
@@ -148,9 +172,9 @@ export const AccessManagement: React.FC = () => {
         setSaving(true);
         try {
             if (editingDepartment) {
-                await accessService.updateSupportDepartment(editingDepartment.id, departmentForm);
+                await accessApiService.updateSupportDepartment(editingDepartment.id, departmentForm);
             } else {
-                await accessService.createSupportDepartment(departmentForm);
+                await accessApiService.createSupportDepartment(departmentForm);
             }
             resetDepartmentForm();
             await loadAccess();
@@ -167,9 +191,9 @@ export const AccessManagement: React.FC = () => {
         setSaving(true);
         try {
             if (editingProfile) {
-                await accessService.updateProfile(editingProfile.id, profileForm);
+                await accessApiService.updateProfile(editingProfile.id, profileForm);
             } else {
-                await accessService.createProfile(profileForm);
+                await accessApiService.createProfile(profileForm);
             }
             resetProfileForm();
             await loadAccess();
@@ -191,9 +215,9 @@ export const AccessManagement: React.FC = () => {
         setUserNotice(null);
         try {
             if (editingUser) {
-                await accessService.updateCloudAdminUser(editingUser.id, userForm);
+                await accessApiService.updateCloudAdminUser(editingUser.id, userForm);
             } else {
-                const result = await accessService.createCloudAdminUser(userForm);
+                const result = await accessApiService.createCloudAdminUser(userForm);
                 if (result.authLinkType === 'linked_existing') {
                     setUserNotice({
                         title: 'Usuario vinculado',
@@ -225,7 +249,7 @@ export const AccessManagement: React.FC = () => {
         if (!confirm(`Eliminar el perfil ${profile.name}?`)) return;
         setSaving(true);
         try {
-            await accessService.deleteProfile(profile.id);
+            await accessApiService.deleteProfile(profile.id);
             await loadAccess();
         } catch (error) {
             console.error('Error deleting profile', error);
@@ -235,14 +259,22 @@ export const AccessManagement: React.FC = () => {
         }
     };
 
-    const deleteUser = async (user: CloudAdminUser) => {
-        if (!confirm(`Eliminar el acceso Cloud-Admin de ${user.email}? Si el usuario fue creado desde este módulo también se eliminará su Auth; si ya existía en ERP solo se desvincula de Cloud-Admin.`)) return;
+    const suspendUser = async (user: CloudAdminUser) => {
+        if (user.status === 'suspended') return;
+        if (!confirm(`Descatalogar a ${user.email}? El usuario perderá acceso, pero conservará su historial.`)) return;
         setSaving(true);
         try {
-            await accessService.deleteCloudAdminUser(user);
+            await accessApiService.updateCloudAdminUser(user.id, {
+                fullName: user.full_name,
+                phone: user.phone || '',
+                profileId: user.profile_id || '',
+                status: 'suspended',
+                departmentIds: (user.departments ?? []).map((department) => department.id),
+                helpdeskAllDepartments: user.helpdesk_all_departments === true,
+            });
             await loadAccess();
         } catch (error) {
-            console.error('Error deleting cloud admin user', error);
+            console.error('Error suspending cloud admin user', error);
             alert(getErrorMessage(error));
         } finally {
             setSaving(false);
@@ -339,10 +371,21 @@ export const AccessManagement: React.FC = () => {
                         <Building2 size={16} />
                         Departamentos
                     </button>
+                    {canViewAudit ? (
+                        <button
+                            type="button"
+                            onClick={() => void openAudit()}
+                            className={`inline-flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-bold md:flex-none ${activeTab === 'audit' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                            <ScrollText size={16} />
+                            Auditoría
+                        </button>
+                    ) : null}
                 </div>
 
                 {activeTab === 'users' ? (
-                    <section className="grid grid-cols-1 gap-6 xl:grid-cols-[420px_1fr]">
+                    <section className={`grid grid-cols-1 gap-6 ${canManageUsers ? 'xl:grid-cols-[420px_1fr]' : ''}`}>
+                        {canManageUsers ? (
                         <form onSubmit={saveUser} className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
                                 <p className="text-sm font-black text-slate-900">{editingUser ? 'Editar usuario' : 'Nuevo usuario'}</p>
@@ -360,7 +403,7 @@ export const AccessManagement: React.FC = () => {
                             <Field label="Perfil">
                                 <select required value={userForm.profileId} onChange={(event) => setUserForm({ ...userForm, profileId: event.target.value })} className="input">
                                     <option value="">Selecciona perfil</option>
-                                    {activeProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · Nivel {profile.level}</option>)}
+                                    {assignableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · Nivel {profile.level}</option>)}
                                 </select>
                             </Field>
                             <Field label="Estado">
@@ -412,11 +455,13 @@ export const AccessManagement: React.FC = () => {
                                 </button>
                             </div>
                         </form>
+                        ) : null}
 
-                        <AccessTable loading={loading} users={users} departments={departments} onEdit={handleEditUser} onDelete={deleteUser} />
+                        <AccessTable loading={loading} users={users} departments={departments} actor={actor} onEdit={handleEditUser} onSuspend={suspendUser} canManage={canManageUsers} />
                     </section>
                 ) : activeTab === 'profiles' ? (
-                    <section className="grid grid-cols-1 gap-6 xl:grid-cols-[460px_1fr]">
+                    <section className={`grid grid-cols-1 gap-6 ${canManageProfiles ? 'xl:grid-cols-[460px_1fr]' : ''}`}>
+                        {canManageProfiles ? (
                         <form onSubmit={saveProfile} className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
                                 <p className="text-sm font-black text-slate-900">{editingProfile ? 'Editar perfil' : 'Nuevo perfil'}</p>
@@ -454,6 +499,7 @@ export const AccessManagement: React.FC = () => {
                                                 <Check size={14} />
                                             </span>
                                             <span>
+                                                <span className="block text-[10px] font-bold uppercase tracking-wide opacity-60">{permission.group}</span>
                                                 <span className="block text-xs font-black">{permission.label}</span>
                                                 <span className="mt-0.5 block text-[11px] leading-snug opacity-80">{permission.description}</span>
                                             </span>
@@ -469,11 +515,13 @@ export const AccessManagement: React.FC = () => {
                                 </button>
                             </div>
                         </form>
+                        ) : null}
 
-                        <ProfileList profiles={profiles} onEdit={handleEditProfile} onDelete={deleteProfile} />
+                        <ProfileList profiles={profiles} actor={actor} onEdit={handleEditProfile} onDelete={deleteProfile} canManage={canManageProfiles} />
                     </section>
-                ) : (
-                    <section className="grid grid-cols-1 gap-6 xl:grid-cols-[420px_1fr]">
+                ) : activeTab === 'departments' ? (
+                    <section className={`grid grid-cols-1 gap-6 ${canManageUsers ? 'xl:grid-cols-[420px_1fr]' : ''}`}>
+                        {canManageUsers ? (
                         <form onSubmit={saveDepartment} className="space-y-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
                             <div>
                                 <p className="text-sm font-black text-slate-900">{editingDepartment ? 'Editar departamento' : 'Nuevo departamento'}</p>
@@ -500,8 +548,11 @@ export const AccessManagement: React.FC = () => {
                                 </button>
                             </div>
                         </form>
-                        <DepartmentList departments={departments} onEdit={handleEditDepartment} />
+                        ) : null}
+                        <DepartmentList departments={departments} onEdit={handleEditDepartment} canManage={canManageUsers} />
                     </section>
+                ) : (
+                    <AuditLog loading={loading} events={auditEvents} />
                 )}
             </div>
         </div>
@@ -532,12 +583,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     );
 }
 
-function AccessTable({ loading, users, departments, onEdit, onDelete }: {
+function AccessTable({ loading, users, departments, actor, onEdit, onSuspend, canManage }: {
     loading: boolean;
     users: CloudAdminUser[];
     departments: SupportDepartment[];
+    actor: AccessActor | null;
     onEdit: (user: CloudAdminUser) => void;
-    onDelete: (user: CloudAdminUser) => void;
+    onSuspend: (user: CloudAdminUser) => void;
+    canManage: boolean;
 }) {
     const [departmentFilter, setDepartmentFilter] = useState('all');
     if (loading) return <LoadingPanel label="Cargando usuarios..." />;
@@ -567,7 +620,9 @@ function AccessTable({ loading, users, departments, onEdit, onDelete }: {
                 <tbody className="divide-y divide-slate-100">
                     {visibleUsers.length === 0 ? (
                         <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">No hay usuarios con este filtro.</td></tr>
-                    ) : visibleUsers.map((user) => (
+                    ) : visibleUsers.map((user) => {
+                        const canManageTarget = canManage && (actor?.profileCode === 'owner' || (user.profile?.level ?? 0) < (actor?.profileLevel ?? 0));
+                        return (
                         <tr key={user.id} className="hover:bg-slate-50">
                             <td className="px-4 py-3">
                                 <p className="font-black text-slate-800">{user.full_name}</p>
@@ -590,22 +645,26 @@ function AccessTable({ loading, users, departments, onEdit, onDelete }: {
                                 <span className={`rounded-full px-3 py-1 text-xs font-black uppercase ${statusStyles[user.status]}`}>{user.status}</span>
                             </td>
                             <td className="px-4 py-3">
-                                <div className="flex justify-end gap-2">
-                                    <button type="button" onClick={() => onEdit(user)} className="icon-btn" title="Editar usuario"><UserCog size={16} /></button>
-                                    <button type="button" onClick={() => void onDelete(user)} className="icon-btn text-rose-600" title="Eliminar usuario"><Trash2 size={16} /></button>
-                                </div>
+                                {canManageTarget ? (
+                                    <div className="flex justify-end gap-2">
+                                        <button type="button" onClick={() => onEdit(user)} className="icon-btn" title="Editar usuario"><UserCog size={16} /></button>
+                                        <button type="button" disabled={user.status === 'suspended'} onClick={() => void onSuspend(user)} className="icon-btn text-rose-600 disabled:opacity-30" title="Descatalogar usuario"><Ban size={16} /></button>
+                                    </div>
+                                ) : <span className="block text-right text-xs text-slate-400">Solo consulta</span>}
                             </td>
                         </tr>
-                    ))}
+                        );
+                    })}
                 </tbody>
             </table>
         </div>
     );
 }
 
-function DepartmentList({ departments, onEdit }: {
+function DepartmentList({ departments, onEdit, canManage }: {
     departments: SupportDepartment[];
     onEdit: (department: SupportDepartment) => void;
+    canManage: boolean;
 }) {
     return (
         <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
@@ -624,24 +683,29 @@ function DepartmentList({ departments, onEdit }: {
                         </span>
                     </div>
                     <p className="mt-3 min-h-[40px] text-sm text-slate-600">{department.description || 'Sin descripción.'}</p>
-                    <div className="mt-5 flex justify-end border-t border-slate-100 pt-4">
-                        <button type="button" onClick={() => onEdit(department)} className="btn-secondary"><UserCog size={16} />Editar</button>
-                    </div>
+                    {canManage ? (
+                        <div className="mt-5 flex justify-end border-t border-slate-100 pt-4">
+                            <button type="button" onClick={() => onEdit(department)} className="btn-secondary"><UserCog size={16} />Editar</button>
+                        </div>
+                    ) : null}
                 </article>
             ))}
         </div>
     );
 }
 
-function ProfileList({ profiles, onEdit, onDelete }: {
+function ProfileList({ profiles, actor, onEdit, onDelete, canManage }: {
     profiles: CloudAdminProfile[];
+    actor: AccessActor | null;
     onEdit: (profile: CloudAdminProfile) => void;
     onDelete: (profile: CloudAdminProfile) => void;
+    canManage: boolean;
 }) {
     return (
         <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
             {profiles.map((profile) => {
                 const enabled = permissionCatalog.filter((permission) => profile.permissions?.[permission.key]);
+                const canManageProfile = canManage && (actor?.profileCode === 'owner' || profile.level < (actor?.profileLevel ?? 0));
                 return (
                     <article key={profile.id} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
                         <div className="flex items-start justify-between gap-4">
@@ -658,16 +722,48 @@ function ProfileList({ profiles, onEdit, onDelete }: {
                         <p className="mt-3 min-h-[40px] text-sm text-slate-600">{profile.description || 'Sin descripción.'}</p>
                         <div className="mt-4 flex flex-wrap gap-2">
                             {enabled.length === 0 ? <span className="text-xs text-slate-400">Sin permisos activos</span> : enabled.map((permission) => (
-                                <span key={permission.key} className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">{permission.label}</span>
+                                <span key={permission.key} className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600">{permission.group}: {permission.label}</span>
                             ))}
                         </div>
-                        <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
-                            <button type="button" onClick={() => onEdit(profile)} className="btn-secondary"><UserCog size={16} />Editar</button>
-                            <button type="button" onClick={() => void onDelete(profile)} className="btn-danger" disabled={profile.is_system}><Trash2 size={16} />Eliminar</button>
-                        </div>
+                        {canManageProfile ? (
+                            <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4">
+                                <button type="button" onClick={() => onEdit(profile)} className="btn-secondary"><UserCog size={16} />Editar</button>
+                                <button type="button" onClick={() => void onDelete(profile)} className="btn-danger" disabled={profile.is_system}><Trash2 size={16} />Eliminar</button>
+                            </div>
+                        ) : null}
                     </article>
                 );
             })}
+        </div>
+    );
+}
+
+function AuditLog({ loading, events }: { loading: boolean; events: CloudAdminAuditEvent[] }) {
+    if (loading) return <LoadingPanel label="Cargando auditoría..." />;
+    return (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-100 px-5 py-4">
+                <h3 className="font-black text-slate-900">Registro administrativo</h3>
+                <p className="mt-1 text-xs text-slate-500">Cambios de usuarios, perfiles y departamentos. Visible solo con permiso de auditoría.</p>
+            </div>
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-100 text-sm">
+                    <thead className="bg-slate-50 text-left text-[11px] font-black uppercase tracking-wider text-slate-500">
+                        <tr><th className="px-4 py-3">Fecha</th><th className="px-4 py-3">Usuario</th><th className="px-4 py-3">Acción</th><th className="px-4 py-3">Entidad</th><th className="px-4 py-3">Origen</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {events.length === 0 ? <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">Aún no hay eventos administrativos.</td></tr> : events.map((event) => (
+                            <tr key={event.id}>
+                                <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{new Intl.DateTimeFormat('es-DO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(event.created_at))}</td>
+                                <td className="px-4 py-3"><p className="font-bold text-slate-800">{event.actor_email || 'Sistema'}</p></td>
+                                <td className="px-4 py-3"><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">{event.action}</span></td>
+                                <td className="px-4 py-3"><p className="font-bold text-slate-700">{event.entity_type}</p><p className="font-mono text-[10px] text-slate-400">{event.entity_id || 'N/D'}</p></td>
+                                <td className="px-4 py-3 text-xs text-slate-500">{event.request_ip || 'N/D'}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }
