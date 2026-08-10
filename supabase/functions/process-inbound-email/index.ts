@@ -24,7 +24,33 @@ interface ResendInboundEvent {
         text_body?: string;
         html?: string;
         message_id?: string;
+        attachments?: ResendInboundAttachment[];
     };
+}
+
+interface ResendInboundAttachment {
+    id?: string;
+    filename?: string;
+    content_type?: string;
+    content_disposition?: string | null;
+    content_id?: string | null;
+    size?: number;
+}
+
+interface StoredInboundAttachment {
+    id: string;
+    name: string;
+    mime_type: string;
+    size_bytes: number;
+    bucket?: string;
+    path?: string;
+    uploaded_at: string;
+    source: 'resend_inbound';
+    provider_attachment_id: string;
+    content_disposition?: string | null;
+    content_id?: string | null;
+    status: 'stored' | 'failed' | 'rejected';
+    error?: string;
 }
 
 interface TriageResult {
@@ -96,6 +122,24 @@ const categoryMap: Record<string, TicketCategory> = {
     red: 'Red',
     otros: 'Otros',
 };
+
+const HELPDESK_ATTACHMENTS_BUCKET = 'helpdesk-attachments';
+const MAX_INBOUND_ATTACHMENTS = 10;
+const MAX_INBOUND_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_INBOUND_ATTACHMENTS_TOTAL_BYTES = 30 * 1024 * 1024;
+const ALLOWED_INBOUND_ATTACHMENT_MIME_TYPES = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+    'application/pdf',
+    'text/plain',
+    'text/csv',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
 
 const clicProductExpertPrompt = [
     'Eres un especialista senior de soporte de Clic-ERP y Clic-POS para comercios en Republica Dominicana.',
@@ -727,6 +771,143 @@ async function getInboundEmailBody(emailId: string, resendApiKey: string) {
     return String(data.text ?? data.text_body ?? data.textBody ?? '');
 }
 
+function sanitizeInboundAttachmentName(value?: string) {
+    const withoutControlCharacters = Array.from((value || 'adjunto').normalize('NFKC'))
+        .map((character) => {
+            const codePoint = character.codePointAt(0) ?? 0;
+            return codePoint <= 31 || codePoint === 127 ? '_' : character;
+        })
+        .join('');
+    const cleaned = withoutControlCharacters
+        .replace(/[/\\]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return (cleaned || 'adjunto').slice(0, 180);
+}
+
+function failedInboundAttachment(
+    attachment: ResendInboundAttachment,
+    status: 'failed' | 'rejected',
+    error: string,
+): StoredInboundAttachment {
+    return {
+        id: crypto.randomUUID(),
+        name: sanitizeInboundAttachmentName(attachment.filename),
+        mime_type: attachment.content_type || 'application/octet-stream',
+        size_bytes: typeof attachment.size === 'number' ? attachment.size : 0,
+        uploaded_at: new Date().toISOString(),
+        source: 'resend_inbound',
+        provider_attachment_id: attachment.id || 'unknown',
+        content_disposition: attachment.content_disposition,
+        content_id: attachment.content_id,
+        status,
+        error,
+    };
+}
+
+async function storeInboundEmailAttachments(params: {
+    supabase: ReturnType<typeof createClient>;
+    resendApiKey: string;
+    emailId?: string;
+    ticketId: string;
+    attachments?: ResendInboundAttachment[];
+}): Promise<StoredInboundAttachment[]> {
+    if (!params.emailId || !Array.isArray(params.attachments) || params.attachments.length === 0) return [];
+
+    const stored: StoredInboundAttachment[] = [];
+    let totalBytes = 0;
+
+    for (const attachment of params.attachments.slice(0, MAX_INBOUND_ATTACHMENTS)) {
+        if (!attachment.id) {
+            stored.push(failedInboundAttachment(attachment, 'rejected', 'Resend no proporcionó el identificador del adjunto.'));
+            continue;
+        }
+
+        const declaredMimeType = (attachment.content_type || '').toLowerCase();
+        if (!ALLOWED_INBOUND_ATTACHMENT_MIME_TYPES.has(declaredMimeType)) {
+            stored.push(failedInboundAttachment(attachment, 'rejected', 'Tipo de archivo no permitido.'));
+            continue;
+        }
+
+        try {
+            const metadataResponse = await fetch(
+                `https://api.resend.com/emails/receiving/${encodeURIComponent(params.emailId)}/attachments/${encodeURIComponent(attachment.id)}`,
+                { headers: { Authorization: `Bearer ${params.resendApiKey}` } },
+            );
+            if (!metadataResponse.ok) {
+                throw new Error(`Resend attachment metadata HTTP ${metadataResponse.status}`);
+            }
+
+            const metadataPayload = await metadataResponse.json() as Record<string, unknown>;
+            const metadata = typeof metadataPayload.data === 'object' && metadataPayload.data
+                ? metadataPayload.data as Record<string, unknown>
+                : metadataPayload;
+            const downloadUrl = typeof metadata.download_url === 'string' ? metadata.download_url : '';
+            const metadataSize = typeof metadata.size === 'number' ? metadata.size : attachment.size ?? 0;
+            const mimeType = typeof metadata.content_type === 'string'
+                ? metadata.content_type.toLowerCase()
+                : declaredMimeType;
+            const fileName = sanitizeInboundAttachmentName(
+                typeof metadata.filename === 'string' ? metadata.filename : attachment.filename,
+            );
+
+            if (!downloadUrl) throw new Error('Resend no proporcionó URL de descarga.');
+            if (!ALLOWED_INBOUND_ATTACHMENT_MIME_TYPES.has(mimeType)) {
+                stored.push(failedInboundAttachment({ ...attachment, filename: fileName, content_type: mimeType, size: metadataSize }, 'rejected', 'Tipo de archivo no permitido.'));
+                continue;
+            }
+            if (metadataSize > MAX_INBOUND_ATTACHMENT_BYTES || totalBytes + metadataSize > MAX_INBOUND_ATTACHMENTS_TOTAL_BYTES) {
+                stored.push(failedInboundAttachment({ ...attachment, filename: fileName, content_type: mimeType, size: metadataSize }, 'rejected', 'El adjunto supera el límite permitido.'));
+                continue;
+            }
+
+            const fileResponse = await fetch(downloadUrl);
+            if (!fileResponse.ok) throw new Error(`Resend attachment download HTTP ${fileResponse.status}`);
+            const fileBytes = await fileResponse.arrayBuffer();
+            if (fileBytes.byteLength > MAX_INBOUND_ATTACHMENT_BYTES || totalBytes + fileBytes.byteLength > MAX_INBOUND_ATTACHMENTS_TOTAL_BYTES) {
+                stored.push(failedInboundAttachment({ ...attachment, filename: fileName, content_type: mimeType, size: fileBytes.byteLength }, 'rejected', 'El adjunto supera el límite permitido.'));
+                continue;
+            }
+
+            const path = `${params.ticketId}/inbound/${params.emailId}/${attachment.id}-${fileName}`;
+            const { error: uploadError } = await params.supabase.storage
+                .from(HELPDESK_ATTACHMENTS_BUCKET)
+                .upload(path, fileBytes, {
+                    contentType: mimeType,
+                    cacheControl: '3600',
+                    upsert: false,
+                });
+            if (uploadError) throw uploadError;
+
+            totalBytes += fileBytes.byteLength;
+            stored.push({
+                id: crypto.randomUUID(),
+                name: fileName,
+                mime_type: mimeType,
+                size_bytes: fileBytes.byteLength,
+                bucket: HELPDESK_ATTACHMENTS_BUCKET,
+                path,
+                uploaded_at: new Date().toISOString(),
+                source: 'resend_inbound',
+                provider_attachment_id: attachment.id,
+                content_disposition: attachment.content_disposition,
+                content_id: attachment.content_id,
+                status: 'stored',
+            });
+        } catch (error) {
+            console.error('Inbound attachment could not be stored', {
+                email_id: params.emailId,
+                attachment_id: attachment.id,
+                filename: sanitizeInboundAttachmentName(attachment.filename),
+                error: error instanceof Error ? error.message : String(error),
+            });
+            stored.push(failedInboundAttachment(attachment, 'failed', 'No se pudo recuperar el adjunto desde Resend.'));
+        }
+    }
+
+    return stored;
+}
+
 Deno.serve(async (request) => {
     if (request.method !== 'POST') {
         return json({ error: 'Method not allowed' }, 405);
@@ -794,10 +975,18 @@ Deno.serve(async (request) => {
             if (threadedTicket.error) throw threadedTicket.error;
 
             if (threadedTicket.data?.id) {
+                const inboundAttachments = await storeInboundEmailAttachments({
+                    supabase,
+                    resendApiKey: integrationConfig.resendApiKey,
+                    emailId: inbound.email_id,
+                    ticketId: threadedTicket.data.id,
+                    attachments: inbound.attachments,
+                });
                 const threadedMessage = await supabase.from('ticket_messages').insert({
                     ticket_id: threadedTicket.data.id,
                     sender_type: 'Client',
                     message: body.trim(),
+                    attachments: inboundAttachments,
                 });
 
                 if (threadedMessage.error) throw threadedMessage.error;
@@ -828,6 +1017,7 @@ Deno.serve(async (request) => {
                     threaded: true,
                     ticket_id: threadedTicket.data.id,
                     ticket_number: threadedTicket.data.ticket_number,
+                    attachment_count: inboundAttachments.filter((attachment) => attachment.status === 'stored').length,
                 });
             }
         }
@@ -921,10 +1111,19 @@ Deno.serve(async (request) => {
         const ticketId = ticketInsert.data.id;
         const ticketNumber = ticketInsert.data.ticket_number ?? ticketId;
 
+        const inboundAttachments = await storeInboundEmailAttachments({
+            supabase,
+            resendApiKey: integrationConfig.resendApiKey,
+            emailId: inbound.email_id,
+            ticketId,
+            attachments: inbound.attachments,
+        });
+
         const messageInsert = await supabase.from('ticket_messages').insert({
             ticket_id: ticketId,
             sender_type: 'Client',
             message: body.trim(),
+            attachments: inboundAttachments,
         });
 
         if (messageInsert.error) throw messageInsert.error;
@@ -1005,6 +1204,7 @@ Deno.serve(async (request) => {
             contact_id: contactId,
             tenant_id: tenantMatch.id,
             assignment_status: tenantMatch.id ? 'assigned' : 'needs_assignment',
+            attachment_count: inboundAttachments.filter((attachment) => attachment.status === 'stored').length,
         });
     } catch (error) {
         console.error('process-inbound-email failed', error);

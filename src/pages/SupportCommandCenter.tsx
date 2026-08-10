@@ -4,6 +4,7 @@ import {
     BatteryLow,
     Bell,
     CheckCircle2,
+    ChevronDown,
     ChevronLeft,
     ChevronRight,
     Clock3,
@@ -188,6 +189,8 @@ interface MessageAttachment {
     path?: string;
     uploaded_at?: string;
     signed_url?: string | null;
+    status?: string;
+    error?: string;
 }
 
 interface PendingReplyAttachment {
@@ -535,6 +538,8 @@ function mapAttachmentRecord(item: Record<string, unknown>): MessageAttachment {
         path: typeof item.path === 'string' ? item.path : undefined,
         uploaded_at: typeof item.uploaded_at === 'string' ? item.uploaded_at : undefined,
         signed_url: typeof item.signed_url === 'string' ? item.signed_url : null,
+        status: typeof item.status === 'string' ? item.status : undefined,
+        error: typeof item.error === 'string' ? item.error : undefined,
     };
 }
 
@@ -709,6 +714,7 @@ const SupportCommandCenter: React.FC = () => {
     const [actorDepartmentAccess, setActorDepartmentAccess] = useState<{ all: boolean; ids: string[] }>({ all: false, ids: [] });
     const [conversationSearch, setConversationSearch] = useState('');
     const [conversationMatchIndex, setConversationMatchIndex] = useState(0);
+    const [messageExpansion, setMessageExpansion] = useState<Record<string, boolean>>({});
     const [quickFilter, setQuickFilter] = useState<'none' | 'critical' | 'unassigned'>('none');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
@@ -732,6 +738,10 @@ const SupportCommandCenter: React.FC = () => {
     const messageElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     const selectedTicketId = selectedTicket?.id;
+
+    useEffect(() => {
+        setMessageExpansion({});
+    }, [selectedTicketId]);
 
     useEffect(() => {
         const handleEscape = (event: KeyboardEvent) => {
@@ -1169,11 +1179,24 @@ const SupportCommandCenter: React.FC = () => {
         setConversationMatchIndex((current) => Math.min(current, conversationMatches.length - 1));
     }, [conversationMatches.length]);
 
+    useEffect(() => {
+        if (!conversationSearch.trim()) return;
+        const activeMatch = conversationMatches[conversationMatchIndex];
+        if (!activeMatch) return;
+        setMessageExpansion((current) => current[activeMatch.id]
+            ? current
+            : { ...current, [activeMatch.id]: true });
+    }, [conversationMatchIndex, conversationMatches, conversationSearch]);
+
     const goToConversationMatch = (direction: 1 | -1) => {
         if (!conversationMatches.length) return;
         const nextIndex = (conversationMatchIndex + direction + conversationMatches.length) % conversationMatches.length;
+        const nextMessageId = conversationMatches[nextIndex].id;
         setConversationMatchIndex(nextIndex);
-        messageElementRefs.current[conversationMatches[nextIndex].id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setMessageExpansion((current) => ({ ...current, [nextMessageId]: true }));
+        window.requestAnimationFrame(() => {
+            messageElementRefs.current[nextMessageId]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
     };
 
     const filteredTickets = useMemo(() => {
@@ -1631,6 +1654,44 @@ const SupportCommandCenter: React.FC = () => {
                                 <RefreshCw size={14} className={isRefreshingTickets ? 'animate-spin' : ''} />
                             </button>
                         </div>
+                        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4" aria-label="Filtros rápidos de tickets">
+                            <button
+                                type="button"
+                                onClick={() => { setQuickFilter('none'); setFilterSource('Todos'); setFilterStatus('Abierto'); }}
+                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${filterStatus === 'Abierto' && quickFilter === 'none' ? 'border-emerald-400 bg-emerald-50 text-emerald-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60'}`}
+                                aria-pressed={filterStatus === 'Abierto' && quickFilter === 'none'}
+                            >
+                                <CheckCircle2 className="shrink-0 text-emerald-600" size={18} />
+                                <span className="min-w-0"><span className="block text-xs font-bold">Abiertos</span><span className="text-lg font-black leading-none">{ticketStats.open}</span></span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('critical'); }}
+                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${quickFilter === 'critical' ? 'border-red-400 bg-red-50 text-red-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-red-300 hover:bg-red-50/60'}`}
+                                aria-pressed={quickFilter === 'critical'}
+                            >
+                                <AlertTriangle className="shrink-0 text-red-600" size={18} />
+                                <span className="min-w-0"><span className="block text-xs font-bold">Críticos</span><span className="text-lg font-black leading-none">{ticketStats.critical}</span></span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setQuickFilter('none'); setFilterStatus('Todos'); setFilterSource('Email'); }}
+                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${filterSource === 'Email' && quickFilter === 'none' ? 'border-violet-400 bg-violet-50 text-violet-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-violet-300 hover:bg-violet-50/60'}`}
+                                aria-pressed={filterSource === 'Email' && quickFilter === 'none'}
+                            >
+                                <Mail className="shrink-0 text-violet-600" size={18} />
+                                <span className="min-w-0"><span className="block text-xs font-bold">Email</span><span className="text-lg font-black leading-none">{ticketStats.email}</span></span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('unassigned'); }}
+                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${quickFilter === 'unassigned' ? 'border-amber-400 bg-amber-50 text-amber-900 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50/60'}`}
+                                aria-pressed={quickFilter === 'unassigned'}
+                            >
+                                <UserPlus className="shrink-0 text-amber-600" size={18} />
+                                <span className="min-w-0"><span className="block text-xs font-bold">Sin asignar</span><span className="text-lg font-black leading-none">{ticketStats.unassigned}</span></span>
+                            </button>
+                        </div>
                         <div className="flex flex-wrap gap-1.5">
                             {teams
                                 .filter((team) => actorDepartmentAccess.all || actorDepartmentAccess.ids.includes(team.id))
@@ -1980,23 +2041,46 @@ const SupportCommandCenter: React.FC = () => {
                                 </div>
                             ) : null}
                             <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
-                            {messages.map((message) => {
+                            {messages.map((message, messageIndex) => {
                                 const attachments = normalizeMessageAttachments(message.attachments);
                                 const isAdminMessage = message.sender_type === 'Admin';
                                 const isSystemMessage = message.sender_type === 'System';
                                 const isPrivateMessage = message.visibility === 'private';
+                                const isLatestMessage = messageIndex === messages.length - 1;
+                                const isExpanded = messageExpansion[message.id] ?? isLatestMessage;
+                                const senderLabel = isPrivateMessage ? 'Nota interna' : isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket);
 
                                 return (
                                     <div
                                         key={message.id}
                                         ref={(element) => { messageElementRefs.current[message.id] = element; }}
-                                        className={`flex rounded-2xl ${conversationMatches[conversationMatchIndex]?.id === message.id ? 'ring-2 ring-yellow-300 ring-offset-2' : ''} ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}
+                                        className={`rounded-xl ${conversationMatches[conversationMatchIndex]?.id === message.id ? 'ring-2 ring-yellow-300 ring-offset-2' : ''}`}
                                     >
-                                        <div className={`max-w-[min(92%,1100px)] rounded-2xl px-5 py-4 text-sm shadow-sm ${isPrivateMessage ? 'rounded-br-md border border-amber-300 bg-amber-50 text-amber-950' : isAdminMessage ? 'rounded-br-md border border-blue-100 bg-blue-50 text-slate-800' : isSystemMessage ? 'max-w-2xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
-                                            <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide opacity-75">
-                                                <span>{isPrivateMessage ? 'Nota interna' : isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}</span>
-                                                <span className="font-medium normal-case tracking-normal">{formatTime(message.created_at)}</span>
-                                            </div>
+                                        <article className={`overflow-hidden rounded-xl border text-sm shadow-sm transition-colors ${isPrivateMessage ? 'border-amber-300 bg-amber-50 text-amber-950' : isAdminMessage ? 'border-blue-100 bg-blue-50 text-slate-800' : isSystemMessage ? 'border-slate-200 bg-slate-50 text-slate-500' : 'border-slate-200 bg-white text-slate-700'}`}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setMessageExpansion((current) => ({ ...current, [message.id]: !isExpanded }))}
+                                                className="flex w-full items-start gap-3 px-4 py-3 text-left outline-none hover:bg-slate-950/[0.03] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500"
+                                                aria-expanded={isExpanded}
+                                                aria-controls={`support-message-${message.id}`}
+                                            >
+                                                <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-black ${isPrivateMessage ? 'bg-amber-200 text-amber-900' : isAdminMessage ? 'bg-blue-600 text-white' : isSystemMessage ? 'bg-slate-200 text-slate-600' : 'bg-violet-100 text-violet-700'}`}>
+                                                    {senderLabel.split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase() || 'M'}
+                                                </span>
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="flex items-center gap-2">
+                                                        <span className="truncate font-bold">{senderLabel}</span>
+                                                        <span className="shrink-0 text-xs font-medium text-slate-500">{formatTime(message.created_at)}</span>
+                                                        {attachments.length ? <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-bold text-slate-500"><Paperclip size={10} />{attachments.length}</span> : null}
+                                                    </span>
+                                                    {!isExpanded ? (
+                                                        <span className="mt-1 block truncate text-sm font-normal text-slate-600">{message.message.replace(/\s+/g, ' ').trim() || 'Mensaje sin contenido'}</span>
+                                                    ) : null}
+                                                </span>
+                                                {isExpanded ? <ChevronDown className="mt-1 shrink-0 text-slate-400" size={17} /> : <ChevronRight className="mt-1 shrink-0 text-slate-400" size={17} />}
+                                            </button>
+
+                                            {isExpanded ? <div id={`support-message-${message.id}`} className="border-t border-current/10 px-5 py-4">
                                             <p className="whitespace-pre-wrap break-words text-pretty leading-6">{renderHighlightedText(message.message, conversationSearch)}</p>
 
                                             {isAdminMessage && !isPrivateMessage && message.delivery_status && (
@@ -2038,7 +2122,7 @@ const SupportCommandCenter: React.FC = () => {
                                                                     </p>
                                                                     {!canOpen && (
                                                                         <p className={`mt-1 text-[11px] font-medium ${isAdminMessage ? 'text-white/70' : 'text-amber-700'}`}>
-                                                                            Archivo no disponible
+                                                                            {attachment.error || 'Archivo no disponible'}
                                                                         </p>
                                                                     )}
                                                                 </div>
@@ -2066,7 +2150,8 @@ const SupportCommandCenter: React.FC = () => {
                                                     })}
                                                 </div>
                                             ) : null}
-                                        </div>
+                                            </div> : null}
+                                        </article>
                                     </div>
                                 );
                             })}
