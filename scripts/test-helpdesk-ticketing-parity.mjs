@@ -95,7 +95,7 @@ for (const departmentUi of ['Departamentos visibles', 'Acceso avanzado a todos',
     assert.ok(accessPage.includes(departmentUi), `Access management is missing ${departmentUi}`);
 }
 assert.ok(accessService.includes('syncUserDepartments'), 'Access management must persist department memberships');
-for (const commandCenterFeature of ['Más filtros', 'Buscar dentro de esta conversación', 'Sin persona asignada', 'PanelLeftClose', 'departmentUnreadCounts']) {
+for (const commandCenterFeature of ['Más filtros', 'Buscar dentro de esta conversación', 'Sin persona asignada', 'Ticket / conversación', 'aria-modal="true"', 'departmentUnreadCounts']) {
     assert.ok(component.includes(commandCenterFeature), `Command Center is missing ${commandCenterFeature}`);
 }
 assert.match(migration, /Tenants can view messages[\s\S]*?visibility = 'public'/, 'Private notes must be hidden from tenant message reads');
