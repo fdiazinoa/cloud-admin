@@ -20,6 +20,7 @@
     "test:terminal-fiscal-config": "node scripts/test-terminal-fiscal-config.mjs",
     "test:helpdesk-ticketing": "node scripts/test-helpdesk-ticketing-parity.mjs",
     "test:helpdesk-collapsible-conversation": "node scripts/test-helpdesk-collapsible-conversation.mjs",
+    "test:helpdesk-ai-autopilot": "node --experimental-strip-types scripts/test-helpdesk-ai-autopilot.mjs",
     "test:helpdesk-inbound-attachments": "node scripts/test-helpdesk-inbound-attachments.mjs",
     "test:internal-requests": "node scripts/test-internal-requests.mjs",
     "test:knowledge-center": "node scripts/test-knowledge-center.mjs",
