@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle,
-    Archive,
     BatteryLow,
     Bell,
     CheckCircle2,
+    ChevronLeft,
+    ChevronRight,
     Clock3,
     ExternalLink,
     FileText,
@@ -19,8 +20,6 @@ import {
     MessageSquare,
     MonitorSmartphone,
     Paperclip,
-    PanelLeftClose,
-    PanelLeftOpen,
     PanelRightClose,
     PanelRightOpen,
     RefreshCw,
@@ -235,18 +234,6 @@ const sourceStyles: Record<string, string> = {
     POS: 'bg-blue-50 text-blue-700 border-blue-200',
     ERP: 'bg-cyan-50 text-cyan-700 border-cyan-200',
     Preventivo: 'bg-amber-50 text-amber-700 border-amber-200',
-};
-
-const sentimentStyles: Record<Sentiment, string> = {
-    frustrated: 'bg-red-50 text-red-700 border-red-200',
-    neutral: 'bg-slate-50 text-slate-600 border-slate-200',
-    positive: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-};
-
-const sentimentLabels: Record<Sentiment, string> = {
-    frustrated: 'Frustrado',
-    neutral: 'Neutral',
-    positive: 'Positivo',
 };
 
 const emptyContactForm: ContactFormState = {
@@ -716,7 +703,6 @@ const SupportCommandCenter: React.FC = () => {
     const [filterDateFrom, setFilterDateFrom] = useState('');
     const [filterDateTo, setFilterDateTo] = useState('');
     const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-    const [showTicketList, setShowTicketList] = useState(true);
     const [showContextPanel, setShowContextPanel] = useState(true);
     const [isFocusMode, setIsFocusMode] = useState(false);
     const [actorDepartmentAccess, setActorDepartmentAccess] = useState<{ all: boolean; ids: string[] }>({ all: false, ids: [] });
@@ -748,11 +734,13 @@ const SupportCommandCenter: React.FC = () => {
 
     useEffect(() => {
         const handleEscape = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setIsFocusMode(false);
+            if (event.key !== 'Escape' || isContactModalOpen || isImprovementModalOpen) return;
+            setIsFocusMode(false);
+            setSelectedTicket(null);
         };
         window.addEventListener('keydown', handleEscape);
         return () => window.removeEventListener('keydown', handleEscape);
-    }, []);
+    }, [isContactModalOpen, isImprovementModalOpen]);
 
     useEffect(() => {
         const pane = messagesPaneRef.current;
@@ -1199,6 +1187,17 @@ const SupportCommandCenter: React.FC = () => {
         });
     }, [filterAssignee, filterContact, filterDateFrom, filterDateTo, filterSource, filterStatus, filterTeam, filterTenant, quickFilter, tickets]);
 
+    const selectedTicketIndex = selectedTicket
+        ? filteredTickets.findIndex((ticket) => ticket.id === selectedTicket.id)
+        : -1;
+
+    const navigateTicket = (direction: -1 | 1) => {
+        if (selectedTicketIndex < 0 || !filteredTickets.length) return;
+        const nextIndex = selectedTicketIndex + direction;
+        if (nextIndex < 0 || nextIndex >= filteredTickets.length) return;
+        setSelectedTicket(filteredTickets[nextIndex]);
+    };
+
     const clearPendingReplyAttachments = () => {
         pendingReplyAttachments.forEach((attachment) => {
             URL.revokeObjectURL(attachment.previewUrl);
@@ -1596,8 +1595,7 @@ const SupportCommandCenter: React.FC = () => {
 
     return (
         <div className="relative flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
-            {showTicketList && !isFocusMode ? (
-            <aside className="flex min-h-0 w-[350px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-sm">
+            <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white shadow-sm">
                 <div className="shrink-0 border-b border-slate-100 p-4">
                     <div className="mb-4 flex items-start justify-between gap-3">
                         <div>
@@ -1605,9 +1603,6 @@ const SupportCommandCenter: React.FC = () => {
                             <p className="text-sm text-slate-500">Soporte POS, ERP y email externo</p>
                         </div>
                         <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => setShowTicketList(false)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title="Ocultar lista de tickets">
-                                <PanelLeftClose size={17} />
-                            </button>
                             <div className="rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-violet-700">
                                 <Sparkles size={18} />
                             </div>
@@ -1770,14 +1765,23 @@ const SupportCommandCenter: React.FC = () => {
                     </div>
                 )}
 
-                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                <div className="min-h-0 flex-1 overflow-auto bg-slate-50/60 p-3 md:p-4">
                     {filteredTickets.length === 0 ? (
                         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                             No hay tickets con los filtros seleccionados.
                         </div>
                     ) : null}
+                    {filteredTickets.length > 0 ? (
+                        <div className="sticky top-0 z-10 mb-1 hidden min-w-[980px] grid-cols-[minmax(360px,2fr)_minmax(180px,1fr)_110px_130px_150px] gap-4 rounded-t-xl border border-slate-200 bg-slate-100/95 px-12 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 backdrop-blur md:grid">
+                            <span>Ticket / conversación</span>
+                            <span>Asignación</span>
+                            <span>Prioridad</span>
+                            <span>Estado / canal</span>
+                            <span className="text-right">Última actividad</span>
+                        </div>
+                    ) : null}
+                    <div className="min-w-0 space-y-1 md:min-w-[980px]">
                     {filteredTickets.map((ticket) => {
-                        const sentiment = ticket.insight?.sentiment ?? 'neutral';
                         const preview = lastMessageByTicketId[ticket.id];
                         const previewText = preview?.message
                             ? truncatePreview(preview.message)
@@ -1788,95 +1792,55 @@ const SupportCommandCenter: React.FC = () => {
                         const isSelected = selectedTicket?.id === ticket.id;
 
                         return (
-                            <button
-                                key={ticket.id}
-                                type="button"
-                                onClick={() => setSelectedTicket(ticket)}
-                                className={`mb-2 w-full rounded-xl border p-3 text-left transition-all ${getTicketListCardClass(ticket, isSelected, emphasizeClosed)}`}
-                            >
-                                <div className="mb-2 flex items-center justify-between gap-2">
-                                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedTicketIds.includes(ticket.id)}
-                                            onClick={(event) => event.stopPropagation()}
-                                            onChange={(event) => setSelectedTicketIds((current) => event.target.checked ? [...current, ticket.id] : current.filter((id) => id !== ticket.id))}
-                                            aria-label={`Seleccionar ${getTicketNumberLabel(ticket)}`}
-                                            className="h-4 w-4 rounded border-slate-300 text-blue-600"
-                                        />
-                                        <span className={`shrink-0 text-xs font-black ${closed && emphasizeClosed && !urgent ? 'text-slate-500' : 'text-slate-500'}`}>
-                                            {getTicketNumberLabel(ticket)}
-                                        </span>
-                                        {ticket.is_unread ? (
-                                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-indigo-300 bg-indigo-100 px-2 py-0.5 text-[10px] font-black text-indigo-800 shadow-sm">
-                                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-600" />
-                                                Nuevo
-                                            </span>
-                                        ) : null}
-                                        {emphasizeClosed && closed ? (
-                                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-slate-300 bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-700">
-                                                <Archive size={10} />
-                                                Cerrado
-                                            </span>
-                                        ) : null}
-                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>
-                                            {ticket.source === 'Email' ? <Mail size={11} /> : <MonitorSmartphone size={11} />}
-                                            {ticket.source}
-                                        </span>
-                                        {ticket.resolution_status && ticket.resolution_status !== 'open' && (
-                                            <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold ${resolutionStatusStyles[ticket.resolution_status] ?? 'border-slate-200 bg-slate-50 text-slate-500'}`}>
-                                                {resolutionStatusLabels[ticket.resolution_status] ?? ticket.resolution_status}
-                                            </span>
-                                        )}
+                            <div key={ticket.id} className={`group flex min-w-0 items-stretch overflow-hidden rounded-lg border transition-all ${getTicketListCardClass(ticket, isSelected, emphasizeClosed)}`}>
+                                <label className="flex w-10 shrink-0 cursor-pointer items-center justify-center border-r border-inherit bg-white/40" title={`Seleccionar ${getTicketNumberLabel(ticket)}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedTicketIds.includes(ticket.id)}
+                                        onChange={(event) => setSelectedTicketIds((current) => event.target.checked ? [...current, ticket.id] : current.filter((id) => id !== ticket.id))}
+                                        aria-label={`Seleccionar ${getTicketNumberLabel(ticket)}`}
+                                        className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                                    />
+                                </label>
+                                <button type="button" onClick={() => setSelectedTicket(ticket)} className="grid min-w-0 flex-1 grid-cols-1 gap-3 px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 md:grid-cols-[minmax(320px,2fr)_minmax(180px,1fr)_110px_130px_150px] md:items-center md:gap-4">
+                                    <div className="min-w-0">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                            {ticket.is_unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-indigo-600 ring-4 ring-indigo-100" aria-label="Ticket nuevo" /> : null}
+                                            <span className="shrink-0 text-xs font-black text-slate-500">{getTicketNumberLabel(ticket)}</span>
+                                            {ticket.is_unread ? <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-indigo-700">Nuevo</span> : null}
+                                            <h3 className={`truncate text-sm ${ticket.is_unread ? 'font-black text-slate-950' : 'font-bold text-slate-800'}`}>{ticket.subject}</h3>
+                                        </div>
+                                        <p className="mt-1 truncate text-xs font-semibold text-slate-600">{getTicketOwner(ticket)} · {getContactLabel(ticket)}</p>
+                                        <p className={`mt-1 truncate text-xs ${ticket.is_unread ? 'font-medium text-slate-700' : 'text-slate-500'}`}>
+                                            {preview ? <><span className="font-semibold">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}{previewText}</> : previewText}
+                                        </p>
                                     </div>
-                                    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${getPriorityBadgeClass(ticket.priority)}`}>
-                                        {urgent ? <AlertTriangle size={10} className={ticket.priority === 'Critica' ? 'text-red-700' : 'text-amber-700'} /> : null}
-                                        {ticket.priority}
-                                    </span>
-                                </div>
-
-                                <h3 className={`truncate text-sm ${ticket.is_unread ? 'font-black text-slate-950' : `font-bold ${closed && emphasizeClosed && !urgent ? 'text-slate-700' : 'text-slate-900'}`}`}>
-                                    {getTicketOwner(ticket)}
-                                </h3>
-                                <p className={`mt-1 line-clamp-1 text-xs ${ticket.is_unread ? 'font-bold text-slate-900' : `font-medium ${closed && emphasizeClosed && !urgent ? 'text-slate-500' : 'text-slate-700'}`}`}>
-                                    {ticket.subject}
-                                </p>
-                                <p className={`mt-2 line-clamp-2 text-xs leading-relaxed ${ticket.is_unread ? 'font-medium text-slate-700' : closed && emphasizeClosed && !urgent ? 'text-slate-400' : 'text-slate-500'}`}>
-                                    {preview ? (
-                                        <>
-                                            <span className="font-semibold text-slate-600">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}
-                                            {previewText}
-                                        </>
-                                    ) : (
-                                        previewText
-                                    )}
-                                </p>
-
-                                <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
-                                    <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-indigo-700">
-                                        {ticket.support_team?.name || 'Sin departamento'}
-                                    </span>
-                                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-600">
-                                        {ticket.assignee?.full_name || 'Sin persona asignada'}
-                                    </span>
-                                </div>
-
-                                <div className="mt-3 flex items-center justify-between gap-2 text-[11px]">
-                                    <span className={`rounded-full border px-2 py-0.5 font-medium ${sentimentStyles[sentiment]}`}>
-                                        {sentimentLabels[sentiment]}
-                                    </span>
-                                    <span className="flex items-center gap-1 text-slate-400">
-                                        <Clock3 size={11} />
-                                        {formatTime(preview?.created_at || ticket.created_at)}
-                                    </span>
-                                </div>
-                            </button>
+                                    <div className="min-w-0 text-xs">
+                                        <p className="truncate font-bold text-indigo-700">{ticket.support_team?.name || 'Sin departamento'}</p>
+                                        <p className="mt-1 truncate text-slate-500">{ticket.assignee?.full_name || 'Sin persona asignada'}</p>
+                                    </div>
+                                    <div><span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold ${getPriorityBadgeClass(ticket.priority)}`}>{urgent ? <AlertTriangle size={10} /> : null}{ticket.priority}</span></div>
+                                    <div className="flex flex-wrap gap-1.5 md:block">
+                                        <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold ${closed ? 'border-slate-300 bg-slate-100 text-slate-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{closed ? 'Cerrado' : formatStatusLabel(ticket.status)}</span>
+                                        <span className={`ml-0 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold md:ml-1 ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>{ticket.source === 'Email' ? <Mail size={10} /> : <MonitorSmartphone size={10} />}{ticket.source}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 text-xs font-medium text-slate-500 md:justify-end"><Clock3 size={12} />{formatTime(preview?.created_at || ticket.created_at)}</div>
+                                </button>
+                            </div>
                         );
                     })}
+                    </div>
                 </div>
-            </aside>
-            ) : null}
+            </section>
 
+            {selectedTicket ? (
+            <div
+                className="fixed inset-0 z-40 flex bg-slate-950/45 p-0 backdrop-blur-[1px] md:p-3"
+                onMouseDown={(event) => {
+                    if (event.target === event.currentTarget) setSelectedTicket(null);
+                }}
+            >
+            <div role="dialog" aria-modal="true" aria-label={`Ticket ${getTicketNumberLabel(selectedTicket)}`} className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] overflow-hidden bg-white shadow-2xl md:rounded-2xl md:border md:border-slate-200">
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
                 {selectedTicket ? (
                     <>
@@ -1915,11 +1879,17 @@ const SupportCommandCenter: React.FC = () => {
                                 </div>
 
                                 <div className="flex shrink-0 gap-2">
-                                    {(!showTicketList || isFocusMode) ? (
-                                        <button type="button" onClick={() => { setShowTicketList(true); setIsFocusMode(false); }} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title="Mostrar lista de tickets">
-                                            <PanelLeftOpen size={15} />
+                                    <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
+                                        <button type="button" onClick={() => navigateTicket(-1)} disabled={selectedTicketIndex <= 0} className="p-2 text-slate-500 hover:bg-slate-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-30" title="Ticket anterior">
+                                            <ChevronLeft size={15} />
                                         </button>
-                                    ) : null}
+                                        <span className="border-x border-slate-200 px-2 text-[11px] font-bold text-slate-500">
+                                            {selectedTicketIndex + 1}/{filteredTickets.length}
+                                        </span>
+                                        <button type="button" onClick={() => navigateTicket(1)} disabled={selectedTicketIndex < 0 || selectedTicketIndex >= filteredTickets.length - 1} className="p-2 text-slate-500 hover:bg-slate-50 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-30" title="Ticket siguiente">
+                                            <ChevronRight size={15} />
+                                        </button>
+                                    </div>
                                     <button type="button" onClick={() => setIsFocusMode((current) => !current)} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-bold transition-colors ${isFocusMode ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:text-indigo-700'}`} title={isFocusMode ? 'Salir del modo concentración (Esc)' : 'Ocultar paneles laterales'}>
                                         <Focus size={15} />
                                         <span className="hidden xl:inline">{isFocusMode ? 'Salir de concentración' : 'Modo concentración'}</span>
@@ -1932,6 +1902,9 @@ const SupportCommandCenter: React.FC = () => {
                                     </button>
                                     <button onClick={() => updateStatus('Resuelto')} disabled={isResolvingTicket} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
                                         {isResolvingTicket ? 'Enviando...' : 'Resolver'}
+                                    </button>
+                                    <button type="button" onClick={() => setSelectedTicket(null)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-50 hover:text-slate-900" title="Cerrar ticket (Esc)" aria-label="Cerrar ticket">
+                                        <X size={16} />
                                     </button>
                                 </div>
                             </div>
@@ -2226,7 +2199,6 @@ const SupportCommandCenter: React.FC = () => {
                     </>
                 ) : (
                     <div className="flex min-h-0 flex-1 flex-col items-center justify-center bg-slate-50 text-slate-400">
-                        {!showTicketList ? <button type="button" onClick={() => setShowTicketList(true)} className="mb-4 rounded-lg border border-slate-200 bg-white p-2 text-slate-500"><PanelLeftOpen size={17} /></button> : null}
                         <MessageSquare className="mb-4 text-slate-300" size={56} />
                         <p className="font-medium text-slate-600">Selecciona un ticket para comenzar</p>
                     </div>
@@ -2447,6 +2419,9 @@ const SupportCommandCenter: React.FC = () => {
                     </div>
                 </aside>
             )}
+            </div>
+            </div>
+            ) : null}
 
             {isImprovementModalOpen && selectedTicket && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
