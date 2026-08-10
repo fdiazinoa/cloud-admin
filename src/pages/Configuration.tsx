@@ -23,6 +23,10 @@ interface IntegrationSettings {
     ai_triage_enabled: boolean;
     ai_sentiment_enabled: boolean;
     ai_auto_drafts_enabled: boolean;
+    ai_autonomy_mode: 'observe' | 'copilot' | 'autopilot';
+    ai_auto_reply_min_confidence: number;
+    ai_auto_route_min_confidence: number;
+    ai_auto_reply_clarifications: boolean;
 }
 
 interface SecretStatus {
@@ -36,10 +40,14 @@ const defaultSettings: IntegrationSettings = {
     resend_from_name: 'Cloud Admin Soporte',
     resend_from_email: 'apoyotenico@mercasend.com',
     ai_provider: 'openai',
-    ai_model: 'gpt-4o-mini',
+    ai_model: 'gpt-4o-mini-2024-07-18',
     ai_triage_enabled: true,
     ai_sentiment_enabled: true,
     ai_auto_drafts_enabled: true,
+    ai_autonomy_mode: 'observe',
+    ai_auto_reply_min_confidence: 0.92,
+    ai_auto_route_min_confidence: 0.85,
+    ai_auto_reply_clarifications: true,
 };
 
 function getWebhookUrl() {
@@ -300,7 +308,7 @@ export const Configuration: React.FC = () => {
                         </div>
                         <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Proveedor IA</p>
                         <h2 className="mt-1 text-lg font-black text-slate-900">{settings.ai_provider === 'disabled' ? 'Desactivado' : settings.ai_provider}</h2>
-                        <p className="mt-2 text-sm text-slate-500">{settings.ai_model}</p>
+                        <p className="mt-2 text-sm text-slate-500">{settings.ai_model} · {settings.ai_autonomy_mode}</p>
                     </div>
 
                     <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -374,6 +382,36 @@ export const Configuration: React.FC = () => {
                             <ToggleRow label="Triage automático" detail="Clasifica categoría, prioridad y resumen de tickets nuevos." checked={settings.ai_triage_enabled} onChange={(value) => updateSetting('ai_triage_enabled', value)} />
                             <ToggleRow label="Análisis de sentimiento" detail="Marca tickets como frustrado, neutral o positivo." checked={settings.ai_sentiment_enabled} onChange={(value) => updateSetting('ai_sentiment_enabled', value)} />
                             <ToggleRow label="Respuestas sugeridas" detail="Genera borradores rápidos para que el agente revise antes de enviar." checked={settings.ai_auto_drafts_enabled} onChange={(value) => updateSetting('ai_auto_drafts_enabled', value)} />
+                            <div className="mt-4 space-y-4 border-t border-slate-200 pt-4">
+                                <label className="block">
+                                    <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Nivel de autonomía</span>
+                                    <select
+                                        value={settings.ai_autonomy_mode}
+                                        onChange={(event) => updateSetting('ai_autonomy_mode', event.target.value as IntegrationSettings['ai_autonomy_mode'])}
+                                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-800 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                    >
+                                        <option value="observe">Solo observar</option>
+                                        <option value="copilot">Copiloto · requiere aprobación</option>
+                                        <option value="autopilot">Autopilot controlado</option>
+                                    </select>
+                                </label>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <label className="block">
+                                        <span className="mb-1 block text-[11px] font-bold text-slate-600">Confianza para responder</span>
+                                        <input type="number" min="0.5" max="1" step="0.01" value={settings.ai_auto_reply_min_confidence} onChange={(event) => updateSetting('ai_auto_reply_min_confidence', Number(event.target.value))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+                                    </label>
+                                    <label className="block">
+                                        <span className="mb-1 block text-[11px] font-bold text-slate-600">Confianza para clasificar</span>
+                                        <input type="number" min="0.5" max="1" step="0.01" value={settings.ai_auto_route_min_confidence} onChange={(event) => updateSetting('ai_auto_route_min_confidence', Number(event.target.value))} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+                                    </label>
+                                </div>
+                                <ToggleRow label="Preguntar datos faltantes" detail="Permite que Autopilot solicite información en casos de bajo riesgo." checked={settings.ai_auto_reply_clarifications} onChange={(value) => updateSetting('ai_auto_reply_clarifications', value)} />
+                                <div className={`rounded-lg border p-3 text-xs ${settings.ai_autonomy_mode === 'autopilot' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-indigo-100 bg-indigo-50 text-indigo-700'}`}>
+                                    {settings.ai_autonomy_mode === 'autopilot'
+                                        ? 'Autopilot solo enviará soluciones respaldadas por manuales y escalará casos fiscales, pagos, críticos, mejoras y clientes frustrados.'
+                                        : 'El bot analizará los mensajes y registrará sus decisiones, pero no enviará soluciones sin aprobación.'}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </section>
