@@ -681,6 +681,7 @@ const SupportCommandCenter: React.FC = () => {
     const [refreshVersion, setRefreshVersion] = useState(0);
     const [replyText, setReplyText] = useState('');
     const [replyMode, setReplyMode] = useState<HelpdeskReplyMode>('reply');
+    const [isComposerOpen, setIsComposerOpen] = useState(false);
     const [ccText, setCcText] = useState('');
     const [bccText, setBccText] = useState('');
     const [forwardTo, setForwardTo] = useState('');
@@ -759,6 +760,11 @@ const SupportCommandCenter: React.FC = () => {
     }, [replyText, selectedTicketId]);
 
     useEffect(() => {
+        if (!isComposerOpen) return;
+        window.requestAnimationFrame(() => replyTextareaRef.current?.focus());
+    }, [isComposerOpen, isPrivateNote, replyMode]);
+
+    useEffect(() => {
         pendingReplyAttachmentsRef.current = pendingReplyAttachments;
     }, [pendingReplyAttachments]);
 
@@ -832,6 +838,8 @@ const SupportCommandCenter: React.FC = () => {
     useEffect(() => {
         setConversationSearch('');
         setConversationMatchIndex(0);
+        setIsComposerOpen(false);
+        setShowReplyOptions(false);
         messageElementRefs.current = {};
     }, [selectedTicketId]);
 
@@ -1301,6 +1309,7 @@ const SupportCommandCenter: React.FC = () => {
                 await addPublicHelpdeskReply(selectedTicket.id, messageText, uploadedAttachments);
             }
             clearPendingReplyAttachments();
+            setIsComposerOpen(false);
             setCcText('');
             setBccText('');
             setForwardTo('');
@@ -1772,7 +1781,7 @@ const SupportCommandCenter: React.FC = () => {
                         </div>
                     ) : null}
                     {filteredTickets.length > 0 ? (
-                        <div className="sticky top-0 z-10 mb-1 hidden min-w-[980px] grid-cols-[minmax(360px,2fr)_minmax(180px,1fr)_110px_130px_150px] gap-4 rounded-t-xl border border-slate-200 bg-slate-100/95 px-12 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 backdrop-blur md:grid">
+                        <div className="mb-1 hidden min-w-[980px] grid-cols-[minmax(360px,2fr)_minmax(180px,1fr)_110px_130px_150px] gap-4 rounded-t-xl border border-slate-200 bg-slate-100 px-12 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 md:grid">
                             <span>Ticket / conversación</span>
                             <span>Asignación</span>
                             <span>Prioridad</span>
@@ -1970,7 +1979,7 @@ const SupportCommandCenter: React.FC = () => {
                                     Aún no hay mensajes en este ticket.
                                 </div>
                             ) : null}
-                            <div className="mx-auto flex max-w-4xl flex-col gap-3">
+                            <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
                             {messages.map((message) => {
                                 const attachments = normalizeMessageAttachments(message.attachments);
                                 const isAdminMessage = message.sender_type === 'Admin';
@@ -1983,12 +1992,12 @@ const SupportCommandCenter: React.FC = () => {
                                         ref={(element) => { messageElementRefs.current[message.id] = element; }}
                                         className={`flex rounded-2xl ${conversationMatches[conversationMatchIndex]?.id === message.id ? 'ring-2 ring-yellow-300 ring-offset-2' : ''} ${isAdminMessage ? 'justify-end' : isSystemMessage ? 'justify-center' : 'justify-start'}`}
                                     >
-                                        <div className={`max-w-[min(82%,760px)] rounded-2xl px-4 py-3 text-sm shadow-sm ${isPrivateMessage ? 'rounded-br-md border border-amber-300 bg-amber-50 text-amber-950' : isAdminMessage ? 'rounded-br-md border border-blue-100 bg-blue-50 text-slate-800' : isSystemMessage ? 'max-w-xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
+                                        <div className={`max-w-[min(92%,1100px)] rounded-2xl px-5 py-4 text-sm shadow-sm ${isPrivateMessage ? 'rounded-br-md border border-amber-300 bg-amber-50 text-amber-950' : isAdminMessage ? 'rounded-br-md border border-blue-100 bg-blue-50 text-slate-800' : isSystemMessage ? 'max-w-2xl border border-slate-200 bg-slate-50 text-slate-500' : 'rounded-bl-md border border-slate-200 bg-white text-slate-700'}`}>
                                             <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-wide opacity-75">
                                                 <span>{isPrivateMessage ? 'Nota interna' : isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket)}</span>
                                                 <span className="font-medium normal-case tracking-normal">{formatTime(message.created_at)}</span>
                                             </div>
-                                            <p className="whitespace-pre-wrap break-words leading-relaxed">{renderHighlightedText(message.message, conversationSearch)}</p>
+                                            <p className="whitespace-pre-wrap break-words text-pretty leading-6">{renderHighlightedText(message.message, conversationSearch)}</p>
 
                                             {isAdminMessage && !isPrivateMessage && message.delivery_status && (
                                                 <div className={`mt-2 flex items-center justify-end gap-1 text-[10px] font-semibold ${['failed', 'bounced'].includes(message.delivery_status) ? 'text-red-600' : 'text-slate-500'}`}>
@@ -2065,7 +2074,7 @@ const SupportCommandCenter: React.FC = () => {
                         </div>
 
                         <div className="shrink-0 border-t border-slate-200 bg-slate-50 p-4">
-                            <div className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                            <div className="mx-auto w-full max-w-6xl rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
                                 {workspacePresence.some((presence) => presence.admin_user_id !== currentActorId) && (
                                     <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
                                         <Users size={14} />
@@ -2073,16 +2082,19 @@ const SupportCommandCenter: React.FC = () => {
                                     </div>
                                 )}
                                 <div className="mb-3 flex flex-wrap items-center gap-2">
-                                    <button type="button" onClick={() => { setIsPrivateNote(false); setReplyMode('reply'); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${!isPrivateNote && replyMode === 'reply' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Send size={12} /> Responder</button>
-                                    <button type="button" onClick={() => { setIsPrivateNote(false); setReplyMode('reply_all'); setShowReplyOptions(true); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${!isPrivateNote && replyMode === 'reply_all' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><ReplyAll size={12} /> Responder a todos</button>
-                                    <button type="button" onClick={() => { setIsPrivateNote(false); setReplyMode('forward'); setShowReplyOptions(true); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${replyMode === 'forward' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Forward size={12} /> Reenviar</button>
-                                    <button type="button" onClick={() => { setIsPrivateNote(true); setReplyMode('reply'); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isPrivateNote ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600'}`}><StickyNote size={12} /> Nota interna</button>
+                                    <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(false); setReplyMode('reply'); setShowReplyOptions(false); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && !isPrivateNote && replyMode === 'reply' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Send size={12} /> Responder</button>
+                                    <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(false); setReplyMode('reply_all'); setShowReplyOptions(true); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && !isPrivateNote && replyMode === 'reply_all' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><ReplyAll size={12} /> Responder a todos</button>
+                                    <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(false); setReplyMode('forward'); setShowReplyOptions(true); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && replyMode === 'forward' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Forward size={12} /> Reenviar</button>
+                                    <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(true); setReplyMode('reply'); setShowReplyOptions(false); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && isPrivateNote ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600'}`}><StickyNote size={12} /> Nota interna</button>
                                     <FileText className="ml-auto text-slate-400" size={14} />
-                                    <select defaultValue="" onChange={(event) => { applyReplyTemplate(event.target.value); event.target.value = ''; }} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600">
+                                    <select defaultValue="" onChange={(event) => { setIsComposerOpen(true); setIsPrivateNote(false); setReplyMode('reply'); applyReplyTemplate(event.target.value); event.target.value = ''; }} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600">
                                         <option value="">Plantilla…</option>
                                         {replyTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
                                     </select>
+                                    {isComposerOpen ? <button type="button" onClick={() => setIsComposerOpen(false)} className="rounded-lg border border-slate-200 p-1.5 text-slate-400 hover:bg-slate-50 hover:text-slate-700" title="Ocultar editor" aria-label="Ocultar editor"><X size={13} /></button> : null}
                                 </div>
+                                {isComposerOpen ? (
+                                <>
                                 {showReplyOptions && !isPrivateNote && (
                                     <div className="mb-3 grid gap-2 sm:grid-cols-2">
                                         {replyMode === 'forward' ? (
@@ -2194,6 +2206,8 @@ const SupportCommandCenter: React.FC = () => {
                                         </button>
                                     </div>
                                 </div>
+                                </>
+                                ) : null}
                             </div>
                         </div>
                     </>
