@@ -19,6 +19,7 @@ import {
 } from '../lib/tenantProducts';
 import {
     buildTerminalIdentitySummary,
+    CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE,
     getAttemptDeviceId,
     getDeviceRoleClasses,
     getDeviceRoleLabel,
@@ -27,9 +28,11 @@ import {
     getTerminalAuthorizedDeviceId,
     getTerminalPersistedAuthorizedDeviceId,
     getTerminalPosReportedDeviceId,
+    hasCanonicalErpBinding,
     isPendingDeviceUnauthorizedAttempt,
     summarizeTerminalFiscalDebug,
 } from '../lib/terminalIdentity';
+import { buildTerminalReconciliationPreview } from '../lib/terminalReconciliation';
 
 type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'sync' | 'fiscal' | 'attempts';
 
@@ -69,6 +72,11 @@ export const Tenants: React.FC = () => {
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
     const [manualDeviceIds, setManualDeviceIds] = useState<Record<string, string>>({});
+    const [reconciliationDrafts, setReconciliationDrafts] = useState<Record<string, {
+        erpTerminalUuid: string;
+        storeId: string;
+        adminConfirmed: boolean;
+    }>>({});
     const [posLicenseSeats, setPosLicenseSeats] = useState<TenantPosLicenseSeats | null>(null);
     const [fiscalReadinessByTerminal, setFiscalReadinessByTerminal] = useState<Record<string, TerminalFiscalReadiness>>({});
     const [fiscalReadinessLoadingKey, setFiscalReadinessLoadingKey] = useState<string | null>(null);
@@ -473,13 +481,18 @@ export const Tenants: React.FC = () => {
         return semantics.contractedProduct === 'POS_ERP' || semantics.cloudChannel === 'ERP_ACTIVE';
     };
 
-    const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => (
-        terminal.registry?.terminal_id?.trim()
-        || terminal.id
-        || terminal.terminal_id
-        || terminal.erp_terminal_uuid
-        || ''
+    const terminalRequiresCanonicalErp = () => isFiscalEligibleTenant(selectedTenantForTerminals);
+    const isCanonicalTerminalActionBlocked = (terminal: TenantTerminalSnapshot) => (
+        terminalRequiresCanonicalErp() && !hasCanonicalErpBinding(terminal)
     );
+    const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => {
+        if (terminalRequiresCanonicalErp()) return hasCanonicalErpBinding(terminal) ? terminal.erp_terminal_uuid!.trim() : '';
+        return terminal.registry?.terminal_id?.trim()
+            || terminal.terminal_id?.trim()
+            || terminal.catalog_terminal_id?.trim()
+            || terminal.id
+            || '';
+    };
 
     const getTakeoverSelectionKey = (terminalId: string, registryId?: string | null) => (
         registryId ? `registry:${registryId}` : `terminal:${terminalId}`
@@ -722,6 +735,10 @@ export const Tenants: React.FC = () => {
     };
 
     const openTakeoverModal = (terminal: TenantTerminalSnapshot) => {
+        if (isCanonicalTerminalActionBlocked(terminal)) {
+            alert(CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE);
+            return;
+        }
         setTakeoverTerminal(terminal);
         setTakeoverFormData({
             terminalId: getTerminalTakeoverId(terminal),
@@ -748,6 +765,10 @@ export const Tenants: React.FC = () => {
     };
 
     const openRebuildModal = (terminal: TenantTerminalSnapshot) => {
+        if (isCanonicalTerminalActionBlocked(terminal)) {
+            alert(CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE);
+            return;
+        }
         setRebuildTerminal(terminal);
         setRebuildFormData({
             reason: '',
@@ -1052,6 +1073,10 @@ export const Tenants: React.FC = () => {
         authorizedDeviceIdInput?: string | null,
     ) => {
         if (!selectedTenantForTerminals) return;
+        if (isCanonicalTerminalActionBlocked(terminal)) {
+            alert(CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE);
+            return;
+        }
 
         const requestedDeviceId = requestedDeviceIdInput.trim();
         const terminalId = getTerminalTakeoverId(terminal);
@@ -1078,6 +1103,8 @@ export const Tenants: React.FC = () => {
             const result = await tenantService.requestTerminalDeviceAction({
                 tenantId: selectedTenantForTerminals.id,
                 terminalId,
+                catalogTerminalId: terminal.catalog_terminal_id,
+                storeId: terminal.erp_store_id,
                 registryId: terminal.registry?.id || null,
                 terminalName: terminal.name,
                 deviceId: requestedDeviceId,
@@ -1109,6 +1136,10 @@ export const Tenants: React.FC = () => {
 
     const handleRepairErpDeviceMapping = async (terminal: TenantTerminalSnapshot) => {
         if (!selectedTenantForTerminals) return;
+        if (isCanonicalTerminalActionBlocked(terminal)) {
+            alert(CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE);
+            return;
+        }
         const terminalId = getTerminalTakeoverId(terminal);
         const deviceId = getTerminalAuthorizedDeviceId(terminal);
         if (!terminalId || !deviceId) {
@@ -1122,6 +1153,8 @@ export const Tenants: React.FC = () => {
             const result = await tenantService.requestTerminalDeviceAction({
                 tenantId: selectedTenantForTerminals.id,
                 terminalId,
+                catalogTerminalId: terminal.catalog_terminal_id,
+                storeId: terminal.erp_store_id,
                 registryId: terminal.registry?.id || null,
                 terminalName: terminal.name,
                 deviceId,
@@ -1159,6 +1192,8 @@ export const Tenants: React.FC = () => {
             const result = await tenantService.requestTerminalDeviceAction({
                 tenantId: selectedTenantForTerminals.id,
                 terminalId,
+                catalogTerminalId: terminal.catalog_terminal_id,
+                storeId: terminal.erp_store_id,
                 registryId: terminal.registry?.id || null,
                 terminalName: terminal.name,
                 deviceId,
@@ -1208,6 +1243,10 @@ export const Tenants: React.FC = () => {
 
     const handleRotateTerminalCredentials = async (terminal: TenantTerminalSnapshot) => {
         if (!selectedTenantForTerminals) return;
+        if (isCanonicalTerminalActionBlocked(terminal)) {
+            alert(CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE);
+            return;
+        }
         const terminalId = getTerminalTakeoverId(terminal);
         const deviceId = getTerminalAuthorizedDeviceId(terminal);
         if (!terminalId || !deviceId) {
@@ -1224,6 +1263,8 @@ export const Tenants: React.FC = () => {
             const result = await tenantService.requestTerminalDeviceAction({
                 tenantId: selectedTenantForTerminals.id,
                 terminalId,
+                catalogTerminalId: terminal.catalog_terminal_id,
+                storeId: terminal.erp_store_id,
                 registryId: terminal.registry?.id || null,
                 terminalName: terminal.name,
                 deviceId,
@@ -1278,6 +1319,10 @@ export const Tenants: React.FC = () => {
 
     const handleRevokePreviousDevice = async (terminal: TenantTerminalSnapshot, deviceId: string) => {
         if (!selectedTenantForTerminals) return;
+        if (isCanonicalTerminalActionBlocked(terminal)) {
+            alert(CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE);
+            return;
+        }
         const terminalId = getTerminalTakeoverId(terminal);
         if (!terminalId || !deviceId) return;
 
@@ -1290,6 +1335,8 @@ export const Tenants: React.FC = () => {
             const result = await tenantService.requestTerminalDeviceAction({
                 tenantId: selectedTenantForTerminals.id,
                 terminalId,
+                catalogTerminalId: terminal.catalog_terminal_id,
+                storeId: terminal.erp_store_id,
                 registryId: terminal.registry?.id || null,
                 terminalName: terminal.name,
                 deviceId,
@@ -1308,6 +1355,10 @@ export const Tenants: React.FC = () => {
 
     const handleClearTerminalDevices = async (terminal: TenantTerminalSnapshot) => {
         if (!selectedTenantForTerminals) return;
+        if (isCanonicalTerminalActionBlocked(terminal)) {
+            alert(CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE);
+            return;
+        }
         const terminalId = getTerminalTakeoverId(terminal);
         if (!terminalId) {
             alert('Esta terminal necesita terminal_id para limpiar devices.');
@@ -1326,6 +1377,8 @@ export const Tenants: React.FC = () => {
             const result = await tenantService.requestTerminalDeviceAction({
                 tenantId: selectedTenantForTerminals.id,
                 terminalId,
+                catalogTerminalId: terminal.catalog_terminal_id,
+                storeId: terminal.erp_store_id,
                 registryId: terminal.registry?.id || null,
                 terminalName: terminal.name,
                 action: 'CLEAR_TERMINAL_DEVICES',
@@ -2380,6 +2433,13 @@ export const Tenants: React.FC = () => {
                                         const authAttempts = authAttemptsByTerminal[terminalKey] || [];
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
                                         const identity = buildTerminalIdentitySummary(terminal, authAttempts);
+                                        const canonicalActionBlocked = isCanonicalTerminalActionBlocked(terminal);
+                                        const reconciliationDraft = reconciliationDrafts[terminalKey] || {
+                                            erpTerminalUuid: '',
+                                            storeId: '',
+                                            adminConfirmed: false,
+                                        };
+                                        const reconciliationPreview = buildTerminalReconciliationPreview(terminal, reconciliationDraft);
                                         const authorizedDeviceId = identity.authorizedDeviceId !== 'N/D' ? identity.authorizedDeviceId : '';
                                         const posReportedDeviceId = identity.posReportedDeviceId !== 'N/D' ? identity.posReportedDeviceId : '';
                                         const erpCurrentDeviceId = identity.erpCurrentDeviceId !== 'N/D' ? identity.erpCurrentDeviceId : '';
@@ -2613,7 +2673,7 @@ export const Tenants: React.FC = () => {
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => void handleAuthorizeDeviceForManualInput(terminal, detectedAuthorizationDeviceId)}
-                                                                        disabled={deviceActionSubmittingKey === manualAuthorizeKey}
+                                                                        disabled={canonicalActionBlocked || deviceActionSubmittingKey === manualAuthorizeKey}
                                                                         className="inline-flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-900 shadow-sm hover:bg-amber-100 transition-colors disabled:opacity-60"
                                                                     >
                                                                         {deviceActionSubmittingKey === manualAuthorizeKey ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
@@ -2623,7 +2683,7 @@ export const Tenants: React.FC = () => {
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => void handleRotateTerminalCredentials(terminal)}
-                                                                    disabled={!authorizedDeviceId || deviceActionSubmittingKey === rotateSubmittingKey}
+                                                                    disabled={canonicalActionBlocked || !authorizedDeviceId || deviceActionSubmittingKey === rotateSubmittingKey}
                                                                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 shadow-sm hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                                                                 >
                                                                     {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
@@ -2633,7 +2693,7 @@ export const Tenants: React.FC = () => {
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => void handleRepairErpDeviceMapping(terminal)}
-                                                                        disabled={!authorizedDeviceId || deviceActionSubmittingKey === repairErpSubmittingKey}
+                                                                        disabled={canonicalActionBlocked || !authorizedDeviceId || deviceActionSubmittingKey === repairErpSubmittingKey}
                                                                         className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                                                                     >
                                                                         {deviceActionSubmittingKey === repairErpSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
@@ -2648,11 +2708,62 @@ export const Tenants: React.FC = () => {
                                                                 {identity.mismatchWarning}
                                                             </div>
                                                         ) : null}
+                                                        {identity.reconciliationWarning ? (
+                                                            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                                                                <p className="font-bold">{identity.reconciliationWarning}</p>
+                                                                <p className="mt-1">{CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE}</p>
+                                                                <details className="mt-3 rounded-lg border border-amber-200 bg-white/70 p-3">
+                                                                    <summary className="cursor-pointer font-bold">Vista previa de reconciliación (dry-run)</summary>
+                                                                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                                                                        <input
+                                                                            value={reconciliationDraft.erpTerminalUuid}
+                                                                            onChange={(event) => setReconciliationDrafts((current) => ({
+                                                                                ...current,
+                                                                                [terminalKey]: { ...reconciliationDraft, erpTerminalUuid: event.target.value },
+                                                                            }))}
+                                                                            placeholder="UUID ERP canónico"
+                                                                            className="rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-xs"
+                                                                        />
+                                                                        <input
+                                                                            value={reconciliationDraft.storeId}
+                                                                            onChange={(event) => setReconciliationDrafts((current) => ({
+                                                                                ...current,
+                                                                                [terminalKey]: { ...reconciliationDraft, storeId: event.target.value },
+                                                                            }))}
+                                                                            placeholder="UUID sucursal ERP"
+                                                                            className="rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-xs"
+                                                                        />
+                                                                    </div>
+                                                                    <label className="mt-2 flex items-center gap-2 text-xs font-semibold">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={reconciliationDraft.adminConfirmed}
+                                                                            onChange={(event) => setReconciliationDrafts((current) => ({
+                                                                                ...current,
+                                                                                [terminalKey]: { ...reconciliationDraft, adminConfirmed: event.target.checked },
+                                                                            }))}
+                                                                        />
+                                                                        Confirmación administrativa para evaluar el plan
+                                                                    </label>
+                                                                    <p className="mt-3 text-xs font-bold">DRY-RUN · escrituras realizadas: no</p>
+                                                                    <p className="mt-1 text-xs">Estado: {reconciliationPreview.executable ? 'Plan validable' : 'Bloqueado'}</p>
+                                                                    {reconciliationPreview.blockers.length ? (
+                                                                        <ul className="mt-1 list-disc pl-5 text-xs">
+                                                                            {reconciliationPreview.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+                                                                        </ul>
+                                                                    ) : null}
+                                                                </details>
+                                                            </div>
+                                                        ) : null}
 
                                                         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 text-sm">
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal ERP UUID</p>
                                                                 <p className="mt-1 font-mono break-all text-xs">{identity.erpTerminalUuid}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">UUID catálogo Cloud</p>
+                                                                <p className="mt-1 font-mono break-all text-xs">{identity.catalogTerminalId}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Terminal code / POS ID</p>
@@ -2677,6 +2788,15 @@ export const Tenants: React.FC = () => {
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device actual en ERP</p>
                                                                 <p className={`mt-1 font-mono break-all ${needsErpDeviceRepair ? 'text-red-700' : ''}`}>{identity.erpCurrentDeviceId}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Device registrado en Cloud</p>
+                                                                <p className="mt-1 font-mono break-all">{terminal.registry?.device_id || 'N/D'}</p>
+                                                            </div>
+                                                            <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Estado de reconciliación</p>
+                                                                <p className="mt-1 font-bold uppercase">{identity.identityStatus}</p>
+                                                                <p className="mt-1 text-xs opacity-70">Fuente: {identity.bindingSource}</p>
                                                             </div>
                                                             <div className="rounded-xl border border-white/60 bg-white/70 px-3 py-2">
                                                                 <p className="text-[11px] font-bold uppercase tracking-wider opacity-70">Ultimo device rechazado</p>
@@ -2712,7 +2832,7 @@ export const Tenants: React.FC = () => {
                                                             <button
                                                                 type="button"
                                                                 onClick={() => void handleClearTerminalDevices(terminal)}
-                                                                disabled={deviceActionSubmittingKey === clearDevicesSubmittingKey}
+                                                                disabled={canonicalActionBlocked || deviceActionSubmittingKey === clearDevicesSubmittingKey}
                                                                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-red-700 shadow-sm hover:bg-red-50 transition-colors disabled:opacity-60"
                                                             >
                                                                 {deviceActionSubmittingKey === clearDevicesSubmittingKey ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
@@ -2736,7 +2856,7 @@ export const Tenants: React.FC = () => {
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualDeviceIds[terminalKey] || '')}
-                                                                        disabled={!manualDeviceId || deviceActionSubmittingKey === manualAuthorizeKey}
+                                                                        disabled={canonicalActionBlocked || !manualDeviceId || deviceActionSubmittingKey === manualAuthorizeKey}
                                                                         className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                                                                     >
                                                                         {deviceActionSubmittingKey === manualAuthorizeKey ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
@@ -2853,7 +2973,7 @@ export const Tenants: React.FC = () => {
                                                                                             <button
                                                                                                 type="button"
                                                                                                 onClick={() => void handleAuthorizeDeviceForManualInput(terminal, rowDeviceId)}
-                                                                                                disabled={deviceActionSubmittingKey === authorizeRowKey}
+                                                                                                disabled={canonicalActionBlocked || deviceActionSubmittingKey === authorizeRowKey}
                                                                                                 title={`Autoriza ${rowDeviceId} para ${terminal.name} y revoca el device activo anterior.`}
                                                                                                 className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-bold uppercase text-emerald-900 hover:bg-emerald-100 transition-colors disabled:opacity-60"
                                                                                             >
@@ -2913,7 +3033,7 @@ export const Tenants: React.FC = () => {
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualDeviceId)}
-                                                                        disabled={deviceActionSubmittingKey === manualAuthorizeKey}
+                                                                        disabled={canonicalActionBlocked || deviceActionSubmittingKey === manualAuthorizeKey}
                                                                         className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-60"
                                                                     >
                                                                         {deviceActionSubmittingKey === manualAuthorizeKey ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
@@ -2984,7 +3104,7 @@ export const Tenants: React.FC = () => {
                                                             <button
                                                                 type="button"
                                                                 onClick={() => void handleRevokePreviousDevice(terminal, revokeDeviceId)}
-                                                                disabled={deviceActionSubmittingKey === revokeSubmittingKey}
+                                                                disabled={canonicalActionBlocked || deviceActionSubmittingKey === revokeSubmittingKey}
                                                                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors disabled:opacity-60"
                                                             >
                                                                 {deviceActionSubmittingKey === revokeSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}

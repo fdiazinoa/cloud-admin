@@ -2,6 +2,9 @@ import type { TerminalAuthAttempt, TerminalFiscalReadiness, TenantTerminalRegist
 
 export type TerminalDeviceRole =
     | 'AUTHORIZED_CURRENT'
+    | 'REPORTED'
+    | 'SUPERSEDED'
+    | 'ORPHANED'
     | 'HISTORICAL'
     | 'REVOKED'
     | 'REJECTED_RECENT'
@@ -20,6 +23,7 @@ export interface TerminalDeviceIdentityRow {
 
 export interface TerminalIdentitySummary {
     erpTerminalUuid: string;
+    catalogTerminalId: string;
     terminalCode: string;
     localName: string;
     authorizedDeviceId: string;
@@ -30,7 +34,14 @@ export interface TerminalIdentitySummary {
     historicalDeviceIds: string[];
     deviceRows: TerminalDeviceIdentityRow[];
     mismatchWarning: string | null;
+    identityStatus: string;
+    bindingSource: string;
+    hasCanonicalErpBinding: boolean;
+    reconciliationWarning: string | null;
 }
+
+export const CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE = 'Debe reconciliarse esta identidad con una terminal ERP antes de modificar la autorización.';
+export const UNVERIFIED_CATALOG_IDENTITY_MESSAGE = 'Registro de catálogo sin vínculo ERP comprobado';
 
 export interface TerminalFiscalDebugSummary {
     fiscalReadiness: string;
@@ -136,11 +147,18 @@ export function getTerminalPersistedAuthorizedDeviceId(terminal: TenantTerminalS
 
 /** Effective device Cloud-Admin / ERP usan para autorizar (incluye fallback de registry). */
 export function getTerminalAuthorizedDeviceId(terminal: TenantTerminalSnapshot): string {
-    const registry = terminal.registry;
-    if (!registry) return '';
-    return getTerminalPersistedAuthorizedDeviceId(terminal)
-        || registry.current_device_id?.trim()
-        || registry.device_id?.trim()
+    const erpDevice = getErpCurrentDeviceId(terminal);
+    if (erpDevice) return erpDevice;
+    const persisted = getTerminalPersistedAuthorizedDeviceId(terminal);
+    if (persisted) return persisted;
+    const explicitlyAuthorized = (terminal.registries || []).filter((registry) => (
+        ['AUTHORIZED', 'TAKEOVER_COMPLETED', 'REAUTH_COMPLETED'].includes((registry.auth_status || '').toUpperCase())
+        && Boolean(registry.authorized_device_id?.trim() || registry.current_device_id?.trim() || registry.device_id?.trim())
+    ));
+    if (explicitlyAuthorized.length !== 1) return '';
+    return explicitlyAuthorized[0].authorized_device_id?.trim()
+        || explicitlyAuthorized[0].current_device_id?.trim()
+        || explicitlyAuthorized[0].device_id?.trim()
         || '';
 }
 
@@ -157,14 +175,21 @@ export function getErpCurrentDeviceId(terminal: TenantTerminalSnapshot): string 
 }
 
 export function getTerminalPosCode(terminal: TenantTerminalSnapshot): string {
-    return terminal.terminal_id?.trim()
-        || terminal.registry?.terminal_id?.trim()
-        || terminal.id?.trim()
-        || '';
+    const candidates = [terminal.terminal_code, terminal.terminal_id, terminal.registry?.terminal_id];
+    return candidates.find((value) => value?.trim() && !isUuidLike(value))?.trim() || '';
 }
 
 export function getErpTerminalUuid(terminal: TenantTerminalSnapshot): string {
-    return terminal.erp_terminal_uuid?.trim() || terminal.id?.trim() || '';
+    const value = terminal.erp_terminal_uuid?.trim() || '';
+    return isUuidLike(value) ? value : '';
+}
+
+export function hasCanonicalErpBinding(terminal: TenantTerminalSnapshot): boolean {
+    return Boolean(getErpTerminalUuid(terminal) && terminal.erp_store_id?.trim());
+}
+
+export function getCanonicalIdentityBlockingMessage(terminal: TenantTerminalSnapshot): string | null {
+    return hasCanonicalErpBinding(terminal) ? null : CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE;
 }
 
 export function getAttemptDeviceId(attempt: TerminalAuthAttempt): string {
@@ -203,6 +228,9 @@ export function getTerminalAuthStatus(
 export function getDeviceRoleLabel(role: TerminalDeviceRole): string {
     switch (role) {
         case 'AUTHORIZED_CURRENT': return 'Autorizado actual';
+        case 'REPORTED': return 'Reportado por POS';
+        case 'SUPERSEDED': return 'Reemplazado';
+        case 'ORPHANED': return 'Huérfano';
         case 'HISTORICAL': return 'Historico';
         case 'REVOKED': return 'Revocado';
         case 'REJECTED_RECENT': return 'Rechazado reciente';
@@ -216,6 +244,9 @@ export function getDeviceRoleLabel(role: TerminalDeviceRole): string {
 export function getDeviceRoleClasses(role: TerminalDeviceRole): string {
     switch (role) {
         case 'AUTHORIZED_CURRENT': return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        case 'REPORTED': return 'border-blue-200 bg-blue-50 text-blue-700';
+        case 'SUPERSEDED': return 'border-amber-200 bg-amber-50 text-amber-800';
+        case 'ORPHANED': return 'border-slate-300 bg-slate-50 text-slate-600';
         case 'REJECTED_RECENT': return 'border-red-200 bg-red-50 text-red-700';
         case 'REVOKED': return 'border-slate-300 bg-slate-100 text-slate-700';
         case 'SERVER_MASTER': return 'border-violet-200 bg-violet-50 text-violet-700';
@@ -258,8 +289,10 @@ export function buildDeviceIdentityRows(
             roles.push('AUTHORIZED_CURRENT');
         } else if (registry.is_revoked) {
             roles.push('REVOKED');
+        } else if (authorizedDeviceId) {
+            roles.push('SUPERSEDED');
         } else {
-            roles.push('HISTORICAL');
+            roles.push(terminal.catalog_terminal_id ? 'REPORTED' : 'ORPHANED');
         }
 
         if (lastRejectedDeviceId && normalizeDeviceId(lastRejectedDeviceId) === normalized) {
@@ -354,7 +387,8 @@ export function buildTerminalIdentitySummary(
     );
 
     return {
-        erpTerminalUuid: getErpTerminalUuid(terminal),
+        erpTerminalUuid: getErpTerminalUuid(terminal) || 'N/D',
+        catalogTerminalId: terminal.catalog_terminal_id?.trim() || 'N/D',
         terminalCode: getTerminalPosCode(terminal),
         localName: firstHumanLabel(terminal.name, terminal.registry?.terminal_name),
         authorizedDeviceId: authorizedDeviceId || 'N/D',
@@ -365,6 +399,10 @@ export function buildTerminalIdentitySummary(
         historicalDeviceIds,
         deviceRows,
         mismatchWarning: buildDeviceMismatchWarning(authorizedDeviceId, posReportedDeviceId, erpCurrentDeviceId),
+        identityStatus: terminal.identity_status || (getErpTerminalUuid(terminal) ? 'REPORTED' : 'PENDING_RECONCILIATION'),
+        bindingSource: terminal.identity_binding_source || (getErpTerminalUuid(terminal) ? 'erp_direct' : 'catalog_only'),
+        hasCanonicalErpBinding: hasCanonicalErpBinding(terminal),
+        reconciliationWarning: getErpTerminalUuid(terminal) ? null : UNVERIFIED_CATALOG_IDENTITY_MESSAGE,
     };
 }
 

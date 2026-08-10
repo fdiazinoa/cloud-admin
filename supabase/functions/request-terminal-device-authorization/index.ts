@@ -26,6 +26,8 @@ type DeviceAction =
 interface DeviceActionRequest {
     tenant_id?: string;
     terminal_id?: string;
+    catalog_terminal_id?: string | null;
+    store_id?: string | null;
     registry_id?: string | null;
     terminal_name?: string | null;
     device_id?: string;
@@ -575,18 +577,7 @@ async function loadCanonicalErpTerminal(
         .eq('id', terminalId)
         .maybeSingle();
     if (error) throw error;
-    if (data) return data as ErpTerminalRecord;
-
-    const { data: metadataMatch, error: metadataError } = await supabase
-        .schema('public')
-        .from('erp_terminals')
-        .select('id,name,store_id,device_id,config,last_seen,created_at')
-        .or(`config->metadata->>terminal_id.eq.${terminalId},config->metadata->>terminalId.eq.${terminalId}`)
-        .order('last_seen', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-    if (metadataError) throw metadataError;
-    return metadataMatch as ErpTerminalRecord | null;
+    return data as ErpTerminalRecord | null;
 }
 
 async function preservePublicTerminalCatalog(
@@ -1204,7 +1195,9 @@ Deno.serve(async (request) => {
 
         const body = await request.json().catch(() => ({})) as DeviceActionRequest;
         const requestedTenantId = body.tenant_id?.trim();
-        let terminalId = body.terminal_id?.trim();
+        const terminalId = body.terminal_id?.trim();
+        const catalogTerminalId = body.catalog_terminal_id?.trim() || null;
+        const requestedStoreId = body.store_id?.trim() || null;
         const registryId = body.registry_id?.trim() || null;
         const terminalName = body.terminal_name?.trim() || null;
         const deviceId = normalizeRequiredDeviceId(body.device_id);
@@ -1291,6 +1284,42 @@ Deno.serve(async (request) => {
             return json({ error: 'LICENSE_NOT_ALLOWED', message: 'La licencia actual no permite reautorizar esta terminal.' }, 403);
         }
 
+        const requiresCanonicalErp = tenant.contracted_product === 'POS_ERP' || tenant.type === 'full';
+        let canonicalErpTerminal: ErpTerminalRecord | null = null;
+        if (requiresCanonicalErp) {
+            const blocked = !isUuid(terminalId)
+                || terminalId === catalogTerminalId
+                || !requestedStoreId
+                || !isUuid(requestedStoreId);
+            if (blocked) {
+                return json({
+                    error: 'CANONICAL_ERP_IDENTITY_REQUIRED',
+                    message: 'Debe reconciliarse esta identidad con una terminal ERP antes de modificar la autorización.',
+                }, 409);
+            }
+            canonicalErpTerminal = await loadCanonicalErpTerminal(supabase, terminalId);
+            if (!canonicalErpTerminal || canonicalErpTerminal.store_id !== requestedStoreId) {
+                return json({
+                    error: 'ERP_TERMINAL_SCOPE_MISMATCH',
+                    message: 'Debe reconciliarse esta identidad con una terminal ERP antes de modificar la autorización.',
+                }, 409);
+            }
+            const erpTenantId = resolvedErpTenantId || await resolveErpTenantId(supabase, tenantId);
+            const { data: store, error: storeError } = await supabase
+                .schema('public')
+                .from('erp_stores')
+                .select('id,tenant_id')
+                .eq('id', requestedStoreId)
+                .maybeSingle();
+            if (storeError) throw storeError;
+            if (!erpTenantId || (store as { tenant_id?: string } | null)?.tenant_id !== erpTenantId) {
+                return json({
+                    error: 'ERP_STORE_TENANT_MISMATCH',
+                    message: 'Debe reconciliarse esta identidad con una terminal ERP antes de modificar la autorización.',
+                }, 409);
+            }
+        }
+
         await reactivatePublicTenantCatalog(supabase, tenant);
 
         const registry = await loadRegistry(supabase, tenantId, terminalId, registryId);
@@ -1299,8 +1328,8 @@ Deno.serve(async (request) => {
             .from('terminals')
             .select('id,tenant_id,code,is_active')
             .eq('tenant_id', tenantId);
-        terminalQuery = isUuid(terminalId)
-            ? terminalQuery.eq('id', terminalId)
+        terminalQuery = catalogTerminalId && isUuid(catalogTerminalId)
+            ? terminalQuery.eq('id', catalogTerminalId)
             : terminalQuery.eq('code', terminalName || registry?.terminal_name || terminalId);
         const { data: terminalData, error: terminalError } = await terminalQuery
             .order('created_at', { ascending: false })
@@ -1308,10 +1337,9 @@ Deno.serve(async (request) => {
             .maybeSingle();
         if (terminalError) throw terminalError;
         const publicTerminal = terminalData as PublicTerminalRecord | null;
-        if (publicTerminal?.id) terminalId = publicTerminal.id;
-        const terminalDisplayCode = publicTerminal?.code || terminalName || registry?.terminal_name || null;
+        const terminalDisplayCode = publicTerminal?.code || canonicalErpTerminal?.name || terminalName || registry?.terminal_name || null;
 
-        if (!registry && !publicTerminal) {
+        if (!registry && !publicTerminal && !canonicalErpTerminal) {
             return json({ error: 'TERMINAL_NOT_FOUND', message: 'Terminal no encontrada para este tenant.' }, 404);
         }
 
@@ -1325,10 +1353,9 @@ Deno.serve(async (request) => {
 
             const rows = (Array.isArray(registryRows) ? registryRows as RegistryRecord[] : []).filter((row) => {
                 const rowTerminalId = row.terminal_id?.trim() || '';
-                const rowTerminalName = row.terminal_name?.trim() || '';
-                return rowTerminalId === terminalId
-                    || Boolean(terminalDisplayCode && rowTerminalId.toUpperCase() === terminalDisplayCode.toUpperCase())
-                    || Boolean(terminalDisplayCode && rowTerminalName.toUpperCase() === terminalDisplayCode.toUpperCase());
+                return row.id === registryId
+                    || rowTerminalId === terminalId
+                    || Boolean(catalogTerminalId && rowTerminalId === catalogTerminalId);
             });
             const registryIds = rows.map((row) => row.id).filter(Boolean);
             const clearedDeviceIds = Array.from(new Set(
@@ -1361,7 +1388,7 @@ Deno.serve(async (request) => {
                 canonicalErpTerminal,
                 terminalDisplayCode,
             );
-            const erpClearResult = await clearErpTerminalDeviceBindings(supabase, terminalId, terminalDisplayCode);
+            const erpClearResult = await clearErpTerminalDeviceBindings(supabase, terminalId, null);
             const uniqueClearedDeviceIds = Array.from(new Set([
                 ...clearedDeviceIds,
                 ...erpClearResult.previousDeviceIds,
