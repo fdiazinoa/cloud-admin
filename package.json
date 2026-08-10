@@ -11,6 +11,7 @@
     "test:tenant-semantics": "node scripts/test-tenant-semantics.mjs",
     "test:activation-tenant-resolution": "node scripts/test-activation-tenant-resolution.mjs",
     "test:terminal-device-auth": "node scripts/test-terminal-device-auth.mjs",
+    "test:terminal-canonical-identity": "node --experimental-strip-types scripts/test-terminal-canonical-identity.mjs",
     "test:terminal-activation-license": "node scripts/test-terminal-activation-license.mjs",
     "test:tenant-delete-sync-versions": "node scripts/test-tenant-delete-sync-versions.mjs",
     "test:erp-tenant-delete-version-trigger": "node scripts/test-erp-tenant-delete-version-trigger.mjs",

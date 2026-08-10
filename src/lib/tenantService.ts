@@ -340,6 +340,7 @@ function firstNumber(...values: unknown[]): number | null {
 interface ErpTerminalBinding {
     deviceId: string;
     erpTerminalId: string;
+    storeId: string;
     displayName?: string | null;
     terminalCode?: string | null;
     appVersion?: string | null;
@@ -396,7 +397,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
         const { data: terminals, error: terminalsError } = await supabaseAdmin
             .schema("public")
             .from("erp_terminals")
-            .select("id,device_id,name,config,last_seen,created_at")
+            .select("id,store_id,device_id,name,config,last_seen,created_at")
             .in("store_id", storeIds);
 
         if (terminalsError) {
@@ -408,9 +409,10 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
         for (const terminal of ((terminals as Array<Record<string, unknown>> | null) || [])) {
             if (isArchivedErpTerminalRow(terminal)) continue;
 
-            const deviceId = asText(terminal.device_id);
+            const deviceId = asText(terminal.device_id) || '';
             const erpTerminalId = asText(terminal.id);
-            if (!deviceId || !erpTerminalId) continue;
+            const storeId = asText(terminal.store_id);
+            if (!erpTerminalId || !storeId || !isUuidLike(erpTerminalId)) continue;
 
             const config = asRecord(terminal.config);
             const metadata = asRecord(config.metadata);
@@ -442,6 +444,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
             const binding: ErpTerminalBinding = {
                 deviceId,
                 erpTerminalId,
+                storeId,
                 displayName,
                 terminalCode,
                 appVersion: firstText(
@@ -492,21 +495,9 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
                     apk.versionCode,
                 ),
             };
-            [
-                terminal.id,
-                terminal.name,
-                terminal.code,
-                terminal.device_id,
-                metadata.terminal_id,
-                metadata.terminal_name,
-                metadata.terminalName,
-                metadata.erp_terminal_id,
-                terminalCode,
-                displayName,
-            ].forEach((candidate) => {
-                const key = normalizeKey(candidate);
-                if (key) bindings.set(key, binding);
-            });
+            // La identidad ERP solo se indexa por el UUID real de erp_terminals.
+            // Nombre, código, estación y device_id no son evidencia canónica.
+            bindings.set(normalizeKey(erpTerminalId), binding);
         }
 
         return bindings;
@@ -523,12 +514,9 @@ function applyRegistryBindingStatus(
     if (bindings.size === 0) return registries;
 
     return registries.map((registry) => {
-        const binding = resolveErpTerminalBinding(
-            bindings,
-            registry.terminal_id,
-            registry.terminal_name,
-            registry.device_id,
-        );
+        const readiness = registry.erp_readiness || {};
+        const explicitErpId = firstText(readiness.terminalId, readiness.terminal_id);
+        const binding = isUuidLike(explicitErpId) ? resolveErpTerminalBinding(bindings, explicitErpId) : null;
         const authorizedDeviceId = binding?.deviceId || null;
 
         const isRevoked = Boolean(
@@ -610,6 +598,8 @@ export type TerminalDeviceAction =
 export interface RequestTerminalDeviceActionInput {
     tenantId: string;
     terminalId: string;
+    catalogTerminalId?: string | null;
+    storeId?: string | null;
     registryId?: string | null;
     terminalName?: string | null;
     deviceId?: string | null;
@@ -1176,7 +1166,6 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     }
 
     const registriesByTerminalId = new Map<string, TenantTerminalRegistryEntry[]>();
-    const registriesByDeviceId = new Map<string, TenantTerminalRegistryEntry[]>();
     const matchedRegistryIds = new Set<string>();
 
     for (const row of registryRows) {
@@ -1185,16 +1174,24 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             arr.push(row);
             registriesByTerminalId.set(row.terminal_id, arr);
         }
-        const registryDeviceId = row.authorized_device_id || row.current_device_id || row.device_id;
-        if (registryDeviceId) {
-            const arr = registriesByDeviceId.get(registryDeviceId) || [];
-            arr.push(row);
-            registriesByDeviceId.set(registryDeviceId, arr);
-        }
     }
 
     const getTerminalConfig = (terminal?: Terminal | null) => asRecord(terminal?.config);
     const getTerminalMetadata = (terminal?: Terminal | null) => asRecord(getTerminalConfig(terminal).metadata);
+    const getExplicitCatalogErpId = (terminal?: Terminal | null) => {
+        const metadata = getTerminalMetadata(terminal);
+        const value = firstText(
+            metadata.erp_terminal_id,
+            metadata.canonical_erp_terminal_id,
+            getTerminalConfig(terminal).erp_terminal_id,
+        );
+        return isUuidLike(value) ? value : null;
+    };
+    const getExplicitRegistryErpId = (registry?: TenantTerminalRegistryEntry | null) => {
+        const readiness = registry?.erp_readiness || {};
+        const value = firstText(readiness.terminalId, readiness.terminal_id);
+        return isUuidLike(value) ? value : null;
+    };
     const getHumanTerminalCode = (terminal?: Terminal | null, binding?: ErpTerminalBinding | null) => {
         const config = getTerminalConfig(terminal);
         const metadata = getTerminalMetadata(terminal);
@@ -1234,48 +1231,19 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             getHumanTerminalCode(terminal, binding),
         ) || "Terminal sin nombre";
     };
-    const getPosErpTerminalGroupKey = (
-        terminal?: Terminal | null,
-        registry?: TenantTerminalRegistryEntry | null,
-        binding?: ErpTerminalBinding | null,
-    ) => {
-        const key = normalizeKey(binding?.erpTerminalId)
-            || normalizeKey(getHumanTerminalCode(terminal, binding))
-            || normalizeKey(getHumanTerminalName(terminal, registry, binding));
-        return key || normalizeKey(terminal?.id) || normalizeKey(registry?.terminal_id) || normalizeKey(registry?.id);
-    };
-    const registryDeviceMatches = (registry: TenantTerminalRegistryEntry, deviceId?: string | null) => {
-        const normalizedDevice = normalizeKey(deviceId);
-        if (!normalizedDevice) return false;
-        return [registry.authorized_device_id, registry.current_device_id, registry.device_id]
-            .some((candidate) => normalizeKey(candidate) === normalizedDevice);
-    };
-    const isRegistryRevoked = (registry: TenantTerminalRegistryEntry) => {
-        const authStatus = normalizeKey(registry.auth_status);
-        return registry.is_revoked === true
-            || authStatus === "OLD_DEVICE_REVOKED"
-            || authStatus === "LICENSE_EXCEEDED";
-    };
-    const getVisibleRegistries = (
-        registries: TenantTerminalRegistryEntry[],
-        binding?: ErpTerminalBinding | null,
-    ) => {
-        if (!isPosErpTenant || registries.length <= 1) return registries;
-
-        const activeRegistries = registries.filter((registry) => !isRegistryRevoked(registry));
-        const candidates = activeRegistries.length ? activeRegistries : registries;
-        const preferred = candidates.find((registry) => registryDeviceMatches(registry, binding?.deviceId))
-            || candidates.find((registry) => ["AUTHORIZED", "TAKEOVER_COMPLETED", "REAUTH_COMPLETED"].includes(normalizeKey(registry.auth_status)))
-            || candidates[0];
-
-        return preferred ? [preferred] : [];
-    };
+    const getVisibleRegistries = (registries: TenantTerminalRegistryEntry[]) => registries;
     const groupedTerminalRows = new Map<string, Terminal[]>();
+    const catalogCodeCounts = new Map<string, number>();
     for (const terminal of terminalRows) {
-        const binding = resolveErpTerminalBinding(erpBindings, terminal.id, terminal.name, terminal.terminal_name, terminal.code);
+        const code = normalizeKey(getHumanTerminalCode(terminal));
+        if (code) catalogCodeCounts.set(code, (catalogCodeCounts.get(code) || 0) + 1);
+    }
+    for (const terminal of terminalRows) {
+        const explicitErpId = getExplicitCatalogErpId(terminal);
+        const binding = resolveErpTerminalBinding(erpBindings, explicitErpId, terminal.id);
         const terminalName = getHumanTerminalName(terminal, null, binding);
         const groupKey = isPosErpTenant
-            ? getPosErpTerminalGroupKey(terminal, null, binding)
+            ? binding ? `ERP:${binding.erpTerminalId}` : `CATALOG:${terminal.id}`
             : terminalName === "Terminal sin nombre" ? terminal.id : terminalName.toUpperCase();
         const arr = groupedTerminalRows.get(groupKey) || [];
         arr.push(terminal);
@@ -1303,13 +1271,21 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
                      }
                 }
             }
-            const dt = terminal.device_id || terminal.current_device_id;
-            if (dt && registriesByDeviceId.has(dt)) {
-                for (const reg of registriesByDeviceId.get(dt)!) {
-                     if (reg.id) {
-                         registriesMap.set(reg.id, reg);
-                         matchedRegistryIds.add(reg.id);
-                     }
+            // Un código de catálogo único puede asociar heartbeats al grupo Cloud,
+            // pero nunca crea un binding ERP. Si el código es ambiguo, queda huérfano.
+            const catalogCode = normalizeKey(getHumanTerminalCode(terminal));
+            if (catalogCode && catalogCodeCounts.get(catalogCode) === 1) {
+                const directRegistries = registryRows.filter((reg) => normalizeKey(reg.terminal_id) === catalogCode);
+                const legacyNames = new Set(directRegistries.map((reg) => normalizeKey(reg.terminal_name)).filter(Boolean));
+                const cloudGroupRegistries = registryRows.filter((reg) => (
+                    normalizeKey(reg.terminal_id) === catalogCode
+                    || (legacyNames.size === 1 && legacyNames.has(normalizeKey(reg.terminal_id)) && legacyNames.has(normalizeKey(reg.terminal_name)))
+                ));
+                for (const reg of cloudGroupRegistries) {
+                    if (reg.id) {
+                        registriesMap.set(reg.id, reg);
+                        matchedRegistryIds.add(reg.id);
+                    }
                 }
             }
         }
@@ -1319,17 +1295,10 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         consolidatedRegistries.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
 
         const registry = consolidatedRegistries.length > 0 ? consolidatedRegistries[0] : null;
-        const erpBinding = resolveErpTerminalBinding(
-            erpBindings,
-            primaryTerminal.id,
-            registry?.terminal_id,
-            primaryTerminal.name,
-            primaryTerminal.terminal_name,
-            primaryTerminal.code,
-            registry?.terminal_name,
-        );
+        const explicitErpId = getExplicitCatalogErpId(primaryTerminal) || getExplicitRegistryErpId(registry);
+        const erpBinding = resolveErpTerminalBinding(erpBindings, explicitErpId, primaryTerminal.id);
         const terminalName = getHumanTerminalName(primaryTerminal, registry, erpBinding);
-        const visibleRegistries = getVisibleRegistries(consolidatedRegistries, erpBinding);
+        const visibleRegistries = getVisibleRegistries(consolidatedRegistries);
         const catalogDeviceId = erpBinding?.deviceId
             || registry?.authorized_device_id
             || registry?.current_device_id
@@ -1339,18 +1308,29 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         snapshots.push({
             id: primaryTerminal.id,
             tenant_id: primaryTerminal.tenant_id,
-            terminal_id: erpBinding?.erpTerminalId || primaryTerminal.id,
+            catalog_terminal_id: primaryTerminal.id,
+            terminal_id: getHumanTerminalCode(primaryTerminal, erpBinding),
+            terminal_code: getHumanTerminalCode(primaryTerminal, erpBinding),
             name: terminalName,
             device_token: catalogDeviceId,
             is_active: primaryTerminal.config?.is_active ?? primaryTerminal.is_active ?? primaryTerminal.active ?? true,
             last_checkin_at: primaryTerminal.last_checkin_at || primaryTerminal.last_seen_at || primaryTerminal.last_heartbeat_at || primaryTerminal.updated_at || null,
             created_at: primaryTerminal.created_at || null,
             erp_terminal_uuid: erpBinding?.erpTerminalId || null,
+            erp_store_id: erpBinding?.storeId || null,
             erp_current_device_id: erpBinding?.deviceId || null,
             erp_app_version: erpBinding?.appVersion || primaryTerminal.app_version || null,
             erp_app_version_code: erpBinding?.appVersionCode || null,
             registry: visibleRegistries[0] || registry,
             registries: visibleRegistries,
+            identity_status: erpBinding ? 'REPORTED' : 'PENDING_RECONCILIATION',
+            identity_binding_source: erpBinding
+                ? (explicitErpId ? 'metadata_erp_terminal_id' : 'erp_direct')
+                : 'catalog_only',
+            legacy_identity: !erpBinding && consolidatedRegistries.some((item) => (
+                normalizeKey(item.terminal_id) === 'POS-001'
+                && normalizeKey(item.terminal_name) === 'SLAV-01'
+            )),
         });
     }
 
@@ -1359,27 +1339,19 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     for (const row of registryRows) {
         if (row.id && matchedRegistryIds.has(row.id)) continue;
         
-        const rowBinding = resolveErpTerminalBinding(
-            erpBindings,
-            row.terminal_id,
-            row.terminal_name,
-            row.device_id,
-        );
+        const rowBinding = resolveErpTerminalBinding(erpBindings, getExplicitRegistryErpId(row));
         const terminalName = firstHumanText(
             row.terminal_name,
             rowBinding?.displayName,
             rowBinding?.terminalCode,
         ) || "Terminal sin catálogo";
         const groupKey = isPosErpTenant
-            ? getPosErpTerminalGroupKey(null, row, rowBinding)
+            ? rowBinding ? `ERP:${rowBinding.erpTerminalId}` : `ORPHAN:${row.id}`
             : terminalName.toUpperCase();
 
         const existingSnapshot = snapshots.find((snapshot) => {
             if (isPosErpTenant) {
-                const snapshotKey = normalizeKey(snapshot.erp_terminal_uuid)
-                    || normalizeKey(snapshot.name)
-                    || normalizeKey(snapshot.terminal_id);
-                return snapshotKey === groupKey;
+                return snapshot.erp_terminal_uuid ? `ERP:${snapshot.erp_terminal_uuid}` === groupKey : false;
             }
             return (snapshot.name || '').trim().toUpperCase() === groupKey;
         });
@@ -1400,19 +1372,13 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
     for (const arr of orphanedRegistriesGrouped.values()) {
         arr.sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
         const primary = arr[0];
-        const orphanBinding = resolveErpTerminalBinding(
-            erpBindings,
-            primary.terminal_id,
-            primary.id,
-            primary.terminal_name,
-            primary.device_id,
-        );
+        const orphanBinding = resolveErpTerminalBinding(erpBindings, getExplicitRegistryErpId(primary));
         const orphanName = firstHumanText(
             primary.terminal_name,
             orphanBinding?.displayName,
             orphanBinding?.terminalCode,
         ) || "Terminal sin catálogo";
-        const visibleOrphanRegistries = getVisibleRegistries(arr, orphanBinding);
+        const visibleOrphanRegistries = getVisibleRegistries(arr);
         snapshots.push({
             id: primary.id || primary.device_id || `orphan-${Date.now()}`,
             tenant_id: primary.tenant_id,
@@ -1423,18 +1389,25 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             last_checkin_at: primary.last_seen_at || null,
             created_at: primary.created_at || null,
             erp_terminal_uuid: orphanBinding?.erpTerminalId || null,
+            erp_store_id: orphanBinding?.storeId || null,
             erp_current_device_id: orphanBinding?.deviceId || null,
             erp_app_version: orphanBinding?.appVersion || null,
             erp_app_version_code: orphanBinding?.appVersionCode || null,
             registry: visibleOrphanRegistries[0] || primary,
             registries: visibleOrphanRegistries,
+            identity_status: orphanBinding ? 'REPORTED' : 'ORPHANED',
+            identity_binding_source: orphanBinding ? 'erp_endpoint' : 'orphan_registry',
+            legacy_identity: !orphanBinding && arr.some((item) => (
+                normalizeKey(item.terminal_id) === 'POS-001'
+                && normalizeKey(item.terminal_name) === 'SLAV-01'
+            )),
         });
     }
 
     const consolidatedSnapshots = new Map<string, TenantTerminalSnapshot>();
     for (const snapshot of snapshots) {
         const key = isPosErpTenant
-            ? normalizeKey(snapshot.erp_terminal_uuid) || normalizeKey(snapshot.name) || normalizeKey(snapshot.terminal_id) || snapshot.id
+            ? snapshot.erp_terminal_uuid ? `ERP:${snapshot.erp_terminal_uuid}` : snapshot.catalog_terminal_id ? `CATALOG:${snapshot.catalog_terminal_id}` : `ORPHAN:${snapshot.id}`
             : snapshot.id;
         const existing = consolidatedSnapshots.get(key);
         if (!existing) {
@@ -1445,11 +1418,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         const mergedRegistries = [...(existing.registries || []), ...(snapshot.registries || [])]
             .filter((registry, index, arr) => registry.id ? arr.findIndex((item) => item.id === registry.id) === index : true)
             .sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime());
-        const mergedBinding: ErpTerminalBinding | null = {
-            deviceId: existing.erp_current_device_id || snapshot.erp_current_device_id || '',
-            erpTerminalId: existing.erp_terminal_uuid || snapshot.erp_terminal_uuid || '',
-        };
-        const visibleMergedRegistries = getVisibleRegistries(mergedRegistries, mergedBinding);
+        const visibleMergedRegistries = getVisibleRegistries(mergedRegistries);
 
         consolidatedSnapshots.set(key, {
             ...existing,
@@ -1865,6 +1834,8 @@ export async function requestTerminalDeviceAction(
         body: JSON.stringify({
             tenant_id: input.tenantId,
             terminal_id: input.terminalId,
+            catalog_terminal_id: input.catalogTerminalId || null,
+            store_id: input.storeId || null,
             registry_id: input.registryId || null,
             terminal_name: input.terminalName || null,
             device_id: input.deviceId || null,
