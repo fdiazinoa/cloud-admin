@@ -16,6 +16,10 @@ interface IntegrationSettingsPayload {
     ai_triage_enabled?: boolean;
     ai_sentiment_enabled?: boolean;
     ai_auto_drafts_enabled?: boolean;
+    ai_autonomy_mode?: 'observe' | 'copilot' | 'autopilot';
+    ai_auto_reply_min_confidence?: number;
+    ai_auto_route_min_confidence?: number;
+    ai_auto_reply_clarifications?: boolean;
 }
 
 interface SavePayload {
@@ -107,6 +111,10 @@ function cleanSettings(settings: IntegrationSettingsPayload = {}) {
         ...(typeof settings.ai_triage_enabled === 'boolean' ? { ai_triage_enabled: settings.ai_triage_enabled } : {}),
         ...(typeof settings.ai_sentiment_enabled === 'boolean' ? { ai_sentiment_enabled: settings.ai_sentiment_enabled } : {}),
         ...(typeof settings.ai_auto_drafts_enabled === 'boolean' ? { ai_auto_drafts_enabled: settings.ai_auto_drafts_enabled } : {}),
+        ...(settings.ai_autonomy_mode ? { ai_autonomy_mode: settings.ai_autonomy_mode } : {}),
+        ...(typeof settings.ai_auto_reply_min_confidence === 'number' ? { ai_auto_reply_min_confidence: Math.max(0.5, Math.min(1, settings.ai_auto_reply_min_confidence)) } : {}),
+        ...(typeof settings.ai_auto_route_min_confidence === 'number' ? { ai_auto_route_min_confidence: Math.max(0.5, Math.min(1, settings.ai_auto_route_min_confidence)) } : {}),
+        ...(typeof settings.ai_auto_reply_clarifications === 'boolean' ? { ai_auto_reply_clarifications: settings.ai_auto_reply_clarifications } : {}),
     };
 }
 
