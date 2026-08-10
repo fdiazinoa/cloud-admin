@@ -106,7 +106,13 @@ const ticketSelect = `
         detected_identifiers,
         incident_fingerprint,
         duplicate_signal,
-        ai_tags
+        ai_tags,
+        classification_confidence,
+        response_confidence,
+        autonomy_action,
+        autonomy_reasons,
+        knowledge_sources,
+        auto_reply_sent_at
     ),
     assignee:cloud_admin_users!support_tickets_assignee_id_fkey (id, full_name, email, status),
     support_team:support_teams!support_tickets_team_id_fkey (id, name, code)
