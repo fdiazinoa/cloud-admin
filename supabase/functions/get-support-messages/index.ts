@@ -20,6 +20,8 @@ interface AttachmentMetadata {
     path?: string;
     uploaded_at?: string;
     signed_url?: string | null;
+    status?: string;
+    error?: string;
 }
 
 type AttachmentEnvelope = Record<string, unknown>;
@@ -45,11 +47,18 @@ interface MessageRow {
 }
 
 const SIGNED_URL_TTL_SECONDS = 60 * 15;
-const ALLOWED_IMAGE_MIME_TYPES = new Set([
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
     'image/png',
     'image/jpeg',
     'image/webp',
     'image/gif',
+    'application/pdf',
+    'text/plain',
+    'text/csv',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 ]);
 
 const corsHeaders = {
@@ -100,13 +109,15 @@ function normalizeAttachments(value: unknown): AttachmentMetadata[] {
             path: typeof item.path === 'string' ? item.path : undefined,
             uploaded_at: typeof item.uploaded_at === 'string' ? item.uploaded_at : undefined,
             signed_url: null,
+            status: typeof item.status === 'string' ? item.status : undefined,
+            error: typeof item.error === 'string' ? item.error : undefined,
         }))
         .filter((attachment) => Boolean(attachment.name || attachment.path));
 }
 
 async function signAttachments(supabase: ReturnType<typeof createHelpdeskAdminClient>, attachments: AttachmentMetadata[]) {
     return Promise.all(attachments.map(async (attachment) => {
-        const mimeTypeAllowed = attachment.mime_type ? ALLOWED_IMAGE_MIME_TYPES.has(attachment.mime_type) : true;
+        const mimeTypeAllowed = attachment.mime_type ? ALLOWED_ATTACHMENT_MIME_TYPES.has(attachment.mime_type) : false;
         if (!attachment.bucket || !attachment.path || !mimeTypeAllowed) {
             return { ...attachment, signed_url: null };
         }

@@ -188,6 +188,8 @@ interface MessageAttachment {
     path?: string;
     uploaded_at?: string;
     signed_url?: string | null;
+    status?: string;
+    error?: string;
 }
 
 interface PendingReplyAttachment {
@@ -535,6 +537,8 @@ function mapAttachmentRecord(item: Record<string, unknown>): MessageAttachment {
         path: typeof item.path === 'string' ? item.path : undefined,
         uploaded_at: typeof item.uploaded_at === 'string' ? item.uploaded_at : undefined,
         signed_url: typeof item.signed_url === 'string' ? item.signed_url : null,
+        status: typeof item.status === 'string' ? item.status : undefined,
+        error: typeof item.error === 'string' ? item.error : undefined,
     };
 }
 
@@ -2038,7 +2042,7 @@ const SupportCommandCenter: React.FC = () => {
                                                                     </p>
                                                                     {!canOpen && (
                                                                         <p className={`mt-1 text-[11px] font-medium ${isAdminMessage ? 'text-white/70' : 'text-amber-700'}`}>
-                                                                            Archivo no disponible
+                                                                            {attachment.error || 'Archivo no disponible'}
                                                                         </p>
                                                                     )}
                                                                 </div>

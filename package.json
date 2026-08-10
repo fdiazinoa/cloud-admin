@@ -19,6 +19,7 @@
     "cleanup:tenant-pos-registry": "node scripts/cleanup-tenant-pos-registry.mjs",
     "test:terminal-fiscal-config": "node scripts/test-terminal-fiscal-config.mjs",
     "test:helpdesk-ticketing": "node scripts/test-helpdesk-ticketing-parity.mjs",
+    "test:helpdesk-inbound-attachments": "node scripts/test-helpdesk-inbound-attachments.mjs",
     "test:internal-requests": "node scripts/test-internal-requests.mjs",
     "test:knowledge-center": "node scripts/test-knowledge-center.mjs",
     "test:calendar-meetings": "node scripts/test-calendar-meetings.mjs",
