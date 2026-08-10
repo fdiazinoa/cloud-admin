@@ -3,6 +3,7 @@ import {
     AlertTriangle,
     BatteryLow,
     Bell,
+    Bot,
     CheckCircle2,
     ChevronDown,
     ChevronLeft,
@@ -132,6 +133,12 @@ interface AiTicketInsight {
     incident_fingerprint?: string | null;
     duplicate_signal?: boolean | null;
     ai_tags?: string[] | null;
+    classification_confidence?: number | null;
+    response_confidence?: number | null;
+    autonomy_action?: 'observe' | 'draft' | 'auto_reply' | 'acknowledge' | 'escalate' | null;
+    autonomy_reasons?: string[] | null;
+    knowledge_sources?: Array<{ id?: string; module?: string; title?: string; source_path?: string | null }> | null;
+    auto_reply_sent_at?: string | null;
 }
 
 interface Ticket {
@@ -1936,6 +1943,13 @@ const SupportCommandCenter: React.FC = () => {
                                         {selectedTicket.customer_rating ? (
                                             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
                                                 {selectedTicket.customer_rating}/5 estrellas
+                                            </span>
+                                        ) : null}
+                                        {selectedTicket.insight?.autonomy_action ? (
+                                            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${selectedTicket.insight.autonomy_action === 'auto_reply' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : selectedTicket.insight.autonomy_action === 'escalate' ? 'border-red-200 bg-red-50 text-red-700' : selectedTicket.insight.autonomy_action === 'draft' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-violet-200 bg-violet-50 text-violet-700'}`} title={(selectedTicket.insight.autonomy_reasons ?? []).join(', ')}>
+                                                <Bot size={11} />
+                                                IA: {selectedTicket.insight.autonomy_action === 'auto_reply' ? 'respondió' : selectedTicket.insight.autonomy_action === 'escalate' ? 'escaló' : selectedTicket.insight.autonomy_action === 'draft' ? 'borrador' : selectedTicket.insight.autonomy_action === 'observe' ? 'observando' : 'acuse'}
+                                                {typeof selectedTicket.insight.response_confidence === 'number' ? ` · ${Math.round(selectedTicket.insight.response_confidence * 100)}%` : ''}
                                             </span>
                                         ) : null}
                                     </div>
