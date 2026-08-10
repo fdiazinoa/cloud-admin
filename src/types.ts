@@ -255,18 +255,25 @@ export interface TerminalSyncRetryResult {
 export interface TenantTerminalSnapshot {
     id: string;
     tenant_id: string;
+    /** UUID de public.terminals. Nunca equivale implicitamente al UUID ERP. */
+    catalog_terminal_id?: string | null;
     terminal_id?: string | null;
+    terminal_code?: string | null;
     name: string;
     device_token?: string | null;
     is_active: boolean;
     last_checkin_at?: string | null;
     created_at?: string | null;
     erp_terminal_uuid?: string | null;
+    erp_store_id?: string | null;
     erp_current_device_id?: string | null;
     erp_app_version?: string | null;
     erp_app_version_code?: number | null;
     registry?: TenantTerminalRegistryEntry | null;
     registries: TenantTerminalRegistryEntry[];
+    identity_status?: 'AUTHORIZED' | 'REPORTED' | 'REJECTED' | 'SUPERSEDED' | 'REVOKED' | 'ORPHANED' | 'PENDING_RECONCILIATION';
+    identity_binding_source?: 'erp_direct' | 'metadata_erp_terminal_id' | 'erp_endpoint' | 'explicit_mapping' | 'catalog_only' | 'orphan_registry';
+    legacy_identity?: boolean;
 }
 
 export type TerminalAuthorizationStatus =

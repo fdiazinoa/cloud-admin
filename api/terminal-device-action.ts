@@ -10,6 +10,8 @@ type ApiRequest = IncomingMessage & {
 type DeviceActionPayload = {
     tenant_id?: unknown;
     terminal_id?: unknown;
+    catalog_terminal_id?: unknown;
+    store_id?: unknown;
     registry_id?: unknown;
     terminal_name?: unknown;
     device_id?: unknown;
@@ -153,17 +155,60 @@ async function loadCanonicalErpTerminal(
         .eq("id", terminalId)
         .maybeSingle();
     if (error) throw error;
-    if (data) return data as ErpTerminalRecord;
+    return data as ErpTerminalRecord | null;
+}
 
-    const { data: metadataMatch, error: metadataError } = await supabase
-        .schema("public")
-        .from("erp_terminals")
-        .select("id,name,store_id,device_id,config")
-        .or(`config->metadata->>terminal_id.eq.${terminalId},config->metadata->>terminalId.eq.${terminalId}`)
-        .limit(1)
+const canonicalIdentityRequiredMessage = "Debe reconciliarse esta identidad con una terminal ERP antes de modificar la autorización.";
+
+async function validateCanonicalErpActionScope(
+    supabase: ReturnType<typeof createClient>,
+    payload: DeviceActionPayload,
+) {
+    const tenantId = stringValue(payload.tenant_id);
+    const terminalId = stringValue(payload.terminal_id);
+    const storeId = stringValue(payload.store_id);
+    const catalogTerminalId = stringValue(payload.catalog_terminal_id);
+    if (!tenantId) return { ok: false as const, status: 400, error: "TENANT_ID_REQUIRED", message: "tenant_id es requerido." };
+
+    const { data: tenant, error: tenantError } = await supabase
+        .from("tenants")
+        .select("id,contracted_product,cloud_channel,type")
+        .eq("id", tenantId)
         .maybeSingle();
-    if (metadataError) throw metadataError;
-    return metadataMatch as ErpTerminalRecord | null;
+    if (tenantError) throw tenantError;
+    if (!tenant) return { ok: false as const, status: 404, error: "TENANT_NOT_FOUND", message: "Tenant no encontrado." };
+    const tenantRecord = tenant as Record<string, unknown>;
+    const requiresErp = tenantRecord.contracted_product === "POS_ERP"
+        || tenantRecord.cloud_channel === "ERP_ACTIVE"
+        || tenantRecord.type === "full";
+    if (!requiresErp) return { ok: true as const };
+
+    if (!terminalId || !isUuid(terminalId) || terminalId === catalogTerminalId || !storeId || !isUuid(storeId)) {
+        return { ok: false as const, status: 409, error: "CANONICAL_ERP_IDENTITY_REQUIRED", message: canonicalIdentityRequiredMessage };
+    }
+    const terminal = await loadCanonicalErpTerminal(supabase, terminalId);
+    if (!terminal?.id || terminal.store_id !== storeId) {
+        return { ok: false as const, status: 409, error: "ERP_TERMINAL_SCOPE_MISMATCH", message: canonicalIdentityRequiredMessage };
+    }
+    const { data: erpTenant, error: erpTenantError } = await supabase
+        .schema("public")
+        .from("erp_tenants")
+        .select("id")
+        .eq("config->>cloudAdminTenantId", tenantId)
+        .maybeSingle();
+    if (erpTenantError) throw erpTenantError;
+    const erpTenantId = stringValue((erpTenant as Record<string, unknown> | null)?.id);
+    const { data: store, error: storeError } = await supabase
+        .schema("public")
+        .from("erp_stores")
+        .select("id,tenant_id")
+        .eq("id", storeId)
+        .maybeSingle();
+    if (storeError) throw storeError;
+    if (!erpTenantId || stringValue((store as Record<string, unknown> | null)?.tenant_id) !== erpTenantId) {
+        return { ok: false as const, status: 409, error: "ERP_STORE_TENANT_MISMATCH", message: canonicalIdentityRequiredMessage };
+    }
+    return { ok: true as const };
 }
 
 function getTextCandidate(...values: unknown[]) {
@@ -499,16 +544,16 @@ async function fallbackClearTerminalDevices(
         };
     }
 
-    let terminalId = requestedTerminalId;
     let terminalQuery = supabase
         .schema("public")
         .from("terminals")
         .select("id,code")
         .eq("tenant_id", tenantId);
 
-    terminalQuery = isUuid(requestedTerminalId)
-        ? terminalQuery.eq("id", requestedTerminalId)
-        : terminalQuery.eq("code", terminalName || requestedTerminalId);
+    const catalogTerminalId = stringValue(payload.catalog_terminal_id);
+    terminalQuery = catalogTerminalId && isUuid(catalogTerminalId)
+        ? terminalQuery.eq("id", catalogTerminalId)
+        : terminalQuery.eq("id", "00000000-0000-0000-0000-000000000000");
 
     const { data: terminalData, error: terminalError } = await terminalQuery
         .order("created_at", { ascending: false })
@@ -517,7 +562,6 @@ async function fallbackClearTerminalDevices(
     if (terminalError) throw terminalError;
 
     const publicTerminal = (terminalData as PublicTerminalRecord | null) || null;
-    if (publicTerminal?.id) terminalId = publicTerminal.id;
     const terminalDisplayCode = publicTerminal?.code || terminalName || requestedTerminalId;
 
     const { data: registryRows, error: registryRowsError } = await supabase
@@ -529,11 +573,9 @@ async function fallbackClearTerminalDevices(
 
     const rows = ((Array.isArray(registryRows) ? registryRows : []) as RegistryRecord[]).filter((row) => {
         const rowTerminalId = row.terminal_id?.trim() || "";
-        const rowTerminalName = row.terminal_name?.trim() || "";
-        return rowTerminalId === terminalId
+        return row.id === stringValue(payload.registry_id)
             || rowTerminalId === requestedTerminalId
-            || Boolean(terminalDisplayCode && rowTerminalId.toUpperCase() === terminalDisplayCode.toUpperCase())
-            || Boolean(terminalDisplayCode && rowTerminalName.toUpperCase() === terminalDisplayCode.toUpperCase());
+            || Boolean(catalogTerminalId && rowTerminalId === catalogTerminalId);
     });
 
     if (!publicTerminal && rows.length === 0) {
@@ -567,14 +609,14 @@ async function fallbackClearTerminalDevices(
         count = deletedCount || 0;
     }
 
-    const canonicalErpTerminal = await loadCanonicalErpTerminal(supabase, terminalId);
+    const canonicalErpTerminal = await loadCanonicalErpTerminal(supabase, requestedTerminalId);
     const catalogPreserveResult = await preservePublicTerminalCatalog(
         supabase,
         tenant,
         canonicalErpTerminal,
         terminalDisplayCode,
     );
-    const erpClearResult = await clearErpTerminalDeviceBindings(supabase, terminalId, terminalDisplayCode);
+    const erpClearResult = await clearErpTerminalDeviceBindings(supabase, requestedTerminalId, null);
     const uniqueClearedDeviceIds = Array.from(new Set([
         ...clearedDeviceIds,
         ...erpClearResult.previousDeviceIds,
@@ -584,7 +626,7 @@ async function fallbackClearTerminalDevices(
         .from("terminal_device_audit")
         .insert({
             tenant_id: tenantId,
-            terminal_id: terminalId,
+            terminal_id: requestedTerminalId,
             terminal_name: terminalDisplayCode,
             old_device_id: uniqueClearedDeviceIds.join(", ") || null,
             new_device_id: null,
@@ -869,6 +911,14 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 auth: { autoRefreshToken: false, persistSession: false },
                 db: { schema: "landlord" },
             });
+            const scopeValidation = await validateCanonicalErpActionScope(supabase, body);
+            if (!scopeValidation.ok) {
+                sendJson(response, scopeValidation.status, {
+                    error: scopeValidation.error,
+                    message: scopeValidation.message,
+                });
+                return;
+            }
             await reactivatePublicTenantCatalog(supabase, tenantId);
         }
 
