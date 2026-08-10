@@ -1654,6 +1654,44 @@ const SupportCommandCenter: React.FC = () => {
                                 <RefreshCw size={14} className={isRefreshingTickets ? 'animate-spin' : ''} />
                             </button>
                         </div>
+                        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4" aria-label="Filtros rápidos de tickets">
+                            <button
+                                type="button"
+                                onClick={() => { setQuickFilter('none'); setFilterSource('Todos'); setFilterStatus('Abierto'); }}
+                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${filterStatus === 'Abierto' && quickFilter === 'none' ? 'border-emerald-400 bg-emerald-50 text-emerald-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60'}`}
+                                aria-pressed={filterStatus === 'Abierto' && quickFilter === 'none'}
+                            >
+                                <CheckCircle2 className="shrink-0 text-emerald-600" size={18} />
+                                <span className="min-w-0"><span className="block text-xs font-bold">Abiertos</span><span className="text-lg font-black leading-none">{ticketStats.open}</span></span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('critical'); }}
+                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${quickFilter === 'critical' ? 'border-red-400 bg-red-50 text-red-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-red-300 hover:bg-red-50/60'}`}
+                                aria-pressed={quickFilter === 'critical'}
+                            >
+                                <AlertTriangle className="shrink-0 text-red-600" size={18} />
+                                <span className="min-w-0"><span className="block text-xs font-bold">Críticos</span><span className="text-lg font-black leading-none">{ticketStats.critical}</span></span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setQuickFilter('none'); setFilterStatus('Todos'); setFilterSource('Email'); }}
+                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${filterSource === 'Email' && quickFilter === 'none' ? 'border-violet-400 bg-violet-50 text-violet-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-violet-300 hover:bg-violet-50/60'}`}
+                                aria-pressed={filterSource === 'Email' && quickFilter === 'none'}
+                            >
+                                <Mail className="shrink-0 text-violet-600" size={18} />
+                                <span className="min-w-0"><span className="block text-xs font-bold">Email</span><span className="text-lg font-black leading-none">{ticketStats.email}</span></span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('unassigned'); }}
+                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${quickFilter === 'unassigned' ? 'border-amber-400 bg-amber-50 text-amber-900 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50/60'}`}
+                                aria-pressed={quickFilter === 'unassigned'}
+                            >
+                                <UserPlus className="shrink-0 text-amber-600" size={18} />
+                                <span className="min-w-0"><span className="block text-xs font-bold">Sin asignar</span><span className="text-lg font-black leading-none">{ticketStats.unassigned}</span></span>
+                            </button>
+                        </div>
                         <div className="flex flex-wrap gap-1.5">
                             {teams
                                 .filter((team) => actorDepartmentAccess.all || actorDepartmentAccess.ids.includes(team.id))
