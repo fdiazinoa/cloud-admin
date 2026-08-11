@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Activity, BookOpen, Building2, CalendarDays, ClipboardList, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Menu, Settings, Smartphone, Lightbulb, UserCog, X } from 'lucide-react';
+import { Activity, BookOpen, Building2, CalendarDays, ClipboardList, KeyRound, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Menu, Settings, Smartphone, Lightbulb, UserCog, X } from 'lucide-react';
 import type { CloudAdminPermissionKey, CloudAdminPermissions } from '../types';
 import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
+import { ChangePasswordDialog } from './ChangePasswordDialog';
 
 interface LayoutProps {
     adminName?: string | null;
@@ -56,6 +57,7 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
     const isSupportRoute = location.pathname === '/support';
     const [supportHeaderStats, setSupportHeaderStats] = useState<SupportCenterHeaderStats | null>(null);
     const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+    const [changePasswordOpen, setChangePasswordOpen] = useState(false);
     const currentLabel = navItems.find((item) => item.path === location.pathname)?.label || 'CLIC-CLOUD';
 
     useEffect(() => {
@@ -119,6 +121,14 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                     </div>
                     <button
                         type="button"
+                        onClick={() => setChangePasswordOpen(true)}
+                        className="mb-1 flex w-full items-center gap-3 px-2 py-2 text-sm font-medium text-slate-400 transition-colors hover:text-white"
+                    >
+                        <KeyRound size={16} />
+                        <span>Cambiar contraseña</span>
+                    </button>
+                    <button
+                        type="button"
                         onClick={onSignOut}
                         disabled={signingOut}
                         className="flex items-center gap-3 text-slate-400 hover:text-white disabled:opacity-60 w-full px-2 py-2 transition-colors text-sm font-medium"
@@ -147,6 +157,7 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                         </nav>
                         <div className="border-t border-slate-800 p-4">
                             <p className="truncate text-xs font-bold">{adminEmail || 'Sin correo'}</p><p className="mt-1 truncate text-[10px] text-slate-400">{adminRole || 'Cloud Admin'}</p>
+                            <button type="button" onClick={() => { setMobileNavigationOpen(false); setChangePasswordOpen(true); }} className="mt-3 flex w-full items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-bold text-slate-200"><KeyRound size={16} />Cambiar contraseña</button>
                             <button type="button" onClick={onSignOut} disabled={signingOut} className="mt-3 flex w-full items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-bold text-slate-200"><LogOut size={16} />{signingOut ? 'Cerrando...' : 'Cerrar sesión'}</button>
                         </div>
                     </aside>
@@ -202,6 +213,7 @@ export const Layout: React.FC<LayoutProps> = ({ adminName, adminEmail, adminRole
                 </div>
             </main>
             {/* END: Main Content Container */}
+            <ChangePasswordDialog open={changePasswordOpen} onClose={() => setChangePasswordOpen(false)} />
         </div>
     );
 };
