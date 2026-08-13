@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-const [component, service, api, auth, accessPage, accessService, messagesApi, draftApi, replyApi, resolveApi, deliveryWebhook, migration, optimizationMigration, unreadMigration, departmentMigration, config, workflow] = await Promise.all([
+const [component, layout, service, api, auth, accessPage, accessService, messagesApi, draftApi, replyApi, resolveApi, deliveryWebhook, migration, optimizationMigration, unreadMigration, departmentMigration, config, workflow] = await Promise.all([
     read('src/pages/SupportCommandCenter.tsx'),
+    read('src/components/Layout.tsx'),
     read('src/lib/helpdeskService.ts'),
     read('supabase/functions/helpdesk-api/index.ts'),
     read('supabase/functions/_shared/helpdesk-auth.ts'),
@@ -98,6 +99,9 @@ assert.ok(accessService.includes('syncUserDepartments'), 'Access management must
 for (const commandCenterFeature of ['Más filtros', 'Buscar dentro de esta conversación', 'Sin persona asignada', 'Ticket / conversación', 'aria-modal="true"', 'isComposerOpen', 'departmentUnreadCounts']) {
     assert.ok(component.includes(commandCenterFeature), `Command Center is missing ${commandCenterFeature}`);
 }
+assert.ok(!component.includes('Soporte POS, ERP y email externo'), 'HelpDesk must not reserve vertical space for the duplicated subtitle');
+assert.ok(!layout.includes('support-command-center-stats'), 'Global header must not duplicate HelpDesk KPIs');
+assert.ok(!layout.includes('support-command-center-quick-filter'), 'Global header must not expose duplicate HelpDesk quick filters');
 assert.match(migration, /Tenants can view messages[\s\S]*?visibility = 'public'/, 'Private notes must be hidden from tenant message reads');
 assert.match(migration, /Tenants can insert messages[\s\S]*?visibility = 'public'[\s\S]*?sender_type = 'Client'/, 'Tenant message inserts must remain public client messages');
 
