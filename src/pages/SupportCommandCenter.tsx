@@ -1093,54 +1093,6 @@ const SupportCommandCenter: React.FC = () => {
         };
     }, [tickets]);
 
-    useEffect(() => {
-        const applyQuickFilterAction = (event: Event) => {
-            const action = (event as CustomEvent<{ action: 'open' | 'critical' | 'email' | 'unassigned' }>).detail?.action;
-            if (!action) return;
-
-            switch (action) {
-                case 'open':
-                    setQuickFilter('none');
-                    setFilterStatus('Abierto');
-                    break;
-                case 'critical':
-                    setFilterStatus('Todos');
-                    setFilterSource('Todos');
-                    setQuickFilter('critical');
-                    break;
-                case 'email':
-                    setQuickFilter('none');
-                    setFilterStatus('Todos');
-                    setFilterSource('Email');
-                    break;
-                case 'unassigned':
-                    setFilterStatus('Todos');
-                    setFilterSource('Todos');
-                    setQuickFilter('unassigned');
-                    break;
-                default:
-                    break;
-            }
-        };
-
-        window.addEventListener('support-command-center-quick-filter', applyQuickFilterAction);
-
-        return () => {
-            window.removeEventListener('support-command-center-quick-filter', applyQuickFilterAction);
-        };
-    }, []);
-
-    useEffect(() => {
-        window.dispatchEvent(new CustomEvent('support-command-center-stats', {
-            detail: {
-                ...ticketStats,
-                filterStatus,
-                filterSource,
-                quickFilter,
-            },
-        }));
-    }, [filterSource, filterStatus, quickFilter, ticketStats]);
-
     const tenantOptions = useMemo(() => Array.from(new Set(tickets.map((ticket) => ticket.tenant_name).filter(Boolean))).sort(), [tickets]);
     const contactOptions = useMemo(() => {
         const options = new Map<string, string>();
@@ -1635,19 +1587,7 @@ const SupportCommandCenter: React.FC = () => {
     return (
         <div className="relative flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
             <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white shadow-sm">
-                <div className="shrink-0 border-b border-slate-100 p-4">
-                    <div className="mb-4 flex items-start justify-between gap-3">
-                        <div>
-                            <h1 className="text-xl font-bold text-slate-900">Command Center</h1>
-                            <p className="text-sm text-slate-500">Soporte POS, ERP y email externo</p>
-                        </div>
-                        <div className="flex items-center gap-1">
-                            <div className="rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-violet-700">
-                                <Sparkles size={18} />
-                            </div>
-                        </div>
-                    </div>
-
+                <div className="shrink-0 border-b border-slate-100 px-3 pb-3 pt-2">
                     <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/90 p-3">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
