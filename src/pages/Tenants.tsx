@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2, Unlink } from 'lucide-react';
-import type { Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TerminalSyncDocument, TerminalSyncPendingResult, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
+import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2, Unlink, Puzzle } from 'lucide-react';
+import type { CloudAdminPermissions, Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TerminalSyncDocument, TerminalSyncPendingResult, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
 import { tenantService, type TenantPosLicenseSeats } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
+import { ErpModuleStoreModal } from '../components/ErpModuleStoreModal';
+import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
 import { getPosApkReleases, type PosApkRelease } from '../lib/posApkReleases';
 import {
     deriveProductsFromTenant,
@@ -39,7 +41,7 @@ type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'sync' | 'fiscal' | 'attem
 const buildTenantSlug = (value: string) =>
     value.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
 
-export const Tenants: React.FC = () => {
+export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | null }> = ({ permissions }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [tenants, setTenants] = useState<Tenant[]>([]);
     const [distributors, setDistributors] = useState<Distributor[]>([]);
@@ -54,6 +56,8 @@ export const Tenants: React.FC = () => {
     const [createProductsModalVersion, setCreateProductsModalVersion] = useState(0);
     const [editProductsModalVersion, setEditProductsModalVersion] = useState(0);
     const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
+    const [moduleStoreTenant, setModuleStoreTenant] = useState<Tenant | null>(null);
+    const [activeModuleCounts, setActiveModuleCounts] = useState<Record<string, number>>({});
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
     const [terminalTabs, setTerminalTabs] = useState<Record<string, TerminalTabKey>>({});
@@ -124,6 +128,8 @@ export const Tenants: React.FC = () => {
         reason: '',
         confirmRebuild: false,
     });
+    const canViewErpModules = hasCloudAdminPermission(permissions, 'licenses_view');
+    const canManageErpModules = hasCloudAdminPermission(permissions, 'licenses_manage');
 
     const getErrorMessage = (error: unknown) => {
         if (typeof error === 'string') return error;
@@ -1905,6 +1911,14 @@ export const Tenants: React.FC = () => {
         (terminal) => (terminal.registry?.auth_status || '').toUpperCase() === 'LICENSE_EXCEEDED',
     ).length;
     const erpReadyTerminalCount = registryTerminals.filter((terminal) => getErpReadinessStatus(terminal) === 'ready').length;
+    const editingTenantHasActiveErp = editingTenant
+        ? deriveProductsFromTenant(editingTenant.type, editingTenant.cloud_sync, editingTenant.max_pos_terminals, editingTenant.max_erp_users, {
+            posVariant: editingTenant.pos_variant,
+            offlineMode: editingTenant.offline_mode,
+            explicitOffline: editingTenant.explicit_offline,
+            cloudChannel: editingTenant.cloud_channel,
+        }).erp
+        : false;
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -3770,6 +3784,32 @@ export const Tenants: React.FC = () => {
                                 <div className="mt-4">
                                     {renderProductSummary(editFormData.products)}
                                 </div>
+                                {canViewErpModules && editingTenant ? (
+                                    <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                                        <div className="flex items-start gap-3">
+                                            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700"><Puzzle size={19} /></span>
+                                            <div>
+                                                <p className="text-sm font-black text-slate-800">Módulos y licencias ERP</p>
+                                                <p className="mt-1 text-xs text-slate-500">
+                                                    {editingTenantHasActiveErp
+                                                        ? 'Administra RRHH, Nómina, Contabilidad e integraciones adicionales.'
+                                                        : 'Activa CLIC ERP y guarda el tenant para habilitar módulos adicionales.'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setModuleStoreTenant(editingTenant)}
+                                            disabled={!editingTenantHasActiveErp}
+                                            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                        >
+                                            <Puzzle size={16} />
+                                            {typeof activeModuleCounts[editingTenant.id] === 'number'
+                                                ? `Módulos ERP · ${activeModuleCounts[editingTenant.id]} activos`
+                                                : 'Abrir módulos ERP'}
+                                        </button>
+                                    </div>
+                                ) : null}
                             </div>
 
                             <div className="pt-4 flex gap-3">
@@ -3817,6 +3857,20 @@ export const Tenants: React.FC = () => {
                     setIsEditProductsModalOpen(false);
                 }}
             />
+
+            {moduleStoreTenant ? (
+                <ErpModuleStoreModal
+                    isOpen
+                    tenantId={moduleStoreTenant.id}
+                    tenantName={moduleStoreTenant.name}
+                    canManage={canManageErpModules}
+                    onClose={() => setModuleStoreTenant(null)}
+                    onSaved={(activeModules) => setActiveModuleCounts((current) => ({
+                        ...current,
+                        [moduleStoreTenant.id]: activeModules,
+                    }))}
+                />
+            ) : null}
         </div>
     );
 };

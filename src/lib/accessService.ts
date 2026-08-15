@@ -16,6 +16,8 @@ export const permissionCatalog: Array<{ key: CloudAdminPermissionKey; group: str
     { key: 'tenants_delete', group: 'Tenants', label: 'Eliminar', description: 'Eliminar definitivamente un tenant.' },
     { key: 'plans_view', group: 'Planes', label: 'Consultar', description: 'Ver planes y límites comerciales.' },
     { key: 'plans_manage', group: 'Planes', label: 'Gestionar', description: 'Crear o editar planes.' },
+    { key: 'licenses_view', group: 'Licencias ERP', label: 'Consultar', description: 'Ver módulos y límites contratados por tenant.' },
+    { key: 'licenses_manage', group: 'Licencias ERP', label: 'Gestionar', description: 'Activar módulos y modificar sus límites.' },
     { key: 'support_view', group: 'HelpDesk', label: 'Consultar', description: 'Ver tickets y conversaciones.' },
     { key: 'support_manage', group: 'HelpDesk', label: 'Gestionar', description: 'Responder, asignar y resolver tickets.' },
     { key: 'knowledge_view', group: 'Manuales', label: 'Consultar', description: 'Consultar manuales y videos.' },

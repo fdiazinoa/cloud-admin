@@ -198,7 +198,7 @@ function App() {
                     )}
                 >
                     <Route index element={<PermissionGate allowed={allowed('dashboard_view')}><Dashboard /></PermissionGate>} />
-                    <Route path="tenants" element={<PermissionGate allowed={allowed('tenants_view')}><Tenants /></PermissionGate>} />
+                    <Route path="tenants" element={<PermissionGate allowed={allowed('tenants_view')}><Tenants permissions={permissions} /></PermissionGate>} />
                     <Route path="clientes" element={<PermissionGate allowed={allowed('tenants_view')}><Customers /></PermissionGate>} />
                     <Route path="plans" element={<PermissionGate allowed={allowed('plans_view')}><Plans /></PermissionGate>} />
                     <Route path="pos-apk" element={<PermissionGate allowed={allowed('apk_view')}><PosApkReleases /></PermissionGate>} />
