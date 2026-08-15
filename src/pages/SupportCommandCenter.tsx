@@ -31,6 +31,7 @@ import {
     Sparkles,
     StickyNote,
     Tag,
+    Trash2,
     UserPlus,
     Users,
     Wand2,
@@ -44,6 +45,7 @@ import {
     bulkUpdateHelpdeskTickets,
     createHelpdeskImprovement,
     createPreventiveHelpdeskTicket,
+    deleteHelpdeskTickets,
     fetchHelpdeskBootstrap,
     fetchHelpdeskTicketSnapshot,
     fetchSupportMessages,
@@ -51,8 +53,10 @@ import {
     heartbeatHelpdeskTicket,
     loadHelpdeskWorkspace,
     markHelpdeskTicketRead,
+    markHelpdeskTicketsAsSpam,
     mergeHelpdeskTickets,
     resolveHelpdeskTicket,
+    restoreHelpdeskSpamTickets,
     saveHelpdeskContact,
     saveHelpdeskDraft,
     sendHelpdeskReply,
@@ -703,11 +707,13 @@ const SupportCommandCenter: React.FC = () => {
     const [currentActorId, setCurrentActorId] = useState<string | null>(null);
     const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [bulkActionError, setBulkActionError] = useState<string | null>(null);
+    const [actionNotice, setActionNotice] = useState<string | null>(null);
     const [tagInput, setTagInput] = useState('');
     const [pendingReplyAttachments, setPendingReplyAttachments] = useState<PendingReplyAttachment[]>([]);
     const [replyAttachmentError, setReplyAttachmentError] = useState<string | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
     const [filterStatus, setFilterStatus] = useState('Todos');
+    const [mailboxFilter, setMailboxFilter] = useState<'active' | 'spam'>('active');
     const [filterSource, setFilterSource] = useState('Todos');
     const [filterTeam, setFilterTeam] = useState('Todos');
     const [filterAssignee, setFilterAssignee] = useState('Todos');
@@ -719,6 +725,7 @@ const SupportCommandCenter: React.FC = () => {
     const [showContextPanel, setShowContextPanel] = useState(true);
     const [isFocusMode, setIsFocusMode] = useState(false);
     const [actorDepartmentAccess, setActorDepartmentAccess] = useState<{ all: boolean; ids: string[] }>({ all: false, ids: [] });
+    const [canDeleteTickets, setCanDeleteTickets] = useState(false);
     const [conversationSearch, setConversationSearch] = useState('');
     const [conversationMatchIndex, setConversationMatchIndex] = useState(0);
     const [messageExpansion, setMessageExpansion] = useState<Record<string, boolean>>({});
@@ -734,6 +741,9 @@ const SupportCommandCenter: React.FC = () => {
     const [improvementDraft, setImprovementDraft] = useState<ImprovementDraft>(initialImprovementDraft);
     const [improvementError, setImprovementError] = useState<string | null>(null);
     const [improvementNotice, setImprovementNotice] = useState<string | null>(null);
+    const [deleteTicketIds, setDeleteTicketIds] = useState<string[]>([]);
+    const [deleteReason, setDeleteReason] = useState('');
+    const [isDeletingTickets, setIsDeletingTickets] = useState(false);
     const [lastMessageByTicketId, setLastMessageByTicketId] = useState<Record<string, TicketMessagePreview>>({});
     const messagesPaneRef = useRef<HTMLDivElement>(null);
     const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -752,13 +762,13 @@ const SupportCommandCenter: React.FC = () => {
 
     useEffect(() => {
         const handleEscape = (event: KeyboardEvent) => {
-            if (event.key !== 'Escape' || isContactModalOpen || isImprovementModalOpen) return;
+            if (event.key !== 'Escape' || isContactModalOpen || isImprovementModalOpen || deleteTicketIds.length > 0) return;
             setIsFocusMode(false);
             setSelectedTicket(null);
         };
         window.addEventListener('keydown', handleEscape);
         return () => window.removeEventListener('keydown', handleEscape);
-    }, [isContactModalOpen, isImprovementModalOpen]);
+    }, [deleteTicketIds.length, isContactModalOpen, isImprovementModalOpen]);
 
     useEffect(() => {
         const pane = messagesPaneRef.current;
@@ -827,6 +837,7 @@ const SupportCommandCenter: React.FC = () => {
                     all: response.actor_access.all_departments,
                     ids: response.actor_access.department_ids,
                 });
+                setCanDeleteTickets(response.actor_access.can_delete_tickets);
                 setReplyTemplates(response.templates);
                 setLastMessageByTicketId(buildLatestMessagePreviewMap(response.previews as Array<{ ticket_id?: string | null; message?: string | null; sender_type?: string | null; created_at?: string | null }>));
                 setSelectedTicket((current) => current
@@ -1084,12 +1095,15 @@ const SupportCommandCenter: React.FC = () => {
     }, [bccText, ccText, forwardTo, replyMode, replyText, selectedTicketId]);
 
     const ticketStats = useMemo(() => {
+        const activeTickets = tickets.filter((ticket) => ticket.assignment_status !== 'spam');
         return {
-            critical: tickets.filter((ticket) => ticket.priority === 'Critica').length,
-            open: tickets.filter((ticket) => ticket.status === 'Abierto').length,
-            email: tickets.filter((ticket) => ticket.source === 'Email').length,
-            unassigned: tickets.filter((ticket) => ticket.assignment_status === 'needs_assignment').length,
-            unread: tickets.filter((ticket) => ticket.is_unread).length,
+            critical: activeTickets.filter((ticket) => ticket.priority === 'Critica').length,
+            open: activeTickets.filter((ticket) => ticket.status === 'Abierto').length,
+            email: activeTickets.filter((ticket) => ticket.source === 'Email').length,
+            unassigned: activeTickets.filter((ticket) => ticket.assignment_status === 'needs_assignment').length,
+            unread: activeTickets.filter((ticket) => ticket.is_unread).length,
+            active: activeTickets.length,
+            spam: tickets.length - activeTickets.length,
         };
     }, [tickets]);
 
@@ -1160,6 +1174,9 @@ const SupportCommandCenter: React.FC = () => {
 
     const filteredTickets = useMemo(() => {
         return tickets.filter((ticket) => {
+            const mailboxMatches = mailboxFilter === 'spam'
+                ? ticket.assignment_status === 'spam'
+                : ticket.assignment_status !== 'spam';
             const statusMatches = filterStatus === 'Todos' || ticket.status === filterStatus;
             const sourceMatches = filterSource === 'Todos' || ticket.source === filterSource;
             const teamMatches = filterTeam === 'Todos' || (filterTeam === 'Sin_departamento' ? !ticket.team_id : ticket.team_id === filterTeam);
@@ -1172,10 +1189,10 @@ const SupportCommandCenter: React.FC = () => {
             const toMatches = !filterDateTo || createdAt <= new Date(`${filterDateTo}T23:59:59.999`).getTime();
             const criticalMatches = quickFilter !== 'critical' || ticket.priority === 'Critica';
             const unassignedMatches = quickFilter !== 'unassigned' || ticket.assignment_status === 'needs_assignment';
-            return statusMatches && sourceMatches && teamMatches && assigneeMatches && tenantMatches
+            return mailboxMatches && statusMatches && sourceMatches && teamMatches && assigneeMatches && tenantMatches
                 && contactMatches && fromMatches && toMatches && criticalMatches && unassignedMatches;
         });
-    }, [filterAssignee, filterContact, filterDateFrom, filterDateTo, filterSource, filterStatus, filterTeam, filterTenant, quickFilter, tickets]);
+    }, [filterAssignee, filterContact, filterDateFrom, filterDateTo, filterSource, filterStatus, filterTeam, filterTenant, mailboxFilter, quickFilter, tickets]);
 
     const selectedTicketIndex = selectedTicket
         ? filteredTickets.findIndex((ticket) => ticket.id === selectedTicket.id)
@@ -1513,6 +1530,65 @@ const SupportCommandCenter: React.FC = () => {
         }
     };
 
+    const markTicketsAsSpam = async (ticketIds: string[]) => {
+        if (!ticketIds.length) return;
+        setBulkActionError(null);
+        setActionNotice(null);
+        try {
+            await markHelpdeskTicketsAsSpam(ticketIds);
+            setSelectedTicketIds([]);
+            if (selectedTicket && ticketIds.includes(selectedTicket.id)) setSelectedTicket(null);
+            setActionNotice(`${ticketIds.length} ticket${ticketIds.length === 1 ? '' : 's'} movido${ticketIds.length === 1 ? '' : 's'} a Spam.`);
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo marcar el ticket como spam.');
+        }
+    };
+
+    const restoreSpamTickets = async (ticketIds: string[]) => {
+        if (!ticketIds.length) return;
+        setBulkActionError(null);
+        setActionNotice(null);
+        try {
+            await restoreHelpdeskSpamTickets(ticketIds);
+            setSelectedTicketIds([]);
+            if (selectedTicket && ticketIds.includes(selectedTicket.id)) setSelectedTicket(null);
+            setActionNotice(`${ticketIds.length} ticket${ticketIds.length === 1 ? '' : 's'} restaurado${ticketIds.length === 1 ? '' : 's'} a la bandeja activa.`);
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo restaurar el ticket.');
+        }
+    };
+
+    const requestTicketDeletion = (ticketIds: string[]) => {
+        if (!canDeleteTickets || !ticketIds.length) return;
+        setDeleteReason(mailboxFilter === 'spam' ? 'Spam confirmado' : '');
+        setDeleteTicketIds(ticketIds);
+    };
+
+    const confirmTicketDeletion = async () => {
+        const reason = deleteReason.trim();
+        if (!deleteTicketIds.length || reason.length < 3) return;
+        setIsDeletingTickets(true);
+        setBulkActionError(null);
+        setActionNotice(null);
+        try {
+            const result = await deleteHelpdeskTickets(deleteTicketIds, reason);
+            const deletedIds = result.deleted_ids;
+            setTickets((current) => current.filter((ticket) => !deletedIds.includes(ticket.id)));
+            setSelectedTicketIds([]);
+            setSelectedTicket((current) => current && deletedIds.includes(current.id) ? null : current);
+            setDeleteTicketIds([]);
+            setDeleteReason('');
+            setActionNotice(`${deletedIds.length} ticket${deletedIds.length === 1 ? '' : 's'} eliminado${deletedIds.length === 1 ? '' : 's'} permanentemente.${result.attachment_cleanup_warnings.length ? ' Algunos archivos requieren limpieza automática posterior.' : ''}`);
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo eliminar el ticket.');
+        } finally {
+            setIsDeletingTickets(false);
+        }
+    };
+
     const mergeSelectedTickets = async () => {
         if (selectedTicketIds.length < 2) return;
         const targetTicketId = selectedTicketIds.includes(selectedTicket?.id ?? '')
@@ -1639,6 +1715,22 @@ const SupportCommandCenter: React.FC = () => {
                                 <span className="min-w-0"><span className="block text-xs font-bold">Sin asignar</span><span className="text-lg font-black leading-none">{ticketStats.unassigned}</span></span>
                             </button>
                         </div>
+                        <div className="grid grid-cols-2 gap-2" aria-label="Bandeja del HelpDesk">
+                            <button
+                                type="button"
+                                onClick={() => { setMailboxFilter('active'); setSelectedTicketIds([]); setSelectedTicket(null); }}
+                                className={`rounded-lg border px-3 py-2 text-xs font-bold ${mailboxFilter === 'active' ? 'border-indigo-400 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                            >
+                                Bandeja activa <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5">{ticketStats.active}</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setMailboxFilter('spam'); setSelectedTicketIds([]); setSelectedTicket(null); setFilterStatus('Todos'); setQuickFilter('none'); }}
+                                className={`rounded-lg border px-3 py-2 text-xs font-bold ${mailboxFilter === 'spam' ? 'border-red-400 bg-red-50 text-red-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-red-50'}`}
+                            >
+                                Spam <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5">{ticketStats.spam}</span>
+                            </button>
+                        </div>
                         <div className="flex flex-wrap gap-1.5">
                             {teams
                                 .filter((team) => actorDepartmentAccess.all || actorDepartmentAccess.ids.includes(team.id))
@@ -1762,6 +1854,7 @@ const SupportCommandCenter: React.FC = () => {
                             ) : null}
                         </p>
                         {bulkActionError && <p className="text-xs font-medium text-red-600">{bulkActionError}</p>}
+                        {actionNotice && <p className="text-xs font-medium text-emerald-700">{actionNotice}</p>}
                     </div>
                 </div>
 
@@ -1771,14 +1864,25 @@ const SupportCommandCenter: React.FC = () => {
                             <span>{selectedTicketIds.length} seleccionados</span>
                             <button type="button" onClick={() => setSelectedTicketIds([])} className="text-blue-600 hover:text-blue-900">Limpiar</button>
                         </div>
-                        <div className="grid grid-cols-3 gap-1.5">
-                            <button type="button" onClick={() => void runBulkUpdate({ status: 'En_Proceso' })} className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-[11px] font-bold text-blue-700">En proceso</button>
-                            <button type="button" onClick={() => void runBulkUpdate({ status: 'Cerrado' })} className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-[11px] font-bold text-blue-700">Cerrar</button>
-                            <button type="button" onClick={() => void runBulkUpdate({ assignment_status: 'spam' })} className="rounded-lg border border-red-200 bg-white px-2 py-1.5 text-[11px] font-bold text-red-700">Spam</button>
+                        {mailboxFilter === 'active' ? (
+                            <div className="grid grid-cols-3 gap-1.5">
+                                <button type="button" onClick={() => void runBulkUpdate({ status: 'En_Proceso' })} className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-[11px] font-bold text-blue-700">En proceso</button>
+                                <button type="button" onClick={() => void runBulkUpdate({ status: 'Cerrado' })} className="rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-[11px] font-bold text-blue-700">Cerrar</button>
+                                <button type="button" disabled={!canDeleteTickets} onClick={() => void markTicketsAsSpam(selectedTicketIds)} className="rounded-lg border border-red-200 bg-white px-2 py-1.5 text-[11px] font-bold text-red-700 disabled:cursor-not-allowed disabled:opacity-40" title={canDeleteTickets ? 'Mover a Spam' : 'Requiere permiso Gestionar HelpDesk'}>Marcar como spam</button>
+                            </div>
+                        ) : (
+                            <button type="button" disabled={!canDeleteTickets} onClick={() => void restoreSpamTickets(selectedTicketIds)} className="inline-flex w-full items-center justify-center rounded-lg border border-emerald-200 bg-white px-2 py-1.5 text-xs font-bold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40">
+                                Restaurar a bandeja activa
+                            </button>
+                        )}
+                        <div className="mt-2 grid grid-cols-2 gap-1.5">
+                            <button type="button" disabled={selectedTicketIds.length < 2 || mailboxFilter === 'spam'} onClick={() => void mergeSelectedTickets()} className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-700 px-2 py-1.5 text-xs font-bold text-white disabled:opacity-40">
+                                <GitMerge size={13} /> Fusionar duplicados
+                            </button>
+                            <button type="button" disabled={!canDeleteTickets} onClick={() => requestTicketDeletion(selectedTicketIds)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-300 bg-white px-2 py-1.5 text-xs font-bold text-red-700 disabled:cursor-not-allowed disabled:opacity-40" title={canDeleteTickets ? 'Eliminar permanentemente' : 'Requiere permiso Gestionar HelpDesk'}>
+                                <Trash2 size={13} /> Eliminar
+                            </button>
                         </div>
-                        <button type="button" disabled={selectedTicketIds.length < 2} onClick={() => void mergeSelectedTickets()} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-700 px-2 py-1.5 text-xs font-bold text-white disabled:opacity-40">
-                            <GitMerge size={13} /> Fusionar duplicados
-                        </button>
                     </div>
                 )}
 
@@ -1875,6 +1979,11 @@ const SupportCommandCenter: React.FC = () => {
                                         <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
                                             {selectedTicket.category}
                                         </span>
+                                        {selectedTicket.assignment_status === 'spam' ? (
+                                            <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">
+                                                Spam
+                                            </span>
+                                        ) : null}
                                         {selectedTicket.resolution_status && selectedTicket.resolution_status !== 'open' && (
                                             <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${resolutionStatusStyles[selectedTicket.resolution_status] ?? 'border-slate-200 bg-white text-slate-600'}`}>
                                                 {resolutionStatusLabels[selectedTicket.resolution_status] ?? selectedTicket.resolution_status}
@@ -2467,6 +2576,26 @@ const SupportCommandCenter: React.FC = () => {
                                     Crear ticket preventivo
                                     <Sparkles size={13} />
                                 </button>
+                                {selectedTicket.assignment_status === 'spam' ? (
+                                    <button disabled={!canDeleteTickets} onClick={() => void restoreSpamTickets([selectedTicket.id])} className="flex w-full items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-left text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">
+                                        Restaurar: no es spam
+                                        <RefreshCw size={13} />
+                                    </button>
+                                ) : (
+                                    <button disabled={!canDeleteTickets} onClick={() => void markTicketsAsSpam([selectedTicket.id])} className="flex w-full items-center justify-between rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-left text-xs font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40">
+                                        Marcar como spam
+                                        <AlertTriangle size={13} />
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => requestTicketDeletion([selectedTicket.id])}
+                                    disabled={!canDeleteTickets}
+                                    className="flex w-full items-center justify-between rounded-lg border border-red-300 bg-white px-3 py-2 text-left text-xs font-bold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                    title={canDeleteTickets ? 'Eliminar permanentemente' : 'Requiere permiso Gestionar HelpDesk'}
+                                >
+                                    Eliminar ticket
+                                    <Trash2 size={13} />
+                                </button>
                             </div>
                         </section>
                     </div>
@@ -2475,6 +2604,50 @@ const SupportCommandCenter: React.FC = () => {
             </div>
             </div>
             ) : null}
+
+            {deleteTicketIds.length > 0 && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-ticket-title">
+                    <div className="w-full max-w-lg overflow-hidden rounded-xl border border-red-200 bg-white shadow-2xl">
+                        <div className="flex items-start gap-3 border-b border-red-100 bg-red-50 p-5">
+                            <div className="rounded-full bg-red-100 p-2 text-red-700"><Trash2 size={18} /></div>
+                            <div className="min-w-0 flex-1">
+                                <h3 id="delete-ticket-title" className="text-lg font-black text-slate-900">Eliminar {deleteTicketIds.length === 1 ? 'ticket' : `${deleteTicketIds.length} tickets`}</h3>
+                                <p className="mt-1 text-sm text-slate-600">Esta acción es irreversible. Se borrarán la conversación, borradores, presencia, auditoría de IA y archivos adjuntos asociados.</p>
+                            </div>
+                            <button type="button" onClick={() => { setDeleteTicketIds([]); setDeleteReason(''); }} disabled={isDeletingTickets} className="rounded-lg p-2 text-slate-500 hover:bg-white" aria-label="Cerrar"><X size={16} /></button>
+                        </div>
+                        <div className="space-y-3 p-5">
+                            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Tickets seleccionados</p>
+                            <div className="max-h-28 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                                {deleteTicketIds.map((ticketId) => {
+                                    const ticket = tickets.find((item) => item.id === ticketId);
+                                    return <p key={ticketId} className="truncate"><span className="font-bold">{ticket ? getTicketNumberLabel(ticket) : ticketId}</span>{ticket?.subject ? ` · ${ticket.subject}` : ''}</p>;
+                                })}
+                            </div>
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-bold text-slate-700">Motivo del borrado</span>
+                                <textarea
+                                    value={deleteReason}
+                                    onChange={(event) => setDeleteReason(event.target.value)}
+                                    rows={3}
+                                    maxLength={500}
+                                    autoFocus
+                                    placeholder="Ej. Spam confirmado, prueba interna o duplicado inválido"
+                                    className="w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100"
+                                />
+                                <span className="mt-1 block text-[11px] text-slate-500">El motivo quedará en el registro de auditoría.</span>
+                            </label>
+                        </div>
+                        <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 p-4">
+                            <button type="button" onClick={() => { setDeleteTicketIds([]); setDeleteReason(''); }} disabled={isDeletingTickets} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-600 disabled:opacity-50">Cancelar</button>
+                            <button type="button" onClick={() => void confirmTicketDeletion()} disabled={isDeletingTickets || deleteReason.trim().length < 3} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50">
+                                {isDeletingTickets ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+                                {isDeletingTickets ? 'Eliminando...' : 'Eliminar permanentemente'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {isImprovementModalOpen && selectedTicket && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">

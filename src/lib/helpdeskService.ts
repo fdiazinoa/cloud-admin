@@ -61,6 +61,7 @@ interface HelpdeskBootstrapResponse {
     actor_access: {
         all_departments: boolean;
         department_ids: string[];
+        can_delete_tickets: boolean;
     };
 }
 
@@ -102,7 +103,10 @@ export async function fetchHelpdeskBootstrap(query = '') {
         templates: Array.isArray(response.templates) ? response.templates : [],
         previews: Array.isArray(response.previews) ? response.previews : [],
         unread_states: Array.isArray(response.unread_states) ? response.unread_states : [],
-        actor_access: actorAccess,
+        actor_access: {
+            ...actorAccess,
+            can_delete_tickets: actorAccess.can_delete_tickets === true,
+        },
     } satisfies HelpdeskBootstrapResponse;
 }
 
@@ -128,6 +132,21 @@ export async function updateHelpdeskTicket(ticketId: string, fields: Record<stri
 
 export async function bulkUpdateHelpdeskTickets(ticketIds: string[], fields: Record<string, unknown>) {
     return invokeHelpdesk<{ updated_ids: string[] }>('bulk_update', { ticket_ids: ticketIds, fields });
+}
+
+export async function markHelpdeskTicketsAsSpam(ticketIds: string[]) {
+    return invokeHelpdesk<{ updated_ids: string[] }>('mark_spam', { ticket_ids: ticketIds });
+}
+
+export async function restoreHelpdeskSpamTickets(ticketIds: string[]) {
+    return invokeHelpdesk<{ restored_ids: string[] }>('restore_spam', { ticket_ids: ticketIds });
+}
+
+export async function deleteHelpdeskTickets(ticketIds: string[], reason: string) {
+    return invokeHelpdesk<{
+        deleted_ids: string[];
+        attachment_cleanup_warnings: string[];
+    }>('delete_tickets', { ticket_ids: ticketIds, reason });
 }
 
 export async function addPrivateHelpdeskNote(ticketId: string, body: string) {

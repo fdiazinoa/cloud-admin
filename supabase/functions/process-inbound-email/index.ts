@@ -1285,13 +1285,21 @@ Deno.serve(async (request) => {
         if (subjectTicketNumber) {
             const threadedTicket = await supabase
                 .from('support_tickets')
-                .select('id, ticket_number, tenant_id, contact_id, subject, source')
+                .select('id, ticket_number, tenant_id, contact_id, subject, source, assignment_status')
                 .eq('ticket_number', subjectTicketNumber)
                 .maybeSingle();
 
             if (threadedTicket.error) throw threadedTicket.error;
 
             if (threadedTicket.data?.id) {
+                if (threadedTicket.data.assignment_status === 'spam') {
+                    if (rawEventId) {
+                        await supabase.from('raw_support_events')
+                            .update({ status: 'ignored', processed_at: new Date().toISOString() })
+                            .eq('id', rawEventId);
+                    }
+                    return json({ ok: true, ignored: true, reason: 'ticket_marked_as_spam' });
+                }
                 const knowledgeMatches = await fetchKnowledgeMatches(supabase, threadedTicket.data.subject ?? subject, body);
                 const triage = integrationConfig.aiTriageEnabled && integrationConfig.aiProvider === 'openai'
                     ? await runAiTriage({

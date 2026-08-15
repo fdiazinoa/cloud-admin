@@ -39,6 +39,7 @@ const legacyFallback: Record<string, string> = {
     internal_requests_manage: 'improvements', apk_view: 'apk', apk_manage: 'apk', observability_view: 'observability',
     billing_view: 'billing', billing_manage: 'billing', settings_view: 'settings', settings_manage: 'settings',
     kill_switch_execute: 'kill_switch', users_view: 'users', users_manage: 'users', profiles_manage: 'users',
+    licenses_view: 'plans_view', licenses_manage: 'plans_manage',
 };
 
 function requiredEnv(name: string) {
