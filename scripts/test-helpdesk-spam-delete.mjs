@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
-const [api, service, component, inbound, migration] = await Promise.all([
+const [api, auth, service, component, inbound, migration] = await Promise.all([
     read('supabase/functions/helpdesk-api/index.ts'),
+    read('supabase/functions/_shared/helpdesk-auth.ts'),
     read('src/lib/helpdeskService.ts'),
     read('src/pages/SupportCommandCenter.tsx'),
     read('supabase/functions/process-inbound-email/index.ts'),
@@ -13,7 +14,9 @@ const [api, service, component, inbound, migration] = await Promise.all([
 for (const action of ['mark_spam', 'restore_spam', 'delete_tickets']) {
     assert.match(api, new RegExp(`action === '${action}'`), `Missing secure HelpDesk action: ${action}`);
 }
-assert.match(api, /actor\.permissions\.support_manage === true/, 'Destructive actions must require support_manage');
+assert.match(api, /hasHelpdeskPermission\(actor\.permissions, 'support_manage'\)/, 'Destructive actions must require support_manage');
+assert.match(auth, /support_manage: 'support'/, 'Legacy support profiles must retain HelpDesk management access');
+assert.match(auth, /typeof permissions\[permission\] === 'boolean'\) return false/, 'Explicit granular permission denials must override the legacy fallback');
 assert.match(api, /assertHelpdeskTicketAccess\(supabase, actor, ticketIds\)/, 'Spam and delete actions must enforce department access');
 assert.match(api, /support_ticket_deletion_audit/, 'Ticket deletion must create an audit record');
 assert.match(api, /\.from\('support_tickets'\)\s*\.delete\(\)/, 'Ticket deletion must run through the secure API');

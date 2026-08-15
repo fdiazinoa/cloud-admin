@@ -45,6 +45,18 @@ function normalizeRelation<T>(value: T | T[] | null | undefined): T | null {
     return value ?? null;
 }
 
+const legacyPermissionFallback: Record<string, string> = {
+    support_view: 'support',
+    support_manage: 'support',
+};
+
+export function hasHelpdeskPermission(permissions: Record<string, boolean>, permission: string) {
+    if (permissions[permission] === true) return true;
+    if (typeof permissions[permission] === 'boolean') return false;
+    const fallback = legacyPermissionFallback[permission];
+    return fallback ? permissions[fallback] === true : false;
+}
+
 export function createHelpdeskAdminClient() {
     return createClient(getEnv('SUPABASE_URL'), getEnv('SUPABASE_SERVICE_ROLE_KEY'), {
         auth: { autoRefreshToken: false, persistSession: false },
@@ -85,7 +97,7 @@ export async function requireHelpdeskActor(request: Request, permission = 'suppo
     const adminUser = data as AdminUserRow;
     const profile = normalizeRelation(adminUser.cloud_admin_profiles);
     const permissions = profile?.permissions ?? {};
-    if (adminUser.status !== 'active' || !profile?.is_active || permissions[permission] !== true) {
+    if (adminUser.status !== 'active' || !profile?.is_active || !hasHelpdeskPermission(permissions, permission)) {
         throw new Error('Forbidden helpdesk request');
     }
 
