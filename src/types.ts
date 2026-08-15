@@ -428,6 +428,8 @@ export type CloudAdminPermissionKey =
     | 'users_view'
     | 'users_manage'
     | 'profiles_manage'
+    | 'licenses_view'
+    | 'licenses_manage'
     | 'audit_view';
 
 export type CloudAdminPermissions = Record<CloudAdminPermissionKey, boolean>;

@@ -28,6 +28,8 @@ const legacyPermissionFallback: Partial<Record<CloudAdminPermissionKey, CloudAdm
     users_view: 'users',
     users_manage: 'users',
     profiles_manage: 'users',
+    licenses_view: 'plans_view',
+    licenses_manage: 'plans_manage',
 };
 
 export function hasCloudAdminPermission(

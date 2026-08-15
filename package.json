@@ -28,6 +28,7 @@
     "test:internal-requests": "node scripts/test-internal-requests.mjs",
     "test:knowledge-center": "node scripts/test-knowledge-center.mjs",
     "test:calendar-meetings": "node scripts/test-calendar-meetings.mjs",
+    "test:erp-module-licensing": "node --experimental-strip-types scripts/test-erp-module-licensing.mjs",
     "check:supabase-keys": "node scripts/check-supabase-keys.mjs",
     "verify:supabase-security": "node scripts/verify-supabase-security.mjs"
   },
