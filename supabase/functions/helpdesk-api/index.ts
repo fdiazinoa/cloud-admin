@@ -32,6 +32,7 @@ interface HelpdeskPayload {
     source?: string;
     priority?: string;
     category?: string;
+    reason?: string;
 }
 
 const corsHeaders = {
@@ -165,6 +166,24 @@ function cleanIds(value: unknown, max = 100) {
         .map((item) => cleanString(item, 64))
         .filter((item) => /^[0-9a-f-]{36}$/i.test(item))))
         .slice(0, max);
+}
+
+function collectAttachmentPaths(value: unknown, ticketId: string, paths: Set<string>) {
+    if (Array.isArray(value)) {
+        value.forEach((item) => collectAttachmentPaths(item, ticketId, paths));
+        return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const record = value as Record<string, unknown>;
+    if (record.bucket === 'helpdesk-attachments' && typeof record.path === 'string') {
+        const path = record.path.trim();
+        if (path.startsWith(`${ticketId}/`) || path.startsWith(`outbound/${ticketId}/`)) paths.add(path);
+    }
+    Object.values(record).forEach((item) => collectAttachmentPaths(item, ticketId, paths));
+}
+
+function canManageHelpdesk(actor: HelpdeskActor) {
+    return actor.permissions.support_manage === true;
 }
 
 function sanitizeFileName(value: unknown) {
@@ -304,6 +323,7 @@ async function fetchBootstrap(
         actor_access: {
             all_departments: actor.canViewAllDepartments,
             department_ids: actor.departmentIds,
+            can_delete_tickets: canManageHelpdesk(actor),
         },
     };
 }
@@ -336,6 +356,11 @@ Deno.serve(async (request) => {
         }
         if (action === 'bulk_update') {
             await assertHelpdeskTicketAccess(supabase, actor, cleanIds(payload.ticket_ids));
+        }
+        if (action === 'mark_spam' || action === 'restore_spam' || action === 'delete_tickets') {
+            const ticketIds = cleanIds(payload.ticket_ids);
+            await assertHelpdeskTicketAccess(supabase, actor, ticketIds);
+            if (!canManageHelpdesk(actor)) throw new Error('Forbidden helpdesk request');
         }
         if (action === 'merge_tickets') {
             await assertHelpdeskTicketAccess(supabase, actor, [
@@ -417,6 +442,129 @@ Deno.serve(async (request) => {
                 .select('id');
             if (error) throw error;
             return json({ updated_ids: (data ?? []).map((row) => row.id) });
+        }
+
+        if (action === 'mark_spam') {
+            const ticketIds = cleanIds(payload.ticket_ids);
+            if (!ticketIds.length) return json({ error: 'ticket_ids are required' }, 400);
+            const { data, error } = await supabase
+                .from('support_tickets')
+                .update({
+                    assignment_status: 'spam',
+                    status: 'Cerrado',
+                    resolution_status: 'closed',
+                })
+                .in('id', ticketIds)
+                .is('merged_into_ticket_id', null)
+                .select('id');
+            if (error) throw error;
+            return json({ updated_ids: (data ?? []).map((row) => row.id) });
+        }
+
+        if (action === 'restore_spam') {
+            const ticketIds = cleanIds(payload.ticket_ids);
+            if (!ticketIds.length) return json({ error: 'ticket_ids are required' }, 400);
+            const { data: spamTickets, error: fetchError } = await supabase
+                .from('support_tickets')
+                .select('id, tenant_id, contact_id, team_id, assignee_id')
+                .in('id', ticketIds)
+                .eq('assignment_status', 'spam')
+                .is('merged_into_ticket_id', null);
+            if (fetchError) throw fetchError;
+
+            const assignedIds = (spamTickets ?? [])
+                .filter((ticket) => ticket.tenant_id || ticket.contact_id || ticket.team_id || ticket.assignee_id)
+                .map((ticket) => ticket.id);
+            const unassignedIds = (spamTickets ?? [])
+                .filter((ticket) => !ticket.tenant_id && !ticket.contact_id && !ticket.team_id && !ticket.assignee_id)
+                .map((ticket) => ticket.id);
+            for (const [ids, assignmentStatus] of [[assignedIds, 'assigned'], [unassignedIds, 'needs_assignment']] as const) {
+                if (!ids.length) continue;
+                const { error } = await supabase.from('support_tickets').update({
+                    assignment_status: assignmentStatus,
+                    status: 'Abierto',
+                    resolution_status: 'open',
+                }).in('id', ids);
+                if (error) throw error;
+            }
+            return json({ restored_ids: [...assignedIds, ...unassignedIds] });
+        }
+
+        if (action === 'delete_tickets') {
+            const ticketIds = cleanIds(payload.ticket_ids);
+            const reason = cleanString(payload.reason, 500);
+            if (!ticketIds.length || reason.length < 3) {
+                return json({ error: 'ticket_ids and a deletion reason are required' }, 400);
+            }
+            if (ticketIds.length > 50) return json({ error: 'A maximum of 50 tickets can be deleted at once' }, 400);
+
+            const { data: ticketRows, error: ticketError } = await supabase
+                .from('support_tickets')
+                .select('id, ticket_number, subject, external_sender_email')
+                .in('id', ticketIds)
+                .is('merged_into_ticket_id', null);
+            if (ticketError) throw ticketError;
+            if ((ticketRows ?? []).length !== ticketIds.length) return json({ error: 'One or more tickets no longer exist' }, 409);
+
+            const { data: messageRows, error: messageError } = await supabase
+                .from('ticket_messages')
+                .select('ticket_id, attachments')
+                .in('ticket_id', ticketIds);
+            if (messageError) throw messageError;
+            const attachmentPaths = new Set<string>();
+            (messageRows ?? []).forEach((message) => collectAttachmentPaths(message.attachments, String(message.ticket_id), attachmentPaths));
+
+            const { data: auditRows, error: auditError } = await supabase
+                .from('support_ticket_deletion_audit')
+                .insert((ticketRows ?? []).map((ticket) => ({
+                    ticket_id: ticket.id,
+                    ticket_number: ticket.ticket_number == null ? null : String(ticket.ticket_number),
+                    subject: ticket.subject || 'Ticket sin asunto',
+                    external_sender_email: ticket.external_sender_email,
+                    deletion_reason: reason,
+                    deleted_by: actor.id,
+                    metadata: {
+                        attachment_count: attachmentPaths.size,
+                        requested_by_email: actor.email,
+                    },
+                })))
+                .select('id');
+            if (auditError) throw auditError;
+            const auditIds = (auditRows ?? []).map((row) => row.id);
+
+            const { data: deletedRows, error: deleteError } = await supabase
+                .from('support_tickets')
+                .delete()
+                .in('id', ticketIds)
+                .is('merged_into_ticket_id', null)
+                .select('id');
+            if (deleteError) {
+                if (auditIds.length) await supabase.from('support_ticket_deletion_audit').update({
+                    outcome: 'failed',
+                    error_message: describeError(deleteError).slice(0, 1000),
+                    completed_at: new Date().toISOString(),
+                }).in('id', auditIds);
+                throw deleteError;
+            }
+
+            const cleanupWarnings: string[] = [];
+            const paths = Array.from(attachmentPaths);
+            for (let index = 0; index < paths.length; index += 100) {
+                const { error } = await supabase.storage.from('helpdesk-attachments').remove(paths.slice(index, index + 100));
+                if (error) cleanupWarnings.push(describeError(error));
+            }
+            if (auditIds.length) {
+                const { error: completionError } = await supabase.from('support_ticket_deletion_audit').update({
+                    outcome: 'deleted',
+                    error_message: cleanupWarnings.length ? cleanupWarnings.join(' | ').slice(0, 1000) : null,
+                    completed_at: new Date().toISOString(),
+                }).in('id', auditIds);
+                if (completionError) console.error('Ticket deletion audit could not be completed', describeError(completionError));
+            }
+            return json({
+                deleted_ids: (deletedRows ?? []).map((row) => row.id),
+                attachment_cleanup_warnings: cleanupWarnings,
+            });
         }
 
         if (action === 'add_note') {
