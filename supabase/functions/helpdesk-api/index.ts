@@ -1,6 +1,7 @@
 import {
     assertHelpdeskTicketAccess,
     createHelpdeskAdminClient,
+    hasHelpdeskPermission,
     isAuthorizationError,
     requireHelpdeskActor,
     type HelpdeskActor,
@@ -183,7 +184,7 @@ function collectAttachmentPaths(value: unknown, ticketId: string, paths: Set<str
 }
 
 function canManageHelpdesk(actor: HelpdeskActor) {
-    return actor.permissions.support_manage === true;
+    return hasHelpdeskPermission(actor.permissions, 'support_manage');
 }
 
 function sanitizeFileName(value: unknown) {
