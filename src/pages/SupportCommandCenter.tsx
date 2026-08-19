@@ -4,6 +4,7 @@ import {
     BatteryLow,
     Bell,
     Bot,
+    Building2,
     CheckCircle2,
     ChevronDown,
     ChevronLeft,
@@ -69,6 +70,13 @@ import {
     type HelpdeskTeamOption,
     type HelpdeskTicketUnreadState,
 } from '../lib/helpdeskService';
+import {
+    getHelpdeskCompanyName,
+    getHelpdeskLastActivityAt,
+    sortHelpdeskTickets,
+    UNKNOWN_HELPDESK_COMPANY,
+    type HelpdeskTicketSortKey,
+} from '../lib/helpdeskTicketOrganization';
 
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
 const MAX_REPLY_ATTACHMENTS = 4;
@@ -170,6 +178,7 @@ interface Ticket {
     last_delivery_error?: string | null;
     merged_into_ticket_id?: string | null;
     created_at: string;
+    updated_at?: string | null;
     is_unread?: boolean;
     last_customer_message_at?: string | null;
     last_read_at?: string | null;
@@ -242,6 +251,16 @@ interface TicketMessagePreview {
 
 const statusFilters = ['Todos', 'Abierto', 'En_Proceso', 'Cerrado'];
 const sourceFilters = ['Todos', 'POS', 'ERP', 'Email', 'Preventivo'];
+const ticketSortOptions: Array<{ value: HelpdeskTicketSortKey; label: string }> = [
+    { value: 'activity_desc', label: 'Última actividad' },
+    { value: 'ticket_desc', label: 'Ticket: mayor a menor' },
+    { value: 'ticket_asc', label: 'Ticket: menor a mayor' },
+    { value: 'created_desc', label: 'Fecha: más recientes' },
+    { value: 'created_asc', label: 'Fecha: más antiguos' },
+    { value: 'company_asc', label: 'Empresa: A–Z' },
+    { value: 'company_desc', label: 'Empresa: Z–A' },
+    { value: 'priority_desc', label: 'Prioridad' },
+];
 
 const sourceStyles: Record<string, string> = {
     Email: 'bg-violet-50 text-violet-700 border-violet-200',
@@ -446,8 +465,7 @@ function getContactLabel(ticket: Ticket) {
 }
 
 function getTicketOwner(ticket: Ticket) {
-    if (ticket.tenant_name !== 'Sin tenant asignado') return ticket.tenant_name;
-    return ticket.contact?.company_name || getContactLabel(ticket);
+    return getHelpdeskCompanyName(ticket);
 }
 
 function getTicketNumberLabel(ticket: Ticket) {
@@ -717,11 +735,12 @@ const SupportCommandCenter: React.FC = () => {
     const [filterSource, setFilterSource] = useState('Todos');
     const [filterTeam, setFilterTeam] = useState('Todos');
     const [filterAssignee, setFilterAssignee] = useState('Todos');
-    const [filterTenant, setFilterTenant] = useState('Todos');
+    const [filterCompany, setFilterCompany] = useState('Todos');
     const [filterContact, setFilterContact] = useState('Todos');
     const [filterDateFrom, setFilterDateFrom] = useState('');
     const [filterDateTo, setFilterDateTo] = useState('');
     const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+    const [ticketSort, setTicketSort] = useState<HelpdeskTicketSortKey>('activity_desc');
     const [showContextPanel, setShowContextPanel] = useState(true);
     const [isFocusMode, setIsFocusMode] = useState(false);
     const [actorDepartmentAccess, setActorDepartmentAccess] = useState<{ all: boolean; ids: string[] }>({ all: false, ids: [] });
@@ -1107,7 +1126,11 @@ const SupportCommandCenter: React.FC = () => {
         };
     }, [tickets]);
 
-    const tenantOptions = useMemo(() => Array.from(new Set(tickets.map((ticket) => ticket.tenant_name).filter(Boolean))).sort(), [tickets]);
+    const companyOptions = useMemo(() => Array.from(new Set(
+        tickets
+            .map(getHelpdeskCompanyName)
+            .filter((company) => company !== UNKNOWN_HELPDESK_COMPANY),
+    )).sort((left, right) => left.localeCompare(right, 'es', { sensitivity: 'base', numeric: true })), [tickets]);
     const contactOptions = useMemo(() => {
         const options = new Map<string, string>();
         tickets.forEach((ticket) => {
@@ -1181,7 +1204,7 @@ const SupportCommandCenter: React.FC = () => {
             const sourceMatches = filterSource === 'Todos' || ticket.source === filterSource;
             const teamMatches = filterTeam === 'Todos' || (filterTeam === 'Sin_departamento' ? !ticket.team_id : ticket.team_id === filterTeam);
             const assigneeMatches = filterAssignee === 'Todos' || (filterAssignee === 'Sin_asignar' ? !ticket.assignee_id : ticket.assignee_id === filterAssignee);
-            const tenantMatches = filterTenant === 'Todos' || ticket.tenant_name === filterTenant;
+            const companyMatches = filterCompany === 'Todos' || getHelpdeskCompanyName(ticket) === filterCompany;
             const contactValue = ticket.contact?.id || ticket.contact?.email || ticket.external_sender_email;
             const contactMatches = filterContact === 'Todos' || contactValue === filterContact;
             const createdAt = new Date(ticket.created_at).getTime();
@@ -1189,20 +1212,26 @@ const SupportCommandCenter: React.FC = () => {
             const toMatches = !filterDateTo || createdAt <= new Date(`${filterDateTo}T23:59:59.999`).getTime();
             const criticalMatches = quickFilter !== 'critical' || ticket.priority === 'Critica';
             const unassignedMatches = quickFilter !== 'unassigned' || ticket.assignment_status === 'needs_assignment';
-            return mailboxMatches && statusMatches && sourceMatches && teamMatches && assigneeMatches && tenantMatches
+            return mailboxMatches && statusMatches && sourceMatches && teamMatches && assigneeMatches && companyMatches
                 && contactMatches && fromMatches && toMatches && criticalMatches && unassignedMatches;
         });
-    }, [filterAssignee, filterContact, filterDateFrom, filterDateTo, filterSource, filterStatus, filterTeam, filterTenant, mailboxFilter, quickFilter, tickets]);
+    }, [filterAssignee, filterCompany, filterContact, filterDateFrom, filterDateTo, filterSource, filterStatus, filterTeam, mailboxFilter, quickFilter, tickets]);
+
+    const organizedTickets = useMemo(() => sortHelpdeskTickets(
+        filteredTickets,
+        ticketSort,
+        (ticketId) => lastMessageByTicketId[ticketId]?.created_at,
+    ), [filteredTickets, lastMessageByTicketId, ticketSort]);
 
     const selectedTicketIndex = selectedTicket
-        ? filteredTickets.findIndex((ticket) => ticket.id === selectedTicket.id)
+        ? organizedTickets.findIndex((ticket) => ticket.id === selectedTicket.id)
         : -1;
 
     const navigateTicket = (direction: -1 | 1) => {
-        if (selectedTicketIndex < 0 || !filteredTickets.length) return;
+        if (selectedTicketIndex < 0 || !organizedTickets.length) return;
         const nextIndex = selectedTicketIndex + direction;
-        if (nextIndex < 0 || nextIndex >= filteredTickets.length) return;
-        setSelectedTicket(filteredTickets[nextIndex]);
+        if (nextIndex < 0 || nextIndex >= organizedTickets.length) return;
+        setSelectedTicket(organizedTickets[nextIndex]);
     };
 
     const clearPendingReplyAttachments = () => {
@@ -1670,7 +1699,7 @@ const SupportCommandCenter: React.FC = () => {
                             <input
                                 value={searchInput}
                                 onChange={(event) => setSearchInput(event.target.value)}
-                                placeholder="Buscar ticket, cliente o mensaje"
+                                placeholder="Buscar ticket, empresa, contacto o mensaje"
                                 className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-9 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
                             />
                             <button type="button" onClick={refreshTickets} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Actualizar tickets">
@@ -1754,7 +1783,7 @@ const SupportCommandCenter: React.FC = () => {
                             </button>
                         </div>
 
-                        <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                             <div>
                                 <label className="mb-1.5 block text-[11px] font-semibold text-slate-600" htmlFor="estado-ticket">
                                     Estado
@@ -1796,6 +1825,36 @@ const SupportCommandCenter: React.FC = () => {
                                     ))}
                                 </select>
                             </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-[11px] font-semibold text-slate-600" htmlFor="empresa-ticket">
+                                    Empresa
+                                </label>
+                                <select
+                                    id="empresa-ticket"
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                    value={filterCompany}
+                                    onChange={(event) => setFilterCompany(event.target.value)}
+                                >
+                                    <option value="Todos">Todas</option>
+                                    <option value={UNKNOWN_HELPDESK_COMPANY}>Sin empresa identificada</option>
+                                    {companyOptions.map((company) => <option key={company} value={company}>{company}</option>)}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="mb-1.5 block text-[11px] font-semibold text-slate-600" htmlFor="orden-ticket">
+                                    Ordenar por
+                                </label>
+                                <select
+                                    id="orden-ticket"
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                    value={ticketSort}
+                                    onChange={(event) => setTicketSort(event.target.value as HelpdeskTicketSortKey)}
+                                >
+                                    {ticketSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                </select>
+                            </div>
                         </div>
 
                         {showAdvancedFilters ? (
@@ -1814,10 +1873,6 @@ const SupportCommandCenter: React.FC = () => {
                                     <option value="Todos">Todos</option>
                                     {contactOptions.map((contact) => <option key={contact.value} value={contact.value}>{contact.label}</option>)}
                                 </FilterSelect>
-                                <FilterSelect label="Establecimiento" value={filterTenant} onChange={setFilterTenant}>
-                                    <option value="Todos">Todos</option>
-                                    {tenantOptions.map((tenant) => <option key={tenant} value={tenant}>{tenant}</option>)}
-                                </FilterSelect>
                                 <label className="block">
                                     <span className="mb-1 block text-[11px] font-semibold text-slate-600">Desde</span>
                                     <input type="date" value={filterDateFrom} onChange={(event) => setFilterDateFrom(event.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs text-slate-700" />
@@ -1832,7 +1887,7 @@ const SupportCommandCenter: React.FC = () => {
                                         setFilterTeam('Todos');
                                         setFilterAssignee('Todos');
                                         setFilterContact('Todos');
-                                        setFilterTenant('Todos');
+                                        setFilterCompany('Todos');
                                         setFilterDateFrom('');
                                         setFilterDateTo('');
                                     }}
@@ -1894,7 +1949,7 @@ const SupportCommandCenter: React.FC = () => {
                     ) : null}
                     {filteredTickets.length > 0 ? (
                         <div className="mb-1 hidden min-w-[980px] grid-cols-[minmax(360px,2fr)_minmax(180px,1fr)_110px_130px_150px] gap-4 rounded-t-xl border border-slate-200 bg-slate-100 px-12 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 md:grid">
-                            <span>Ticket / conversación</span>
+                            <span>Empresa / ticket / conversación</span>
                             <span>Asignación</span>
                             <span>Prioridad</span>
                             <span>Estado / canal</span>
@@ -1902,7 +1957,7 @@ const SupportCommandCenter: React.FC = () => {
                         </div>
                     ) : null}
                     <div className="min-w-0 space-y-1 md:min-w-[980px]">
-                    {filteredTickets.map((ticket) => {
+                    {organizedTickets.map((ticket) => {
                         const preview = lastMessageByTicketId[ticket.id];
                         const previewText = preview?.message
                             ? truncatePreview(preview.message)
@@ -1929,9 +1984,13 @@ const SupportCommandCenter: React.FC = () => {
                                             {ticket.is_unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-indigo-600 ring-4 ring-indigo-100" aria-label="Ticket nuevo" /> : null}
                                             <span className="shrink-0 text-xs font-black text-slate-500">{getTicketNumberLabel(ticket)}</span>
                                             {ticket.is_unread ? <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-indigo-700">Nuevo</span> : null}
+                                            <span className="inline-flex min-w-0 max-w-[45%] shrink items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-black text-indigo-800" title={`Empresa: ${getHelpdeskCompanyName(ticket)}`}>
+                                                <Building2 size={11} className="shrink-0" />
+                                                <span className="truncate">{getHelpdeskCompanyName(ticket)}</span>
+                                            </span>
                                             <h3 className={`truncate text-sm ${ticket.is_unread ? 'font-black text-slate-950' : 'font-bold text-slate-800'}`}>{ticket.subject}</h3>
                                         </div>
-                                        <p className="mt-1 truncate text-xs font-semibold text-slate-600">{getTicketOwner(ticket)} · {getContactLabel(ticket)}</p>
+                                        <p className="mt-1 truncate text-xs font-semibold text-slate-600">Contacto: {getContactLabel(ticket)}</p>
                                         <p className={`mt-1 truncate text-xs ${ticket.is_unread ? 'font-medium text-slate-700' : 'text-slate-500'}`}>
                                             {preview ? <><span className="font-semibold">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}{previewText}</> : previewText}
                                         </p>
@@ -1945,7 +2004,7 @@ const SupportCommandCenter: React.FC = () => {
                                         <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold ${closed ? 'border-slate-300 bg-slate-100 text-slate-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{closed ? 'Cerrado' : formatStatusLabel(ticket.status)}</span>
                                         <span className={`ml-0 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold md:ml-1 ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>{ticket.source === 'Email' ? <Mail size={10} /> : <MonitorSmartphone size={10} />}{ticket.source}</span>
                                     </div>
-                                    <div className="flex items-center gap-1 text-xs font-medium text-slate-500 md:justify-end"><Clock3 size={12} />{formatTime(preview?.created_at || ticket.created_at)}</div>
+                                    <div className="flex items-center gap-1 text-xs font-medium text-slate-500 md:justify-end"><Clock3 size={12} />{formatTime(getHelpdeskLastActivityAt(ticket, preview?.created_at))}</div>
                                 </button>
                             </div>
                         );
