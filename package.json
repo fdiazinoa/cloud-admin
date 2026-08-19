@@ -20,6 +20,7 @@
     "cleanup:tenant-pos-registry": "node scripts/cleanup-tenant-pos-registry.mjs",
     "test:terminal-fiscal-config": "node scripts/test-terminal-fiscal-config.mjs",
     "test:helpdesk-ticketing": "node scripts/test-helpdesk-ticketing-parity.mjs",
+    "test:helpdesk-ticket-organization": "node --experimental-strip-types scripts/test-helpdesk-ticket-organization.mjs",
     "test:helpdesk-collapsible-conversation": "node scripts/test-helpdesk-collapsible-conversation.mjs",
     "test:helpdesk-ai-autopilot": "node --experimental-strip-types scripts/test-helpdesk-ai-autopilot.mjs",
     "test:helpdesk-clic-suite-manual": "node scripts/test-helpdesk-clic-suite-manual.mjs",
