@@ -15,6 +15,8 @@
     "test:terminal-canonical-identity": "node --experimental-strip-types scripts/test-terminal-canonical-identity.mjs",
     "test:terminal-activation-license": "node scripts/test-terminal-activation-license.mjs",
     "test:tenant-delete-sync-versions": "node scripts/test-tenant-delete-sync-versions.mjs",
+    "test:tenant-delete-timeout": "node scripts/test-tenant-delete-timeout.mjs",
+    "test:item-tombstone-tenant-delete": "node scripts/test-item-tombstone-tenant-delete.mjs",
     "test:erp-tenant-delete-version-trigger": "node scripts/test-erp-tenant-delete-version-trigger.mjs",
     "test:erp-orphaned-delete-version-trigger": "node scripts/test-erp-orphaned-delete-version-trigger.mjs",
     "cleanup:tenant-pos-registry": "node scripts/cleanup-tenant-pos-registry.mjs",
