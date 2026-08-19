@@ -96,7 +96,7 @@ for (const departmentUi of ['Departamentos visibles', 'Acceso avanzado a todos',
     assert.ok(accessPage.includes(departmentUi), `Access management is missing ${departmentUi}`);
 }
 assert.ok(accessService.includes('syncUserDepartments'), 'Access management must persist department memberships');
-for (const commandCenterFeature of ['Más filtros', 'Buscar dentro de esta conversación', 'Sin persona asignada', 'Ticket / conversación', 'aria-modal="true"', 'isComposerOpen', 'departmentUnreadCounts']) {
+for (const commandCenterFeature of ['Más filtros', 'Buscar dentro de esta conversación', 'Sin persona asignada', 'Empresa / ticket / conversación', 'Ordenar por', 'Empresa: A–Z', 'Buscar ticket, empresa, contacto o mensaje', 'aria-modal="true"', 'isComposerOpen', 'departmentUnreadCounts']) {
     assert.ok(component.includes(commandCenterFeature), `Command Center is missing ${commandCenterFeature}`);
 }
 assert.ok(!component.includes('Soporte POS, ERP y email externo'), 'HelpDesk must not reserve vertical space for the duplicated subtitle');
