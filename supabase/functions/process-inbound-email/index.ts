@@ -7,6 +7,10 @@ import {
     type HelpdeskResponsePolicy as ResponsePolicy,
 } from '../_shared/helpdesk-autonomy.ts';
 import {
+    appendHelpdeskEmailSignatureText,
+    buildHelpdeskEmailHtmlFromText,
+} from '../_shared/helpdesk-email-branding.ts';
+import {
     extractThreadReferenceMessageIds,
     extractTicketNumberFromSubject,
     selectFallbackThreadCandidate,
@@ -1198,7 +1202,8 @@ async function sendAutomatedEmail(params: {
         to: [params.recipientEmail],
         reply_to: [params.config.replyToAddress],
         subject: emailSubject,
-        text: params.message,
+        text: appendHelpdeskEmailSignatureText(params.message),
+        html: buildHelpdeskEmailHtmlFromText(params.message),
     };
     if (params.inboundProviderMessageId) {
         resendBody.headers = {
