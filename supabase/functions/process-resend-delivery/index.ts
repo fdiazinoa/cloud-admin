@@ -10,6 +10,7 @@ interface ResendDeliveryEvent {
     created_at?: string;
     data?: {
         email_id?: string;
+        message_id?: string;
         bounce?: { message?: string; type?: string; subType?: string };
         failed?: { reason?: string };
     };
@@ -101,6 +102,7 @@ Deno.serve(async (request) => {
         const event = JSON.parse(rawPayload) as ResendDeliveryEvent;
         const deliveryStatus = event.type ? supportedEvents.get(event.type) : undefined;
         const providerMessageId = event.data?.email_id?.trim();
+        const emailMessageId = event.data?.message_id?.trim();
         if (!deliveryStatus || !providerMessageId) return json({ ok: true, ignored: true });
 
         const supabase = createHelpdeskAdminClient();
@@ -145,6 +147,7 @@ Deno.serve(async (request) => {
         const terminalFailure = deliveryStatus === 'failed' || deliveryStatus === 'bounced';
         const { error: updateError } = await supabase.from('ticket_messages').update({
             delivery_status: deliveryStatus,
+            ...(emailMessageId ? { email_message_id: emailMessageId } : {}),
             delivered_at: deliveryStatus === 'delivered' ? eventTime : undefined,
             failed_at: terminalFailure ? eventTime : undefined,
             delivery_error: deliveryError,
