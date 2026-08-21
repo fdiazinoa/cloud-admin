@@ -51,6 +51,67 @@ export interface HelpdeskTicketUnreadState {
     is_unread: boolean;
 }
 
+export type HelpdeskAssignmentMode = 'off' | 'suggest' | 'auto';
+
+export interface HelpdeskAgentMetric {
+    agent_id: string;
+    full_name: string;
+    email: string;
+    is_available: boolean;
+    auto_assign_enabled: boolean;
+    max_active_tickets: number;
+    skills: string[];
+    active_tickets: number;
+    critical_tickets: number;
+    resolved_tickets: number;
+    overdue_tickets: number;
+    reopened_tickets: number;
+    average_first_response_minutes: number | null;
+    average_resolution_minutes: number | null;
+    average_rating: number | null;
+    load_ratio: number;
+}
+
+export interface HelpdeskAssignmentDashboardTicket {
+    id: string;
+    ticket_number?: number | null;
+    subject: string;
+    priority: string;
+    status: string;
+    assignee_id?: string | null;
+    assigned_at?: string | null;
+    resolved_at?: string | null;
+    first_response_due_at?: string | null;
+    resolution_due_at?: string | null;
+    support_contacts?: { company_name?: string | null } | Array<{ company_name?: string | null }> | null;
+    tenants?: { name?: string | null } | Array<{ name?: string | null }> | null;
+}
+
+export interface HelpdeskAssignmentDashboard {
+    generated_at: string;
+    date_from: string;
+    date_to: string;
+    settings: {
+        assignment_copilot_mode: HelpdeskAssignmentMode;
+        assignment_copilot_min_confidence: number;
+    };
+    metrics: HelpdeskAgentMetric[];
+    assigned_tickets: HelpdeskAssignmentDashboardTicket[];
+    resolved_tickets: HelpdeskAssignmentDashboardTicket[];
+    overdue_tickets: HelpdeskAssignmentDashboardTicket[];
+    unassigned_count: number;
+}
+
+export interface HelpdeskAssignmentDecision {
+    ticket_id: string;
+    recommended: boolean;
+    assigned: boolean;
+    agent_id?: string;
+    agent_name?: string;
+    confidence?: number;
+    reason: string;
+}
+
 interface HelpdeskBootstrapResponse {
     tickets: unknown[];
     agents: HelpdeskAgentOption[];
@@ -62,6 +123,7 @@ interface HelpdeskBootstrapResponse {
         all_departments: boolean;
         department_ids: string[];
         can_delete_tickets: boolean;
+        can_manage_assignments: boolean;
     };
 }
 
@@ -106,6 +168,7 @@ export async function fetchHelpdeskBootstrap(query = '') {
         actor_access: {
             ...actorAccess,
             can_delete_tickets: actorAccess.can_delete_tickets === true,
+            can_manage_assignments: actorAccess.can_manage_assignments === true,
         },
     } satisfies HelpdeskBootstrapResponse;
 }
@@ -299,5 +362,44 @@ export async function resolveHelpdeskTicket(ticketId: string, notifyEmail = true
     return invokeFunction<{ ok: true; status: string; resolution_status: string }>('resolve-support-ticket', {
         ticket_id: ticketId,
         notify_email: notifyEmail,
+    });
+}
+
+export async function fetchHelpdeskAssignmentDashboard(dateFrom?: string, dateTo?: string) {
+    return invokeHelpdesk<HelpdeskAssignmentDashboard>('assignment_dashboard', {
+        date_from: dateFrom,
+        date_to: dateTo,
+    });
+}
+
+export async function assignHelpdeskTicketWithCopilot(ticketId: string) {
+    return invokeHelpdesk<{ decision: HelpdeskAssignmentDecision }>('copilot_assign', {
+        ticket_id: ticketId,
+        apply: true,
+    });
+}
+
+export async function assignPendingHelpdeskTicketsWithCopilot() {
+    return invokeHelpdesk<{ decisions: HelpdeskAssignmentDecision[] }>('copilot_assign_pending');
+}
+
+export async function updateHelpdeskAssignmentSettings(mode: HelpdeskAssignmentMode, confidence: number) {
+    return invokeHelpdesk<{ settings: HelpdeskAssignmentDashboard['settings'] }>('update_assignment_settings', {
+        fields: {
+            assignment_copilot_mode: mode,
+            assignment_copilot_min_confidence: confidence,
+        },
+    });
+}
+
+export async function updateHelpdeskAgentRoutingProfile(agentId: string, fields: {
+    is_available: boolean;
+    auto_assign_enabled: boolean;
+    max_active_tickets: number;
+    skills: string[];
+}) {
+    return invokeHelpdesk<{ profile: Record<string, unknown> }>('update_agent_routing_profile', {
+        agent_id: agentId,
+        fields,
     });
 }

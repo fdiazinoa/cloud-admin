@@ -16,6 +16,7 @@ type ReplyMode = 'reply' | 'reply_all' | 'forward';
 interface HelpdeskPayload {
     action?: string;
     ticket_id?: string;
+    agent_id?: string;
     ticket_ids?: string[];
     target_ticket_id?: string;
     query?: string;
@@ -34,6 +35,9 @@ interface HelpdeskPayload {
     priority?: string;
     category?: string;
     reason?: string;
+    date_from?: string;
+    date_to?: string;
+    apply?: boolean;
 }
 
 const corsHeaders = {
@@ -78,6 +82,17 @@ const ticketSelect = `
     tags,
     assignee_id,
     team_id,
+    assigned_at,
+    assigned_by,
+    assignment_source,
+    assignment_confidence,
+    assignment_reason,
+    sla_level,
+    first_response_due_at,
+    resolution_due_at,
+    resolved_at,
+    resolved_by,
+    reopened_at,
     merged_into_ticket_id,
     merged_at,
     first_response_at,
@@ -325,7 +340,155 @@ async function fetchBootstrap(
             all_departments: actor.canViewAllDepartments,
             department_ids: actor.departmentIds,
             can_delete_tickets: canManageHelpdesk(actor),
+            can_manage_assignments: canManageHelpdesk(actor),
         },
+    };
+}
+
+function parseDashboardDate(value: unknown, fallback: Date) {
+    const cleaned = cleanString(value, 40);
+    const parsed = cleaned ? new Date(cleaned) : fallback;
+    return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+}
+
+async function fetchAssignmentDashboard(
+    supabase: ReturnType<typeof createHelpdeskAdminClient>,
+    actor: HelpdeskActor,
+    payload: HelpdeskPayload,
+) {
+    const now = new Date();
+    const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const dateFrom = parseDashboardDate(payload.date_from, defaultFrom);
+    const dateTo = parseDashboardDate(payload.date_to, now);
+    dateTo.setHours(23, 59, 59, 999);
+
+    let ticketsQuery = supabase
+        .from('support_tickets')
+        .select(ticketSelect)
+        .is('merged_into_ticket_id', null)
+        .neq('assignment_status', 'spam')
+        .order('updated_at', { ascending: false })
+        .limit(1000);
+    if (!actor.canViewAllDepartments) {
+        ticketsQuery = ticketsQuery.in('team_id', actor.departmentIds.length
+            ? actor.departmentIds
+            : ['00000000-0000-0000-0000-000000000000']);
+    }
+
+    const [ticketsResult, agentsResult, settingsResult] = await Promise.all([
+        ticketsQuery,
+        supabase
+            .from('cloud_admin_users')
+            .select(`
+                id,
+                full_name,
+                email,
+                status,
+                helpdesk_all_departments,
+                cloud_admin_profiles!inner(is_active, permissions),
+                support_team_members(team_id),
+                support_agent_routing_profiles(is_available, auto_assign_enabled, max_active_tickets, skills, last_auto_assigned_at)
+            `)
+            .eq('status', 'active')
+            .order('full_name'),
+        supabase
+            .from('support_integration_settings')
+            .select('assignment_copilot_mode, assignment_copilot_min_confidence')
+            .eq('id', 'helpdesk')
+            .maybeSingle(),
+    ]);
+    if (ticketsResult.error) throw ticketsResult.error;
+    if (agentsResult.error) throw agentsResult.error;
+    if (settingsResult.error) throw settingsResult.error;
+
+    const tickets = (ticketsResult.data ?? []) as Array<Record<string, unknown>>;
+    const agents = ((agentsResult.data ?? []) as Array<Record<string, unknown>>).filter((agent) => {
+        const profileValue = agent.cloud_admin_profiles;
+        const profile = (Array.isArray(profileValue) ? profileValue[0] : profileValue) as Record<string, unknown> | undefined;
+        const permissions = profile?.permissions as Record<string, unknown> | undefined;
+        return profile?.is_active === true && permissions?.support === true;
+    });
+    const fromTime = dateFrom.getTime();
+    const toTime = dateTo.getTime();
+    const nowTime = now.getTime();
+    const isActive = (ticket: Record<string, unknown>) => !['Resuelto', 'Cerrado'].includes(String(ticket.status ?? ''));
+    const timestamp = (value: unknown) => {
+        const parsed = typeof value === 'string' ? Date.parse(value) : Number.NaN;
+        return Number.isNaN(parsed) ? null : parsed;
+    };
+    const isOverdue = (ticket: Record<string, unknown>) => {
+        if (!isActive(ticket)) return false;
+        const firstResponseDue = timestamp(ticket.first_response_due_at);
+        const resolutionDue = timestamp(ticket.resolution_due_at);
+        return (!ticket.first_response_at && firstResponseDue !== null && firstResponseDue < nowTime)
+            || (!ticket.resolved_at && resolutionDue !== null && resolutionDue < nowTime);
+    };
+
+    const assignedTickets = tickets.filter((ticket) => ticket.assignee_id && isActive(ticket));
+    const overdueTickets = tickets.filter(isOverdue);
+    const resolvedTickets = tickets.filter((ticket) => {
+        const resolvedAt = timestamp(ticket.resolved_at);
+        return resolvedAt !== null && resolvedAt >= fromTime && resolvedAt <= toTime;
+    });
+
+    const metrics = agents.map((agent) => {
+        const profileValue = agent.support_agent_routing_profiles;
+        const profile = (Array.isArray(profileValue) ? profileValue[0] : profileValue) as Record<string, unknown> | undefined;
+        const agentId = String(agent.id);
+        const activeForAgent = assignedTickets.filter((ticket) => ticket.assignee_id === agentId);
+        const resolvedForAgent = resolvedTickets.filter((ticket) => (ticket.resolved_by ?? ticket.assignee_id) === agentId);
+        const overdueForAgent = overdueTickets.filter((ticket) => ticket.assignee_id === agentId);
+        const responseDurations = resolvedForAgent.flatMap((ticket) => {
+            const createdAt = timestamp(ticket.created_at);
+            const firstResponseAt = timestamp(ticket.first_response_at);
+            return createdAt !== null && firstResponseAt !== null ? [(firstResponseAt - createdAt) / 60000] : [];
+        });
+        const resolutionDurations = resolvedForAgent.flatMap((ticket) => {
+            const createdAt = timestamp(ticket.created_at);
+            const resolvedAt = timestamp(ticket.resolved_at);
+            return createdAt !== null && resolvedAt !== null ? [(resolvedAt - createdAt) / 60000] : [];
+        });
+        const ratings = resolvedForAgent
+            .map((ticket) => Number(ticket.customer_rating))
+            .filter((rating) => Number.isFinite(rating) && rating > 0);
+        const average = (values: number[]) => values.length
+            ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10
+            : null;
+        const capacity = Number(profile?.max_active_tickets ?? 20);
+
+        return {
+            agent_id: agentId,
+            full_name: agent.full_name,
+            email: agent.email,
+            is_available: profile?.is_available !== false,
+            auto_assign_enabled: profile?.auto_assign_enabled !== false,
+            max_active_tickets: capacity,
+            skills: Array.isArray(profile?.skills) ? profile.skills : [],
+            active_tickets: activeForAgent.length,
+            critical_tickets: activeForAgent.filter((ticket) => ticket.priority === 'Critica').length,
+            resolved_tickets: resolvedForAgent.length,
+            overdue_tickets: overdueForAgent.length,
+            reopened_tickets: resolvedForAgent.filter((ticket) => ticket.resolution_status === 'reopened' || ticket.reopened_at).length,
+            average_first_response_minutes: average(responseDurations),
+            average_resolution_minutes: average(resolutionDurations),
+            average_rating: average(ratings),
+            load_ratio: capacity > 0 ? Math.round((activeForAgent.length / capacity) * 1000) / 10 : 100,
+        };
+    });
+
+    return {
+        generated_at: now.toISOString(),
+        date_from: dateFrom.toISOString(),
+        date_to: dateTo.toISOString(),
+        settings: settingsResult.data ?? {
+            assignment_copilot_mode: 'suggest',
+            assignment_copilot_min_confidence: 0.68,
+        },
+        metrics,
+        assigned_tickets: assignedTickets.slice(0, 300),
+        resolved_tickets: resolvedTickets.slice(0, 300),
+        overdue_tickets: overdueTickets.slice(0, 300),
+        unassigned_count: tickets.filter((ticket) => !ticket.assignee_id && isActive(ticket)).length,
     };
 }
 
@@ -351,6 +514,7 @@ Deno.serve(async (request) => {
             'load_workspace',
             'heartbeat',
             'create_upload_urls',
+            'copilot_assign',
         ]);
         if (ticketScopedActions.has(action) && payload.ticket_id) {
             await assertHelpdeskTicketAccess(supabase, actor, [cleanString(payload.ticket_id, 64)]);
@@ -372,6 +536,102 @@ Deno.serve(async (request) => {
 
         if (action === 'bootstrap') {
             return json(await fetchBootstrap(supabase, payload.query ?? '', actor));
+        }
+
+        if (action === 'assignment_dashboard') {
+            return json(await fetchAssignmentDashboard(supabase, actor, payload));
+        }
+
+        if (action === 'update_assignment_settings') {
+            if (!canManageHelpdesk(actor)) throw new Error('Forbidden helpdesk request');
+            const mode = cleanString(payload.fields?.assignment_copilot_mode, 20);
+            const confidence = Number(payload.fields?.assignment_copilot_min_confidence);
+            if (!['off', 'suggest', 'auto'].includes(mode) || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+                return json({ error: 'Valid assignment mode and confidence are required' }, 400);
+            }
+            const { data, error } = await supabase
+                .from('support_integration_settings')
+                .update({
+                    assignment_copilot_mode: mode,
+                    assignment_copilot_min_confidence: Math.round(confidence * 10000) / 10000,
+                })
+                .eq('id', 'helpdesk')
+                .select('assignment_copilot_mode, assignment_copilot_min_confidence')
+                .single();
+            if (error) throw error;
+            return json({ settings: data });
+        }
+
+        if (action === 'update_agent_routing_profile') {
+            if (!canManageHelpdesk(actor)) throw new Error('Forbidden helpdesk request');
+            const agentId = cleanString(payload.agent_id, 64);
+            if (!/^[0-9a-f-]{36}$/i.test(agentId)) return json({ error: 'A valid agent_id is required' }, 400);
+            const fields = payload.fields ?? {};
+            const maxActiveTickets = Math.min(500, Math.max(1, Math.round(Number(fields.max_active_tickets) || 20)));
+            const skills = cleanTags(fields.skills);
+            const { data, error } = await supabase
+                .from('support_agent_routing_profiles')
+                .upsert({
+                    admin_user_id: agentId,
+                    is_available: fields.is_available !== false,
+                    auto_assign_enabled: fields.auto_assign_enabled !== false,
+                    max_active_tickets: maxActiveTickets,
+                    skills,
+                    updated_at: new Date().toISOString(),
+                }, { onConflict: 'admin_user_id' })
+                .select('*')
+                .single();
+            if (error) throw error;
+            return json({ profile: data });
+        }
+
+        if (action === 'copilot_assign') {
+            const ticketId = cleanString(payload.ticket_id, 64);
+            const { data, error } = await supabase.rpc('helpdesk_copilot_route_ticket', {
+                p_ticket_id: ticketId,
+                p_apply: payload.apply !== false,
+                p_actor_id: actor.id,
+                p_source: 'copilot_manual',
+            });
+            if (error) throw error;
+            return json({ decision: data });
+        }
+
+        if (action === 'copilot_assign_pending') {
+            if (!canManageHelpdesk(actor)) throw new Error('Forbidden helpdesk request');
+            let pendingQuery = supabase
+                .from('support_tickets')
+                .select('id')
+                .is('assignee_id', null)
+                .is('merged_into_ticket_id', null)
+                .neq('assignment_status', 'spam')
+                .not('status', 'in', '("Resuelto","Cerrado")')
+                .order('created_at', { ascending: true })
+                .limit(50);
+            if (!actor.canViewAllDepartments) {
+                pendingQuery = pendingQuery.in('team_id', actor.departmentIds.length
+                    ? actor.departmentIds
+                    : ['00000000-0000-0000-0000-000000000000']);
+            }
+            const { data: pendingTickets, error: pendingError } = await pendingQuery;
+            if (pendingError) throw pendingError;
+
+            const decisions: unknown[] = [];
+            const ids = (pendingTickets ?? []).map((ticket) => String(ticket.id));
+            for (let index = 0; index < ids.length; index += 5) {
+                const batch = await Promise.all(ids.slice(index, index + 5).map(async (ticketId) => {
+                    const { data, error } = await supabase.rpc('helpdesk_copilot_route_ticket', {
+                        p_ticket_id: ticketId,
+                        p_apply: true,
+                        p_actor_id: actor.id,
+                        p_source: 'copilot_manual',
+                    });
+                    if (error) throw error;
+                    return data;
+                }));
+                decisions.push(...batch);
+            }
+            return json({ decisions });
         }
 
         if (action === 'ticket_snapshot') {
@@ -420,6 +680,15 @@ Deno.serve(async (request) => {
             const fields = filterMutableFields(payload.fields);
             if (!ticketId || !Object.keys(fields).length) return json({ error: 'ticket_id and fields are required' }, 400);
 
+            if (Object.prototype.hasOwnProperty.call(fields, 'assignee_id')) {
+                fields.assigned_by = actor.id;
+                fields.assignment_source = 'manual';
+                fields.assignment_confidence = null;
+                fields.assignment_reason = fields.assignee_id
+                    ? `Asignación manual realizada por ${actor.fullName}.`
+                    : `Ticket liberado manualmente por ${actor.fullName}.`;
+            }
+
             const { data, error } = await supabase
                 .from('support_tickets')
                 .update(fields)
@@ -435,6 +704,12 @@ Deno.serve(async (request) => {
             const ticketIds = cleanIds(payload.ticket_ids);
             const fields = filterMutableFields(payload.fields);
             if (!ticketIds.length || !Object.keys(fields).length) return json({ error: 'ticket_ids and fields are required' }, 400);
+            if (Object.prototype.hasOwnProperty.call(fields, 'assignee_id')) {
+                fields.assigned_by = actor.id;
+                fields.assignment_source = 'manual';
+                fields.assignment_confidence = null;
+                fields.assignment_reason = `Asignación masiva realizada por ${actor.fullName}.`;
+            }
             const { data, error } = await supabase
                 .from('support_tickets')
                 .update(fields)
