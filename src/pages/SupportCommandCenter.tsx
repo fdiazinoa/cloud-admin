@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle,
+    BarChart3,
     BatteryLow,
     Bell,
     Bot,
@@ -43,11 +44,13 @@ import { supabase } from '../lib/supabase';
 import {
     addPrivateHelpdeskNote,
     addPublicHelpdeskReply,
+    assignPendingHelpdeskTicketsWithCopilot,
     bulkUpdateHelpdeskTickets,
     createHelpdeskImprovement,
     createPreventiveHelpdeskTicket,
     deleteHelpdeskTickets,
     fetchHelpdeskBootstrap,
+    fetchHelpdeskAssignmentDashboard,
     fetchHelpdeskTicketSnapshot,
     fetchSupportMessages,
     generateHelpdeskDraft,
@@ -62,8 +65,12 @@ import {
     saveHelpdeskDraft,
     sendHelpdeskReply,
     updateHelpdeskTicket,
+    updateHelpdeskAssignmentSettings,
     uploadHelpdeskAttachments,
     type HelpdeskAgentOption,
+    type HelpdeskAssignmentDashboard,
+    type HelpdeskAssignmentDashboardTicket,
+    type HelpdeskAssignmentMode,
     type HelpdeskPresence,
     type HelpdeskReplyMode,
     type HelpdeskReplyTemplate,
@@ -481,6 +488,18 @@ function formatCustomerDate(value?: string | null) {
     return new Intl.DateTimeFormat('es-DO', { dateStyle: 'medium' }).format(new Date(`${value.slice(0, 10)}T12:00:00`));
 }
 
+function getDashboardTicketCompany(ticket: HelpdeskAssignmentDashboardTicket) {
+    const contact = normalizeRelation(ticket.support_contacts);
+    const tenant = normalizeRelation(ticket.tenants);
+    return contact?.company_name || tenant?.name || 'Empresa sin identificar';
+}
+
+function formatMetricMinutes(value: number | null) {
+    if (value === null) return '—';
+    if (value < 60) return `${Math.round(value)} min`;
+    return `${(value / 60).toFixed(value >= 600 ? 0 : 1)} h`;
+}
+
 function normalizeDuplicateKey(value: string) {
     return value
         .normalize('NFD')
@@ -745,6 +764,13 @@ const SupportCommandCenter: React.FC = () => {
     const [isFocusMode, setIsFocusMode] = useState(false);
     const [actorDepartmentAccess, setActorDepartmentAccess] = useState<{ all: boolean; ids: string[] }>({ all: false, ids: [] });
     const [canDeleteTickets, setCanDeleteTickets] = useState(false);
+    const [canManageAssignments, setCanManageAssignments] = useState(false);
+    const [isAssignmentDashboardOpen, setIsAssignmentDashboardOpen] = useState(false);
+    const [assignmentDashboard, setAssignmentDashboard] = useState<HelpdeskAssignmentDashboard | null>(null);
+    const [assignmentDashboardTab, setAssignmentDashboardTab] = useState<'assigned' | 'resolved' | 'overdue'>('assigned');
+    const [isLoadingAssignmentDashboard, setIsLoadingAssignmentDashboard] = useState(false);
+    const [isRunningCopilotAssignment, setIsRunningCopilotAssignment] = useState(false);
+    const [assignmentDashboardError, setAssignmentDashboardError] = useState<string | null>(null);
     const [conversationSearch, setConversationSearch] = useState('');
     const [conversationMatchIndex, setConversationMatchIndex] = useState(0);
     const [messageExpansion, setMessageExpansion] = useState<Record<string, boolean>>({});
@@ -857,6 +883,7 @@ const SupportCommandCenter: React.FC = () => {
                     ids: response.actor_access.department_ids,
                 });
                 setCanDeleteTickets(response.actor_access.can_delete_tickets);
+                setCanManageAssignments(response.actor_access.can_manage_assignments);
                 setReplyTemplates(response.templates);
                 setLastMessageByTicketId(buildLatestMessagePreviewMap(response.previews as Array<{ ticket_id?: string | null; message?: string | null; sender_type?: string | null; created_at?: string | null }>));
                 setSelectedTicket((current) => current
@@ -1535,6 +1562,59 @@ const SupportCommandCenter: React.FC = () => {
 
     const refreshTickets = () => setRefreshVersion((value) => value + 1);
 
+    const loadAssignmentDashboard = async () => {
+        setIsLoadingAssignmentDashboard(true);
+        setAssignmentDashboardError(null);
+        try {
+            setAssignmentDashboard(await fetchHelpdeskAssignmentDashboard());
+        } catch (error) {
+            setAssignmentDashboardError(error instanceof Error ? error.message : 'No se pudo cargar la operación de agentes.');
+        } finally {
+            setIsLoadingAssignmentDashboard(false);
+        }
+    };
+
+    const openAssignmentDashboard = () => {
+        setIsAssignmentDashboardOpen(true);
+        void loadAssignmentDashboard();
+    };
+
+    const runCopilotAssignment = async () => {
+        setIsRunningCopilotAssignment(true);
+        setAssignmentDashboardError(null);
+        try {
+            const result = await assignPendingHelpdeskTicketsWithCopilot();
+            const assigned = result.decisions.filter((decision) => decision.assigned).length;
+            setActionNotice(`Copilot asignó ${assigned} ticket${assigned === 1 ? '' : 's'}.`);
+            await loadAssignmentDashboard();
+            refreshTickets();
+        } catch (error) {
+            setAssignmentDashboardError(error instanceof Error ? error.message : 'Copilot no pudo asignar los tickets pendientes.');
+        } finally {
+            setIsRunningCopilotAssignment(false);
+        }
+    };
+
+    const changeAssignmentMode = async (mode: HelpdeskAssignmentMode) => {
+        if (!assignmentDashboard) return;
+        setAssignmentDashboardError(null);
+        try {
+            const result = await updateHelpdeskAssignmentSettings(
+                mode,
+                assignmentDashboard.settings.assignment_copilot_min_confidence,
+            );
+            setAssignmentDashboard((current) => current ? { ...current, settings: result.settings } : current);
+        } catch (error) {
+            setAssignmentDashboardError(error instanceof Error ? error.message : 'No se pudo guardar el modo de Copilot.');
+        }
+    };
+
+    const openDashboardTicket = (dashboardTicket: HelpdeskAssignmentDashboardTicket) => {
+        const ticket = tickets.find((item) => item.id === dashboardTicket.id);
+        if (ticket) setSelectedTicket(ticket);
+        setIsAssignmentDashboardOpen(false);
+    };
+
     const updateSelectedTicketFields = async (fields: Record<string, unknown>) => {
         if (!selectedTicket) return;
         setBulkActionError(null);
@@ -1706,6 +1786,14 @@ const SupportCommandCenter: React.FC = () => {
                                 <RefreshCw size={14} className={isRefreshingTickets ? 'animate-spin' : ''} />
                             </button>
                         </div>
+                        <button
+                            type="button"
+                            onClick={openAssignmentDashboard}
+                            className="flex w-full items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-left text-xs font-bold text-indigo-800 transition-colors hover:border-indigo-300 hover:bg-indigo-100"
+                        >
+                            <span className="inline-flex items-center gap-2"><BarChart3 size={15} />Operación de agentes</span>
+                            <span>{ticketStats.unassigned} pendientes</span>
+                        </button>
                         <div className="grid grid-cols-2 gap-2 xl:grid-cols-4" aria-label="Filtros rápidos de tickets">
                             <button
                                 type="button"
@@ -2663,6 +2751,101 @@ const SupportCommandCenter: React.FC = () => {
             </div>
             </div>
             ) : null}
+
+            {isAssignmentDashboardOpen && (
+                <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-3" role="dialog" aria-modal="true" aria-labelledby="assignment-dashboard-title">
+                    <div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                        <div className="flex items-start gap-4 border-b border-slate-200 bg-slate-50 px-5 py-4">
+                            <div className="rounded-xl bg-indigo-100 p-2.5 text-indigo-700"><BarChart3 size={22} /></div>
+                            <div className="min-w-0 flex-1">
+                                <h2 id="assignment-dashboard-title" className="text-lg font-black text-slate-900">Operación de agentes</h2>
+                                <p className="mt-0.5 text-sm text-slate-500">Carga activa, resultados por agente y tickets fuera de SLA.</p>
+                            </div>
+                            <button type="button" onClick={() => setIsAssignmentDashboardOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-white" aria-label="Cerrar"><X size={18} /></button>
+                        </div>
+
+                        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                            {isLoadingAssignmentDashboard && !assignmentDashboard ? (
+                                <div className="flex min-h-72 items-center justify-center gap-2 text-sm font-bold text-slate-500"><Loader2 size={18} className="animate-spin" />Cargando operación…</div>
+                            ) : assignmentDashboard ? (
+                                <div className="space-y-5">
+                                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                        {[
+                                            ['Sin asignar', assignmentDashboard.unassigned_count, 'text-amber-700 bg-amber-50 border-amber-200'],
+                                            ['Asignados activos', assignmentDashboard.assigned_tickets.length, 'text-indigo-700 bg-indigo-50 border-indigo-200'],
+                                            ['Resueltos · 30 días', assignmentDashboard.resolved_tickets.length, 'text-emerald-700 bg-emerald-50 border-emerald-200'],
+                                            ['Fuera de SLA', assignmentDashboard.overdue_tickets.length, 'text-red-700 bg-red-50 border-red-200'],
+                                        ].map(([label, value, color]) => (
+                                            <div key={String(label)} className={`rounded-xl border p-4 ${color}`}>
+                                                <p className="text-xs font-bold uppercase tracking-wide">{label}</p>
+                                                <p className="mt-1 text-3xl font-black">{value}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {canManageAssignments && (
+                                        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-indigo-200 bg-indigo-50/70 p-4">
+                                            <label className="block">
+                                                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wide text-indigo-700">Modo Copilot</span>
+                                                <select value={assignmentDashboard.settings.assignment_copilot_mode} onChange={(event) => void changeAssignmentMode(event.target.value as HelpdeskAssignmentMode)} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-bold text-slate-700">
+                                                    <option value="off">Desactivado</option>
+                                                    <option value="suggest">Solo sugerir</option>
+                                                    <option value="auto">Asignación automática</option>
+                                                </select>
+                                            </label>
+                                            <p className="min-w-56 flex-1 text-xs leading-5 text-indigo-800">En automático, cada ticket nuevo se asigna solo cuando la recomendación supera {Math.round(assignmentDashboard.settings.assignment_copilot_min_confidence * 100)}% de confianza.</p>
+                                            <button type="button" onClick={() => void runCopilotAssignment()} disabled={isRunningCopilotAssignment || assignmentDashboard.unassigned_count === 0} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
+                                                {isRunningCopilotAssignment ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                                                Asignar pendientes
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    <section>
+                                        <h3 className="mb-2 text-xs font-black uppercase tracking-[0.16em] text-slate-500">Rendimiento por agente</h3>
+                                        <div className="overflow-x-auto rounded-xl border border-slate-200">
+                                            <table className="w-full min-w-[760px] text-left text-xs">
+                                                <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500"><tr><th className="px-3 py-2">Agente</th><th className="px-3 py-2">Carga</th><th className="px-3 py-2">Resueltos</th><th className="px-3 py-2">Retrasados</th><th className="px-3 py-2">1ª respuesta</th><th className="px-3 py-2">Resolución</th><th className="px-3 py-2">Valoración</th></tr></thead>
+                                                <tbody className="divide-y divide-slate-100">
+                                                    {assignmentDashboard.metrics.map((metric) => (
+                                                        <tr key={metric.agent_id} className="text-slate-700">
+                                                            <td className="px-3 py-3"><span className="block font-bold text-slate-900">{metric.full_name}</span><span className={metric.is_available ? 'text-emerald-600' : 'text-slate-400'}>{metric.is_available ? 'Disponible' : 'No disponible'}</span></td>
+                                                            <td className="px-3 py-3"><span className="font-bold">{metric.active_tickets}/{metric.max_active_tickets}</span><span className="ml-2 text-slate-400">{metric.load_ratio}%</span>{metric.critical_tickets ? <span className="ml-2 text-red-600">{metric.critical_tickets} críticos</span> : null}</td>
+                                                            <td className="px-3 py-3 font-bold text-emerald-700">{metric.resolved_tickets}</td>
+                                                            <td className={`px-3 py-3 font-bold ${metric.overdue_tickets ? 'text-red-700' : 'text-slate-500'}`}>{metric.overdue_tickets}</td>
+                                                            <td className="px-3 py-3">{formatMetricMinutes(metric.average_first_response_minutes)}</td>
+                                                            <td className="px-3 py-3">{formatMetricMinutes(metric.average_resolution_minutes)}</td>
+                                                            <td className="px-3 py-3">{metric.average_rating === null ? '—' : `${metric.average_rating.toFixed(1)} / 5`}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </section>
+
+                                    <section>
+                                        <div className="mb-3 flex flex-wrap gap-2">
+                                            {([
+                                                ['assigned', `Asignados (${assignmentDashboard.assigned_tickets.length})`],
+                                                ['resolved', `Resueltos (${assignmentDashboard.resolved_tickets.length})`],
+                                                ['overdue', `Retrasados (${assignmentDashboard.overdue_tickets.length})`],
+                                            ] as const).map(([tab, label]) => <button key={tab} type="button" onClick={() => setAssignmentDashboardTab(tab)} className={`rounded-full border px-3 py-1.5 text-xs font-bold ${assignmentDashboardTab === tab ? 'border-indigo-400 bg-indigo-100 text-indigo-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{label}</button>)}
+                                        </div>
+                                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                                            {(assignmentDashboardTab === 'assigned' ? assignmentDashboard.assigned_tickets : assignmentDashboardTab === 'resolved' ? assignmentDashboard.resolved_tickets : assignmentDashboard.overdue_tickets).map((ticket) => {
+                                                const agent = agents.find((item) => item.id === ticket.assignee_id);
+                                                const eventDate = assignmentDashboardTab === 'resolved' ? ticket.resolved_at : assignmentDashboardTab === 'overdue' ? (ticket.resolution_due_at ?? ticket.first_response_due_at) : ticket.assigned_at;
+                                                return <button key={ticket.id} type="button" onClick={() => openDashboardTicket(ticket)} className="rounded-xl border border-slate-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50/40"><span className="text-[10px] font-black uppercase tracking-wide text-indigo-600">#{ticket.ticket_number ?? '—'} · {ticket.priority}</span><span className="mt-1 block truncate text-sm font-bold text-slate-900">{ticket.subject}</span><span className="mt-1 block truncate text-xs font-semibold text-slate-600"><Building2 size={11} className="mr-1 inline" />{getDashboardTicketCompany(ticket)}</span><span className="mt-2 block text-[11px] text-slate-500">{agent?.full_name ?? 'Sin agente'}{eventDate ? ` · ${formatCustomerDate(eventDate)}` : ''}</span></button>;
+                                            })}
+                                        </div>
+                                    </section>
+                                </div>
+                            ) : null}
+                            {assignmentDashboardError && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{assignmentDashboardError}</div>}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {deleteTicketIds.length > 0 && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true" aria-labelledby="delete-ticket-title">

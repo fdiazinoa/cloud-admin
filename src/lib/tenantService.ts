@@ -623,6 +623,51 @@ export interface TerminalDeviceActionResult {
     message?: string;
 }
 
+export type TerminalReconciliationMode = "DRY_RUN" | "EXECUTE" | "ROLLBACK";
+
+export interface TerminalReconciliationPlan {
+    tenant_id: string;
+    source_registry_id: string;
+    target_erp_terminal_id: string;
+    target_store_id: string;
+    terminal_code: string;
+    authorized_device_id: string;
+    previous_authorized_device_id?: string | null;
+    historical_device_ids: string[];
+    affected_registry_ids: string[];
+    orphan_registry_ids: string[];
+    writes: string[];
+    rollback: string[];
+    destructive_operations: string[];
+    preserves: string[];
+}
+
+export interface RequestTerminalReconciliationInput {
+    mode: TerminalReconciliationMode;
+    tenantId: string;
+    sourceRegistryId?: string | null;
+    targetErpTerminalId?: string | null;
+    targetStoreId?: string | null;
+    authorizedDeviceId?: string | null;
+    reason: string;
+    correlationId: string;
+    expectedPlanHash?: string | null;
+    adminConfirmed?: boolean;
+}
+
+export interface TerminalReconciliationResult {
+    status: string;
+    dry_run?: boolean;
+    writes_performed?: boolean;
+    executable?: boolean;
+    idempotent_replay?: boolean;
+    correlation_id: string;
+    plan_hash?: string;
+    plan?: TerminalReconciliationPlan;
+    rollback_available?: boolean;
+    message?: string;
+}
+
 export interface RequestTerminalFiscalReadinessInput {
     tenantId: string;
     terminalId: string;
@@ -1854,6 +1899,37 @@ export async function requestTerminalDeviceAction(
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
 }
 
+export async function requestTerminalReconciliation(
+    input: RequestTerminalReconciliationInput,
+): Promise<TerminalReconciliationResult> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) throw new Error("Sesión administrativa requerida para reconciliar terminales.");
+
+    const response = await fetch("/api/terminal-reconciliation", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            mode: input.mode,
+            tenant_id: input.tenantId,
+            source_registry_id: input.sourceRegistryId || null,
+            target_erp_terminal_id: input.targetErpTerminalId || null,
+            target_store_id: input.targetStoreId || null,
+            authorized_device_id: input.authorizedDeviceId || null,
+            reason: input.reason,
+            correlation_id: input.correlationId,
+            expected_plan_hash: input.expectedPlanHash || null,
+            admin_confirmed: input.adminConfirmed === true,
+        }),
+    });
+    const payload = await response.json().catch(() => null) as TerminalReconciliationResult & { error?: string } | null;
+    if (!response.ok) throw new Error(payload?.message || payload?.error || "No se pudo reconciliar la terminal.");
+    return payload || { status: "success", correlation_id: input.correlationId };
+}
+
 export type TenantPosLicenseSeats = {
     usedSeats: number;
     maxSeats: number;
@@ -2456,6 +2532,7 @@ export const tenantService = {
     retryTerminalSyncPending,
     getTerminalAuthAttempts,
     requestTerminalDeviceAction,
+    requestTerminalReconciliation,
     syncTerminalAuthorizedDevice,
     enforceTenantPosLicenseLimits,
     getTenantPosLicenseSeats,

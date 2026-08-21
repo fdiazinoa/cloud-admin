@@ -9,10 +9,12 @@ export interface TerminalReconciliationPreview {
     catalogTerminalId: string | null;
     currentErpTerminalUuid: string | null;
     targetErpTerminalUuid: string | null;
+    targetTerminalName: string | null;
     targetStoreId: string | null;
     terminalCode: string | null;
     localName: string;
     authorizedDeviceId: string | null;
+    resultingAuthorizedDeviceId: string | null;
     reportedDeviceIds: string[];
     auditPlan: string[];
     rollbackPlan: string[];
@@ -23,13 +25,23 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 export function buildTerminalReconciliationPreview(
     terminal: TenantTerminalSnapshot,
-    target?: { erpTerminalUuid?: string | null; storeId?: string | null; adminConfirmed?: boolean },
+    target?: {
+        erpTerminalUuid?: string | null;
+        targetTerminalName?: string | null;
+        storeId?: string | null;
+        authorizedDeviceId?: string | null;
+        reason?: string | null;
+        adminConfirmed?: boolean;
+    },
 ): TerminalReconciliationPreview {
     const targetUuid = target?.erpTerminalUuid?.trim() || null;
     const storeId = target?.storeId?.trim() || null;
+    const resultingDeviceId = target?.authorizedDeviceId?.trim() || null;
     const blockers: string[] = [];
     if (!targetUuid || !UUID_RE.test(targetUuid)) blockers.push('Se requiere un UUID ERP canónico explícito.');
     if (!storeId || !UUID_RE.test(storeId)) blockers.push('Se requiere una sucursal ERP explícita.');
+    if (!resultingDeviceId) blockers.push('Se requiere el Device ID que quedará autorizado.');
+    if (!target?.reason?.trim()) blockers.push('Se requiere un motivo administrativo.');
     if (!target?.adminConfirmed) blockers.push('Se requiere confirmación administrativa explícita.');
 
     const reportedDeviceIds = Array.from(new Set((terminal.registries || [])
@@ -44,10 +56,12 @@ export function buildTerminalReconciliationPreview(
         catalogTerminalId: terminal.catalog_terminal_id || null,
         currentErpTerminalUuid: getErpTerminalUuid(terminal) || null,
         targetErpTerminalUuid: targetUuid,
+        targetTerminalName: target?.targetTerminalName?.trim() || null,
         targetStoreId: storeId,
         terminalCode: getTerminalPosCode(terminal) || null,
         localName: terminal.name,
         authorizedDeviceId: getTerminalAuthorizedDeviceId(terminal) || null,
+        resultingAuthorizedDeviceId: resultingDeviceId,
         reportedDeviceIds,
         auditPlan: [
             'Validar que tenant ERP corresponde al tenant Cloud-Admin.',
