@@ -107,13 +107,19 @@ begin
     raise exception using errcode = 'P0002', message = 'SOURCE_REGISTRY_NOT_FOUND_FOR_TENANT';
   end if;
 
-  select terminal, store.tenant_id into v_target, v_store_tenant_id
+  select terminal.* into v_target
   from public.erp_terminals as terminal
-  join public.erp_stores as store on store.id = terminal.store_id
   where terminal.id = p_target_erp_terminal_id
     and terminal.store_id = p_target_store_id
-  for update of terminal;
+  for update;
   if v_target.id is null then
+    raise exception using errcode = 'P0002', message = 'ERP_TERMINAL_OR_STORE_INVALID';
+  end if;
+
+  select store.tenant_id into v_store_tenant_id
+  from public.erp_stores as store
+  where store.id = p_target_store_id;
+  if v_store_tenant_id is null then
     raise exception using errcode = 'P0002', message = 'ERP_TERMINAL_OR_STORE_INVALID';
   end if;
 

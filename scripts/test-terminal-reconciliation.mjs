@@ -81,6 +81,9 @@ assert.match(migration, /upper\(coalesce\(v_target\.device_id, ''\)\) = v_device
 assert.match(migration, /registry\.tenant_id = p_tenant_id/);
 assert.match(migration, /ERP_TERMINAL_TENANT_MISMATCH/);
 assert.match(migration, /terminal\.store_id = p_target_store_id/);
+assert.match(migration, /select terminal\.\* into v_target/);
+assert.match(migration, /select store\.tenant_id into v_store_tenant_id/);
+assert.doesNotMatch(migration, /select terminal, store\.tenant_id into v_target, v_store_tenant_id/);
 assert.match(endpoint, /target_erp_terminal_id/);
 assert.notEqual(otherTenantId, tenantId);
 
