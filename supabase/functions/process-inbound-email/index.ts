@@ -154,6 +154,7 @@ interface IntegrationConfig {
     aiAutoReplyMinConfidence: number;
     aiAutoRouteMinConfidence: number;
     aiAutoReplyClarifications: boolean;
+    assignmentCopilotMode: 'off' | 'suggest' | 'auto';
 }
 
 interface IntegrationSettingsRow {
@@ -169,6 +170,7 @@ interface IntegrationSettingsRow {
     ai_auto_reply_min_confidence?: number | null;
     ai_auto_route_min_confidence?: number | null;
     ai_auto_reply_clarifications?: boolean | null;
+    assignment_copilot_mode?: 'off' | 'suggest' | 'auto' | null;
 }
 
 interface IntegrationSecretRow {
@@ -296,6 +298,7 @@ async function loadIntegrationConfig(supabase: ReturnType<typeof createClient>):
         aiAutoReplyMinConfidence: 0.92,
         aiAutoRouteMinConfidence: 0.85,
         aiAutoReplyClarifications: true,
+        assignmentCopilotMode: 'suggest',
     };
 
     const { data: settings, error: settingsError } = await supabase
@@ -315,6 +318,7 @@ async function loadIntegrationConfig(supabase: ReturnType<typeof createClient>):
         config.aiAutoReplyMinConfidence = row.ai_auto_reply_min_confidence ?? config.aiAutoReplyMinConfidence;
         config.aiAutoRouteMinConfidence = row.ai_auto_route_min_confidence ?? config.aiAutoRouteMinConfidence;
         config.aiAutoReplyClarifications = row.ai_auto_reply_clarifications ?? config.aiAutoReplyClarifications;
+        config.assignmentCopilotMode = row.assignment_copilot_mode ?? config.assignmentCopilotMode;
 
         if (row.resend_from_email) {
             config.fromAddress = formatFromAddress(row.resend_from_name ?? 'Cloud Admin Soporte', row.resend_from_email);
@@ -1630,6 +1634,21 @@ Deno.serve(async (request) => {
         const ticketId = ticketInsert.data.id;
         const ticketNumber = ticketInsert.data.ticket_number ?? ticketId;
 
+        let assignmentDecision: unknown = null;
+        if (integrationConfig.assignmentCopilotMode === 'auto') {
+            const routing = await supabase.rpc('helpdesk_copilot_route_ticket', {
+                p_ticket_id: ticketId,
+                p_apply: true,
+                p_actor_id: null,
+                p_source: 'copilot_auto',
+            });
+            if (routing.error) {
+                console.error('Copilot could not route inbound ticket', routing.error);
+            } else {
+                assignmentDecision = routing.data;
+            }
+        }
+
         const inboundAttachments = await storeInboundEmailAttachments({
             supabase,
             resendApiKey: integrationConfig.resendApiKey,
@@ -1750,7 +1769,12 @@ Deno.serve(async (request) => {
             ticket_number: ticketNumber,
             contact_id: contactId,
             tenant_id: tenantMatch.id,
-            assignment_status: tenantMatch.id ? 'assigned' : 'needs_assignment',
+            assignment_status: assignmentDecision && typeof assignmentDecision === 'object'
+                && 'assigned' in assignmentDecision
+                && assignmentDecision.assigned === true
+                ? 'assigned'
+                : 'needs_assignment',
+            assignment_decision: assignmentDecision,
             autonomy_action: decision.action,
             auto_reply_sent: Boolean(autoReplySentAt),
             attachment_count: inboundAttachments.filter((attachment) => attachment.status === 'stored').length,

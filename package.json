@@ -30,6 +30,7 @@
     "test:helpdesk-email-signature": "node --experimental-strip-types scripts/test-helpdesk-email-signature.mjs",
     "test:helpdesk-email-threading": "node --experimental-strip-types scripts/test-helpdesk-email-threading.mjs",
     "test:helpdesk-spam-delete": "node scripts/test-helpdesk-spam-delete.mjs",
+    "test:helpdesk-copilot-assignment": "node scripts/test-helpdesk-copilot-assignment.mjs",
     "test:internal-requests": "node scripts/test-internal-requests.mjs",
     "test:knowledge-center": "node scripts/test-knowledge-center.mjs",
     "test:calendar-meetings": "node scripts/test-calendar-meetings.mjs",

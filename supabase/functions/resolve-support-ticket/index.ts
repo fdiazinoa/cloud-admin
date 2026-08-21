@@ -304,6 +304,7 @@ Deno.serve(async (request) => {
                 status: 'Resuelto',
                 resolution_status: 'pending_customer_confirmation',
                 resolved_at: new Date().toISOString(),
+                resolved_by: actor.id,
                 closed_at: null,
                 reopened_at: null,
                 customer_confirmed_at: null,
