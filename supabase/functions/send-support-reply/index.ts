@@ -235,12 +235,18 @@ async function buildResendAttachments(
     return output;
 }
 
-function buildThreadHeaders(ticket: SupportTicket) {
-    const messageIds = Array.isArray(ticket.technical_context?.email_thread_message_ids)
+function buildThreadHeaders(ticket: SupportTicket, storedMessageIds: string[] = []) {
+    const legacyMessageIds = Array.isArray(ticket.technical_context?.email_thread_message_ids)
         ? ticket.technical_context.email_thread_message_ids.filter((value): value is string => typeof value === 'string')
         : [];
-    const latestMessageId = ticket.technical_context?.resend_message_id ?? messageIds.at(-1);
-    const references = Array.from(new Set([...messageIds, latestMessageId].filter((value): value is string => Boolean(value))));
+    const references = Array.from(new Set([
+        ...legacyMessageIds,
+        ticket.technical_context?.resend_message_id,
+        ...storedMessageIds,
+    ].filter((value): value is string => Boolean(value))));
+    const latestMessageId = storedMessageIds.at(-1)
+        ?? ticket.technical_context?.resend_message_id
+        ?? legacyMessageIds.at(-1);
 
     if (!latestMessageId) return undefined;
 
@@ -303,6 +309,18 @@ Deno.serve(async (request) => {
         if (ticketError) throw ticketError;
 
         const supportTicket = ticket as SupportTicket;
+        const { data: storedThreadMessages, error: storedThreadError } = await supabase
+            .from('ticket_messages')
+            .select('email_message_id')
+            .eq('ticket_id', supportTicket.id)
+            .not('email_message_id', 'is', null)
+            .order('created_at', { ascending: true })
+            .limit(100);
+        if (storedThreadError) throw storedThreadError;
+        const storedThreadMessageIds = (storedThreadMessages ?? [])
+            .map((message) => message.email_message_id)
+            .filter((messageId): messageId is string => typeof messageId === 'string' && Boolean(messageId));
+
         const contact = normalizeRelation(supportTicket.support_contacts);
         const recipientEmail = mode === 'forward'
             ? normalizeEmail(payload.forward_to)
@@ -421,7 +439,7 @@ Deno.serve(async (request) => {
             reply_to: [replyToAddress],
         };
 
-        if (mode !== 'forward') resendBody.headers = buildThreadHeaders(supportTicket);
+        if (mode !== 'forward') resendBody.headers = buildThreadHeaders(supportTicket, storedThreadMessageIds);
         if (cc.length) resendBody.cc = cc;
         if (bcc.length) resendBody.bcc = bcc;
 
