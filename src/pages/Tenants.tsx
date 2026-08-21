@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2, Unlink, Puzzle } from 'lucide-react';
 import type { CloudAdminPermissions, Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TerminalSyncDocument, TerminalSyncPendingResult, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
-import { tenantService, type TenantPosLicenseSeats } from '../lib/tenantService';
+import { tenantService, type TenantPosLicenseSeats, type TerminalReconciliationResult } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import { ErpModuleStoreModal } from '../components/ErpModuleStoreModal';
 import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
@@ -37,6 +37,17 @@ import {
 import { buildTerminalReconciliationPreview } from '../lib/terminalReconciliation';
 
 type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'sync' | 'fiscal' | 'attempts';
+
+type ReconciliationDraft = {
+    erpTerminalUuid: string;
+    targetTerminalName: string;
+    storeId: string;
+    authorizedDeviceId: string;
+    reason: string;
+    adminConfirmed: boolean;
+    correlationId: string;
+    serverPreview: TerminalReconciliationResult | null;
+};
 
 const buildTenantSlug = (value: string) =>
     value.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
@@ -76,11 +87,8 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
     const [manualDeviceIds, setManualDeviceIds] = useState<Record<string, string>>({});
-    const [reconciliationDrafts, setReconciliationDrafts] = useState<Record<string, {
-        erpTerminalUuid: string;
-        storeId: string;
-        adminConfirmed: boolean;
-    }>>({});
+    const [reconciliationDrafts, setReconciliationDrafts] = useState<Record<string, ReconciliationDraft>>({});
+    const [reconciliationSubmittingKey, setReconciliationSubmittingKey] = useState<string | null>(null);
     const [posLicenseSeats, setPosLicenseSeats] = useState<TenantPosLicenseSeats | null>(null);
     const [fiscalReadinessByTerminal, setFiscalReadinessByTerminal] = useState<Record<string, TerminalFiscalReadiness>>({});
     const [fiscalReadinessLoadingKey, setFiscalReadinessLoadingKey] = useState<string | null>(null);
@@ -1012,6 +1020,64 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         ]);
         setTenantTerminals(data);
         setPosLicenseSeats(seats);
+    };
+
+    const updateReconciliationDraft = (
+        terminalKey: string,
+        draft: ReconciliationDraft,
+        changes: Partial<ReconciliationDraft>,
+    ) => {
+        setReconciliationDrafts((current) => ({
+            ...current,
+            [terminalKey]: {
+                ...draft,
+                ...changes,
+                serverPreview: 'serverPreview' in changes ? changes.serverPreview ?? null : null,
+            },
+        }));
+    };
+
+    const handleTerminalReconciliation = async (
+        terminal: TenantTerminalSnapshot,
+        draft: ReconciliationDraft,
+        mode: 'DRY_RUN' | 'EXECUTE' | 'ROLLBACK',
+    ) => {
+        if (!selectedTenantForTerminals || !terminal.registry?.id) return;
+        const key = getTerminalKey(terminal);
+        const correlationId = draft.correlationId || crypto.randomUUID();
+        setReconciliationSubmittingKey(key);
+        try {
+            const result = await tenantService.requestTerminalReconciliation({
+                mode,
+                tenantId: selectedTenantForTerminals.id,
+                sourceRegistryId: terminal.registry.id,
+                targetErpTerminalId: draft.erpTerminalUuid,
+                targetStoreId: draft.storeId,
+                authorizedDeviceId: draft.authorizedDeviceId,
+                reason: draft.reason,
+                correlationId,
+                expectedPlanHash: mode === 'EXECUTE' ? draft.serverPreview?.plan_hash : null,
+                adminConfirmed: draft.adminConfirmed,
+            });
+            setReconciliationDrafts((current) => ({
+                ...current,
+                [key]: { ...draft, correlationId, serverPreview: result },
+            }));
+            if (mode === 'EXECUTE') {
+                alert(result.idempotent_replay
+                    ? 'La reconciliación ya había sido aplicada; no se repitieron escrituras.'
+                    : 'Reconciliación completada. El POS puede pulsar “Reintentar autorización”.');
+                await refreshTerminalModalData();
+            } else if (mode === 'ROLLBACK') {
+                alert('Rollback completado; se restauraron únicamente el vínculo y los estados de devices.');
+                await refreshTerminalModalData();
+            }
+        } catch (error) {
+            console.error('Error reconciling terminal identity:', error);
+            alert(getErrorMessage(error));
+        } finally {
+            setReconciliationSubmittingKey(null);
+        }
     };
 
     const loadTerminalSyncPending = async (tenantId: string, terminal: TenantTerminalSnapshot) => {
@@ -2450,10 +2516,20 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                         const canonicalActionBlocked = isCanonicalTerminalActionBlocked(terminal);
                                         const reconciliationDraft = reconciliationDrafts[terminalKey] || {
                                             erpTerminalUuid: '',
+                                            targetTerminalName: '',
                                             storeId: '',
+                                            authorizedDeviceId: terminal.registry?.current_device_id || terminal.registry?.device_id || '',
+                                            reason: '',
                                             adminConfirmed: false,
+                                            correlationId: '',
+                                            serverPreview: null,
                                         };
                                         const reconciliationPreview = buildTerminalReconciliationPreview(terminal, reconciliationDraft);
+                                        const canonicalTerminalOptions = tenantTerminals.filter((candidate) => (
+                                            candidate.id !== terminal.id && hasCanonicalErpBinding(candidate)
+                                        ));
+                                        const serverReconciliationPlan = reconciliationDraft.serverPreview?.plan;
+                                        const isReconciliationSubmitting = reconciliationSubmittingKey === terminalKey;
                                         const authorizedDeviceId = identity.authorizedDeviceId !== 'N/D' ? identity.authorizedDeviceId : '';
                                         const posReportedDeviceId = identity.posReportedDeviceId !== 'N/D' ? identity.posReportedDeviceId : '';
                                         const erpCurrentDeviceId = identity.erpCurrentDeviceId !== 'N/D' ? identity.erpCurrentDeviceId : '';
@@ -2729,42 +2805,111 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                                 <details className="mt-3 rounded-lg border border-amber-200 bg-white/70 p-3">
                                                                     <summary className="cursor-pointer font-bold">Vista previa de reconciliación (dry-run)</summary>
                                                                     <div className="mt-3 grid gap-2 md:grid-cols-2">
-                                                                        <input
+                                                                        <select
                                                                             value={reconciliationDraft.erpTerminalUuid}
-                                                                            onChange={(event) => setReconciliationDrafts((current) => ({
-                                                                                ...current,
-                                                                                [terminalKey]: { ...reconciliationDraft, erpTerminalUuid: event.target.value },
-                                                                            }))}
-                                                                            placeholder="UUID ERP canónico"
+                                                                            onChange={(event) => {
+                                                                                const target = canonicalTerminalOptions.find((candidate) => candidate.erp_terminal_uuid === event.target.value);
+                                                                                updateReconciliationDraft(terminalKey, reconciliationDraft, {
+                                                                                    erpTerminalUuid: event.target.value,
+                                                                                    targetTerminalName: target?.name || '',
+                                                                                    storeId: target?.erp_store_id || '',
+                                                                                });
+                                                                            }}
+                                                                            className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs"
+                                                                        >
+                                                                            <option value="">Terminal ERP destino…</option>
+                                                                            {canonicalTerminalOptions.map((candidate) => (
+                                                                                <option key={candidate.erp_terminal_uuid} value={candidate.erp_terminal_uuid || ''}>
+                                                                                    {candidate.name} · {candidate.erp_terminal_uuid}
+                                                                                </option>
+                                                                            ))}
+                                                                        </select>
+                                                                        <select
+                                                                            value={reconciliationDraft.storeId}
+                                                                            onChange={(event) => updateReconciliationDraft(terminalKey, reconciliationDraft, { storeId: event.target.value })}
+                                                                            className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs"
+                                                                        >
+                                                                            <option value="">Sucursal ERP destino…</option>
+                                                                            {canonicalTerminalOptions
+                                                                                .filter((candidate) => candidate.erp_store_id)
+                                                                                .map((candidate) => (
+                                                                                    <option key={`${candidate.erp_terminal_uuid}-${candidate.erp_store_id}`} value={candidate.erp_store_id || ''}>
+                                                                                        {candidate.name} · {candidate.erp_store_id}
+                                                                                    </option>
+                                                                                ))}
+                                                                        </select>
+                                                                        <input
+                                                                            value={reconciliationDraft.authorizedDeviceId}
+                                                                            onChange={(event) => updateReconciliationDraft(terminalKey, reconciliationDraft, { authorizedDeviceId: event.target.value })}
+                                                                            placeholder="Device ID autorizado resultante"
                                                                             className="rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-xs"
                                                                         />
                                                                         <input
-                                                                            value={reconciliationDraft.storeId}
-                                                                            onChange={(event) => setReconciliationDrafts((current) => ({
-                                                                                ...current,
-                                                                                [terminalKey]: { ...reconciliationDraft, storeId: event.target.value },
-                                                                            }))}
-                                                                            placeholder="UUID sucursal ERP"
-                                                                            className="rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-xs"
+                                                                            value={reconciliationDraft.reason}
+                                                                            onChange={(event) => updateReconciliationDraft(terminalKey, reconciliationDraft, { reason: event.target.value })}
+                                                                            placeholder="Motivo administrativo obligatorio"
+                                                                            className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs"
                                                                         />
                                                                     </div>
                                                                     <label className="mt-2 flex items-center gap-2 text-xs font-semibold">
                                                                         <input
                                                                             type="checkbox"
                                                                             checked={reconciliationDraft.adminConfirmed}
-                                                                            onChange={(event) => setReconciliationDrafts((current) => ({
-                                                                                ...current,
-                                                                                [terminalKey]: { ...reconciliationDraft, adminConfirmed: event.target.checked },
-                                                                            }))}
+                                                                            onChange={(event) => updateReconciliationDraft(terminalKey, reconciliationDraft, { adminConfirmed: event.target.checked })}
                                                                         />
-                                                                        Confirmación administrativa para evaluar el plan
+                                                                        Confirmo que revisé tenant, sucursal, terminal, devices y rollback
                                                                     </label>
                                                                     <p className="mt-3 text-xs font-bold">DRY-RUN · escrituras realizadas: no</p>
                                                                     <p className="mt-1 text-xs">Estado: {reconciliationPreview.executable ? 'Plan validable' : 'Bloqueado'}</p>
+                                                                    <p className="mt-1 text-xs"><strong>Origen:</strong> registry {terminal.registry?.id || 'N/D'}</p>
+                                                                    <p className="mt-1 text-xs"><strong>Destino:</strong> {reconciliationDraft.targetTerminalName || 'N/D'} · {reconciliationDraft.erpTerminalUuid || 'N/D'}</p>
+                                                                    <p className="mt-1 text-xs"><strong>Sucursal:</strong> {reconciliationDraft.storeId || 'N/D'}</p>
+                                                                    <p className="mt-1 text-xs"><strong>Device resultante:</strong> {reconciliationDraft.authorizedDeviceId || 'N/D'}</p>
                                                                     {reconciliationPreview.blockers.length ? (
                                                                         <ul className="mt-1 list-disc pl-5 text-xs">
                                                                             {reconciliationPreview.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
                                                                         </ul>
+                                                                    ) : null}
+                                                                    <div className="mt-3 flex flex-wrap gap-2">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => void handleTerminalReconciliation(terminal, reconciliationDraft, 'DRY_RUN')}
+                                                                            disabled={!reconciliationPreview.executable || isReconciliationSubmitting}
+                                                                            className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            {isReconciliationSubmitting ? 'Validando…' : 'Validar dry-run servidor'}
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => void handleTerminalReconciliation(terminal, reconciliationDraft, 'EXECUTE')}
+                                                                            disabled={
+                                                                                !reconciliationPreview.executable
+                                                                                || isReconciliationSubmitting
+                                                                                || reconciliationDraft.serverPreview?.status !== 'dry_run'
+                                                                                || !reconciliationDraft.serverPreview.plan_hash
+                                                                                || Boolean(serverReconciliationPlan?.destructive_operations?.length)
+                                                                            }
+                                                                            className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                                                                        >
+                                                                            Ejecutar reconciliación
+                                                                        </button>
+                                                                    </div>
+                                                                    {serverReconciliationPlan ? (
+                                                                        <div className="mt-3 grid gap-3 rounded-lg border border-amber-200 bg-white p-3 md:grid-cols-2">
+                                                                            <div>
+                                                                                <p className="font-bold">Devices históricos</p>
+                                                                                <p className="font-mono text-xs">{serverReconciliationPlan.historical_device_ids.join(', ') || 'Ninguno'}</p>
+                                                                                <p className="mt-2 font-bold">Registros huérfanos afectados</p>
+                                                                                <p className="font-mono text-xs break-all">{serverReconciliationPlan.orphan_registry_ids.join(', ') || 'Ninguno'}</p>
+                                                                            </div>
+                                                                            <div>
+                                                                                <p className="font-bold">Plan de escritura</p>
+                                                                                <ul className="list-disc pl-4 text-xs">{serverReconciliationPlan.writes.map((item) => <li key={item}>{item}</li>)}</ul>
+                                                                                <p className="mt-2 font-bold">Plan de rollback</p>
+                                                                                <ul className="list-disc pl-4 text-xs">{serverReconciliationPlan.rollback.map((item) => <li key={item}>{item}</li>)}</ul>
+                                                                            </div>
+                                                                            <p className="md:col-span-2 font-mono text-[10px] break-all">Plan hash: {reconciliationDraft.serverPreview?.plan_hash}</p>
+                                                                        </div>
                                                                     ) : null}
                                                                 </details>
                                                             </div>

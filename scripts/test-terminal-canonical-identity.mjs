@@ -62,6 +62,8 @@ const storeId = '44444444-4444-4444-8444-444444444444';
 const validPreview = buildTerminalReconciliationPreview(legacySnapshot, {
     erpTerminalUuid,
     storeId,
+    authorizedDeviceId: 'DEV-R9CUIS87',
+    reason: 'Consolidación administrativa validada',
     adminConfirmed: true,
 });
 assert.equal(validPreview.executable, true);
