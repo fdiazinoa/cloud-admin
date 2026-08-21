@@ -59,9 +59,10 @@ const validPreview = buildTerminalReconciliationPreview(orphanSnapshot, {
 assert.equal(validPreview.executable, true);
 assert.equal(validPreview.resultingAuthorizedDeviceId, 'DEV-1DU4NVYT');
 
-const [migration, catalogConfigMigration, endpoint, service, ui] = await Promise.all([
+const [migration, catalogConfigMigration, displayNameMigration, endpoint, service, ui] = await Promise.all([
     readFile(new URL('../supabase/migrations/20260821215032_terminal_identity_reconciliation.sql', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/migrations/20260821221528_add_terminal_catalog_config.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../supabase/migrations/20260821223327_terminal_reconciliation_uses_erp_display_name.sql', import.meta.url), 'utf8'),
     readFile(new URL('../api/terminal-reconciliation.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/lib/tenantService.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/pages/Tenants.tsx', import.meta.url), 'utf8'),
@@ -74,6 +75,13 @@ assert.match(migration, /terminal_id = p_target_erp_terminal_id::text/);
 assert.match(migration, /update public\.erp_terminals[\s\S]*set device_id = v_device_id/);
 assert.match(catalogConfigMigration, /alter table public\.terminals[\s\S]*add column if not exists config jsonb not null default '\{\}'::jsonb/);
 assert.doesNotMatch(catalogConfigMigration, /\b(delete|truncate|drop)\b/i);
+assert.match(migration, /v_terminal_code := coalesce\(\s*nullif\(btrim\(v_target\.name\), ''\)/);
+assert.match(displayNameMigration, /create or replace function landlord\.reconcile_terminal_identity/);
+assert.match(displayNameMigration, /update public\.terminals as catalog[\s\S]*set code = btrim\(erp_terminal\.name\)/);
+assert.match(displayNameMigration, /update landlord\.tenant_server_registry as registry[\s\S]*set terminal_name = btrim\(erp_terminal\.name\)/);
+assert.match(displayNameMigration, /identity_binding_source' = 'explicit_mapping'/);
+assert.match(displayNameMigration, /identityBindingSource' = 'explicit_mapping'/);
+assert.doesNotMatch(displayNameMigration, /\b(delete|truncate|drop)\b/i);
 
 // 3. Idempotencia tanto por correlación como por estado ya reconciliado.
 assert.match(migration, /terminal_device_audit_reconciliation_correlation_uidx/);

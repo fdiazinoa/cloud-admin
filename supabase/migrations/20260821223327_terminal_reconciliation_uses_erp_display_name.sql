@@ -1,30 +1,5 @@
 begin;
 
-alter table landlord.terminal_device_audit
-  drop constraint if exists terminal_device_audit_action_check;
-
-alter table landlord.terminal_device_audit
-  add constraint terminal_device_audit_action_check check (
-    action in (
-      'TAKEOVER', 'ROTATE_TOKEN', 'REVOKE_DEVICE', 'SYNC_AUTHORIZED_DEVICE',
-      'GENERATE_PAIRING_CODE', 'CLEAR_TERMINAL_DEVICES', 'TAKEOVER_AUTHORIZED',
-      'DEVICE_REVOKED', 'DUPLICATE_PREVENTED', 'CLOUD_ADMIN_REPAIR_REQUESTED',
-      'CLOUD_ADMIN_ERP_REPAIR_CONFIRMED', 'CLOUD_ADMIN_ERP_REPAIR_FAILED',
-      'CLOUD_ADMIN_DEVICE_MISMATCH_DETECTED', 'CLOUD_ADMIN_CREDENTIALS_ROTATED',
-      'TERMINAL_RECONCILIATION', 'TERMINAL_RECONCILIATION_ROLLBACK'
-    )
-  );
-
-update landlord.cloud_admin_profiles
-set permissions = permissions || jsonb_build_object(
-  'terminal_reconciliation', code in ('owner', 'admin', 'supervisor')
-),
-updated_at = timezone('utc'::text, now());
-
-create unique index if not exists terminal_device_audit_reconciliation_correlation_uidx
-  on landlord.terminal_device_audit ((metadata ->> 'correlation_id'))
-  where action = 'TERMINAL_RECONCILIATION' and result = 'SUCCESS';
-
 create or replace function landlord.reconcile_terminal_identity(
   p_tenant_id uuid,
   p_source_registry_id uuid,
@@ -413,115 +388,27 @@ begin
 end;
 $$;
 
-create or replace function landlord.rollback_terminal_identity_reconciliation(
-  p_tenant_id uuid,
-  p_correlation_id uuid,
-  p_reason text,
-  p_actor_admin_user_id uuid,
-  p_actor_auth_user_id uuid,
-  p_actor_email text
-)
-returns jsonb
-language plpgsql
-security invoker
-set search_path = ''
-as $$
-declare
-  v_audit landlord.terminal_device_audit%rowtype;
-  v_registry jsonb;
-  v_before jsonb;
-  v_now timestamptz := timezone('utc'::text, now());
-begin
-  if nullif(btrim(p_reason), '') is null then
-    raise exception using errcode = '22023', message = 'ROLLBACK_REASON_REQUIRED';
-  end if;
-  if p_actor_admin_user_id is null or p_actor_auth_user_id is null or nullif(btrim(p_actor_email), '') is null then
-    raise exception using errcode = '42501', message = 'AUTHORIZED_ADMIN_REQUIRED';
-  end if;
+-- Reconciliations created before this fix could copy a legacy station code
+-- (for example POS-001) into the visible terminal name. Normalize only
+-- explicitly reconciled identities; UUIDs, device authorization and audit
+-- history are intentionally untouched.
+update public.terminals as catalog
+set code = btrim(erp_terminal.name)
+from public.erp_terminals as erp_terminal
+where catalog.id = erp_terminal.id
+  and catalog.config -> 'metadata' ->> 'identity_binding_source' = 'explicit_mapping'
+  and nullif(btrim(erp_terminal.name), '') is not null
+  and catalog.code is distinct from btrim(erp_terminal.name);
 
-  select audit.* into v_audit
-  from landlord.terminal_device_audit as audit
-  where audit.tenant_id = p_tenant_id
-    and audit.action = 'TERMINAL_RECONCILIATION'
-    and audit.result = 'SUCCESS'
-    and audit.metadata ->> 'correlation_id' = p_correlation_id::text
-  for update;
-  if v_audit.id is null then
-    raise exception using errcode = 'P0002', message = 'RECONCILIATION_AUDIT_NOT_FOUND';
-  end if;
-  if coalesce(v_audit.metadata ->> 'rollback_status', 'AVAILABLE') = 'COMPLETED' then
-    return jsonb_build_object('status', 'success', 'idempotent_replay', true, 'correlation_id', p_correlation_id);
-  end if;
-
-  v_before := v_audit.metadata -> 'before_state';
-  update public.erp_terminals as terminal
-  set device_id = v_before -> 'erp_terminal' ->> 'device_id',
-      config = v_before -> 'erp_terminal' -> 'config'
-  where terminal.id = (v_before -> 'erp_terminal' ->> 'id')::uuid;
-
-  if jsonb_typeof(v_before -> 'catalog_terminal') = 'object' then
-    update public.terminals as catalog
-    set code = v_before -> 'catalog_terminal' ->> 'code',
-        store_id = nullif(v_before -> 'catalog_terminal' ->> 'store_id', '')::uuid,
-        config = v_before -> 'catalog_terminal' -> 'config'
-    where catalog.id = (v_before -> 'catalog_terminal' ->> 'id')::uuid
-      and catalog.tenant_id = p_tenant_id;
-  end if;
-
-  for v_registry in select value from jsonb_array_elements(v_before -> 'registries')
-  loop
-    update landlord.tenant_server_registry as registry
-    set terminal_id = v_registry ->> 'terminal_id',
-        terminal_name = v_registry ->> 'terminal_name',
-        authorized_device_id = v_registry ->> 'authorized_device_id',
-        previous_device_id = v_registry ->> 'previous_device_id',
-        auth_status = v_registry ->> 'auth_status',
-        is_revoked = coalesce((v_registry ->> 'is_revoked')::boolean, false),
-        revocation_reason = v_registry ->> 'revocation_reason',
-        requires_pos_reauth = coalesce((v_registry ->> 'requires_pos_reauth')::boolean, false),
-        erp_readiness = v_registry -> 'erp_readiness',
-        status = v_registry ->> 'status',
-        updated_at = v_now
-    where registry.id = (v_registry ->> 'id')::uuid
-      and registry.tenant_id = p_tenant_id;
-  end loop;
-
-  update landlord.terminal_device_audit
-  set metadata = metadata || jsonb_build_object(
-    'rollback_status', 'COMPLETED',
-    'rolled_back_at', v_now,
-    'rolled_back_by', p_actor_email
-  )
-  where id = v_audit.id;
-
-  insert into landlord.terminal_device_audit (
-    tenant_id, terminal_id, terminal_name, old_device_id, new_device_id,
-    action, performed_by, reason, result, metadata
-  ) values (
-    p_tenant_id, v_audit.terminal_id, v_audit.terminal_name,
-    v_audit.new_device_id, v_audit.old_device_id,
-    'TERMINAL_RECONCILIATION_ROLLBACK', p_actor_email, btrim(p_reason), 'SUCCESS',
-    jsonb_build_object(
-      'correlation_id', p_correlation_id,
-      'reconciliation_audit_id', v_audit.id,
-      'administrator', jsonb_build_object(
-        'admin_user_id', p_actor_admin_user_id,
-        'auth_user_id', p_actor_auth_user_id,
-        'email', p_actor_email
-      ),
-      'restored_scope', jsonb_build_array(
-        'explicit_binding', 'authorization_statuses', 'historical_device_classification'
-      )
-    )
-  );
-
-  return jsonb_build_object('status', 'success', 'idempotent_replay', false, 'correlation_id', p_correlation_id);
-end;
-$$;
-
-revoke all on function landlord.reconcile_terminal_identity(uuid, uuid, uuid, uuid, text, text, uuid, uuid, text, uuid, text, boolean) from public, anon, authenticated;
-revoke all on function landlord.rollback_terminal_identity_reconciliation(uuid, uuid, text, uuid, uuid, text) from public, anon, authenticated;
-grant execute on function landlord.reconcile_terminal_identity(uuid, uuid, uuid, uuid, text, text, uuid, uuid, text, uuid, text, boolean) to service_role;
-grant execute on function landlord.rollback_terminal_identity_reconciliation(uuid, uuid, text, uuid, uuid, text) to service_role;
+update landlord.tenant_server_registry as registry
+set terminal_name = btrim(erp_terminal.name)
+from public.erp_terminals as erp_terminal
+where coalesce(
+    registry.erp_readiness ->> 'terminalId',
+    registry.erp_readiness ->> 'terminal_id'
+  ) = erp_terminal.id::text
+  and registry.erp_readiness ->> 'identityBindingSource' = 'explicit_mapping'
+  and nullif(btrim(erp_terminal.name), '') is not null
+  and registry.terminal_name is distinct from btrim(erp_terminal.name);
 
 commit;
