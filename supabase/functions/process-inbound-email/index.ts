@@ -6,6 +6,11 @@ import {
     type HelpdeskAutonomyMode as AutonomyMode,
     type HelpdeskResponsePolicy as ResponsePolicy,
 } from '../_shared/helpdesk-autonomy.ts';
+import {
+    extractThreadReferenceMessageIds,
+    extractTicketNumberFromSubject,
+    selectFallbackThreadCandidate,
+} from '../_shared/helpdesk-threading.ts';
 
 declare const Deno: {
     env: {
@@ -42,6 +47,25 @@ interface ResendInboundAttachment {
     content_disposition?: string | null;
     content_id?: string | null;
     size?: number;
+}
+
+interface ReceivedEmailContent {
+    text: string;
+    subject: string;
+    messageId: string | null;
+    headers: Record<string, unknown>;
+}
+
+interface ThreadedTicket {
+    id: string;
+    ticket_number: number;
+    tenant_id: string | null;
+    contact_id: string | null;
+    subject: string;
+    source: string;
+    assignment_status: string;
+    external_sender_email: string | null;
+    created_at: string;
 }
 
 interface StoredInboundAttachment {
@@ -209,6 +233,19 @@ function getEnv(name: string) {
     return value;
 }
 
+function createLandlordClient() {
+    return createClient(
+        getEnv('SUPABASE_URL'),
+        getEnv('SUPABASE_SERVICE_ROLE_KEY'),
+        {
+            auth: { autoRefreshToken: false, persistSession: false },
+            db: { schema: 'landlord' },
+        },
+    );
+}
+
+type LandlordSupabaseClient = ReturnType<typeof createLandlordClient>;
+
 function base64ToBytes(value: string) {
     const binary = atob(value);
     return Uint8Array.from(binary, (char) => char.charCodeAt(0));
@@ -320,11 +357,6 @@ function extractDisplayName(rawFrom: string) {
 function normalizeCategory(value?: string | null): TicketCategory {
     if (!value) return 'Otros';
     return categoryMap[value.toLowerCase()] ?? 'Otros';
-}
-
-function extractTicketNumberFromSubject(subject: string) {
-    const match = subject.match(/(?:ticket\s*)?#\s*(\d+)/i);
-    return match ? Number(match[1]) : null;
 }
 
 function buildThreadSubject(ticketNumber: number | string, subject: string) {
@@ -876,7 +908,7 @@ async function runAiTriage(params: {
     }
 }
 
-async function getInboundEmailBody(emailId: string, resendApiKey: string) {
+async function getInboundEmailContent(emailId: string, resendApiKey: string): Promise<ReceivedEmailContent> {
     const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
         method: 'GET',
         headers: {
@@ -887,13 +919,94 @@ async function getInboundEmailBody(emailId: string, resendApiKey: string) {
 
     if (!response.ok) {
         console.error('Could not retrieve inbound email content', await response.text());
-        return '';
+        return { text: '', subject: '', messageId: null, headers: {} };
     }
 
     const payload = await response.json() as Record<string, unknown>;
     const data = typeof payload.data === 'object' && payload.data ? payload.data as Record<string, unknown> : payload;
 
-    return String(data.text ?? data.text_body ?? data.textBody ?? '');
+    const headers = data.headers && typeof data.headers === 'object' && !Array.isArray(data.headers)
+        ? data.headers as Record<string, unknown>
+        : {};
+
+    return {
+        text: String(data.text ?? data.text_body ?? data.textBody ?? ''),
+        subject: typeof data.subject === 'string' ? data.subject : '',
+        messageId: typeof data.message_id === 'string' ? data.message_id.trim() || null : null,
+        headers,
+    };
+}
+
+const threadedTicketSelect = [
+    'id',
+    'ticket_number',
+    'tenant_id',
+    'contact_id',
+    'subject',
+    'source',
+    'assignment_status',
+    'external_sender_email',
+    'created_at',
+].join(', ');
+
+async function findThreadedTicket(params: {
+    supabase: LandlordSupabaseClient;
+    subject: string;
+    senderEmail: string;
+    referenceMessageIds: string[];
+}): Promise<ThreadedTicket | null> {
+    const subjectTicketNumber = extractTicketNumberFromSubject(params.subject);
+    if (subjectTicketNumber) {
+        const ticketByNumber = await params.supabase
+            .from('support_tickets')
+            .select(threadedTicketSelect)
+            .eq('ticket_number', subjectTicketNumber)
+            .maybeSingle();
+        if (ticketByNumber.error) throw ticketByNumber.error;
+        const matchedTicket = ticketByNumber.data as unknown as ThreadedTicket | null;
+        if (matchedTicket?.id) return matchedTicket;
+    }
+
+    if (params.referenceMessageIds.length) {
+        const messageMatch = await params.supabase
+            .from('ticket_messages')
+            .select('ticket_id, created_at')
+            .in('email_message_id', params.referenceMessageIds)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (messageMatch.error) throw messageMatch.error;
+
+        if (messageMatch.data?.ticket_id) {
+            const ticketByMessageId = await params.supabase
+                .from('support_tickets')
+                .select(threadedTicketSelect)
+                .eq('id', messageMatch.data.ticket_id)
+                .is('merged_into_ticket_id', null)
+                .maybeSingle();
+            if (ticketByMessageId.error) throw ticketByMessageId.error;
+            const matchedTicket = ticketByMessageId.data as unknown as ThreadedTicket | null;
+            if (matchedTicket?.id) return matchedTicket;
+        }
+    }
+
+    const candidateCutoff = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+    const candidateResult = await params.supabase
+        .from('support_tickets')
+        .select(threadedTicketSelect)
+        .eq('source', 'Email')
+        .is('merged_into_ticket_id', null)
+        .neq('assignment_status', 'spam')
+        .gte('created_at', candidateCutoff)
+        .order('created_at', { ascending: true })
+        .limit(1000);
+    if (candidateResult.error) throw candidateResult.error;
+
+    return selectFallbackThreadCandidate(
+        (candidateResult.data ?? []) as unknown as ThreadedTicket[],
+        params.subject,
+        params.senderEmail,
+    );
 }
 
 function sanitizeInboundAttachmentName(value?: string) {
@@ -1233,14 +1346,7 @@ Deno.serve(async (request) => {
     let rawEventId: string | null = null;
 
     try {
-        const supabase = createClient(
-            getEnv('SUPABASE_URL'),
-            getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-            {
-                auth: { autoRefreshToken: false, persistSession: false },
-                db: { schema: 'landlord' },
-            },
-        );
+        const supabase = createLandlordClient();
 
         const integrationConfig = await loadIntegrationConfig(supabase);
         if (!integrationConfig.resendApiKey) {
@@ -1276,23 +1382,26 @@ Deno.serve(async (request) => {
         }
 
         const senderEmail = extractEmailAddress(inbound.from);
-        const subject = inbound.subject?.trim() || 'Solicitud técnica por email';
+        const receivedEmail = inbound.email_id
+            ? await getInboundEmailContent(inbound.email_id, integrationConfig.resendApiKey)
+            : { text: '', subject: '', messageId: null, headers: {} };
+        const subject = inbound.subject?.trim()
+            || receivedEmail.subject.trim()
+            || 'Solicitud técnica por email';
         const body = (inbound.text ?? inbound.textBody ?? inbound.text_body ?? '').trim()
-            || (inbound.email_id ? await getInboundEmailBody(inbound.email_id, integrationConfig.resendApiKey) : '')
+            || receivedEmail.text.trim()
             || '(Correo recibido sin cuerpo de texto plano disponible.)';
-        const subjectTicketNumber = extractTicketNumberFromSubject(subject);
+        const inboundMessageId = receivedEmail.messageId ?? inbound.message_id?.trim() ?? null;
+        const referenceMessageIds = extractThreadReferenceMessageIds(receivedEmail.headers);
+        const threadedTicket = await findThreadedTicket({
+            supabase,
+            subject,
+            senderEmail,
+            referenceMessageIds,
+        });
 
-        if (subjectTicketNumber) {
-            const threadedTicket = await supabase
-                .from('support_tickets')
-                .select('id, ticket_number, tenant_id, contact_id, subject, source, assignment_status')
-                .eq('ticket_number', subjectTicketNumber)
-                .maybeSingle();
-
-            if (threadedTicket.error) throw threadedTicket.error;
-
-            if (threadedTicket.data?.id) {
-                if (threadedTicket.data.assignment_status === 'spam') {
+        if (threadedTicket?.id) {
+                if (threadedTicket.assignment_status === 'spam') {
                     if (rawEventId) {
                         await supabase.from('raw_support_events')
                             .update({ status: 'ignored', processed_at: new Date().toISOString() })
@@ -1300,30 +1409,31 @@ Deno.serve(async (request) => {
                     }
                     return json({ ok: true, ignored: true, reason: 'ticket_marked_as_spam' });
                 }
-                const knowledgeMatches = await fetchKnowledgeMatches(supabase, threadedTicket.data.subject ?? subject, body);
+                const knowledgeMatches = await fetchKnowledgeMatches(supabase, threadedTicket.subject ?? subject, body);
                 const triage = integrationConfig.aiTriageEnabled && integrationConfig.aiProvider === 'openai'
                     ? await runAiTriage({
                         openAiApiKey: integrationConfig.openAiApiKey,
                         model: integrationConfig.aiModel,
                         from: senderEmail,
-                        subject: threadedTicket.data.subject ?? subject,
+                        subject: threadedTicket.subject ?? subject,
                         body,
                         knowledgeMatches,
                     })
-                    : heuristicTriage(threadedTicket.data.subject ?? subject, body);
+                    : heuristicTriage(threadedTicket.subject ?? subject, body);
                 const inboundAttachments = await storeInboundEmailAttachments({
                     supabase,
                     resendApiKey: integrationConfig.resendApiKey,
                     emailId: inbound.email_id,
-                    ticketId: threadedTicket.data.id,
+                    ticketId: threadedTicket.id,
                     attachments: inbound.attachments,
                 });
                 const threadedMessage = await supabase.from('ticket_messages')
                     .insert({
-                        ticket_id: threadedTicket.data.id,
+                        ticket_id: threadedTicket.id,
                         sender_type: 'Client',
                         message: body.trim(),
                         attachments: inboundAttachments,
+                        email_message_id: inboundMessageId,
                     })
                     .select('id')
                     .single();
@@ -1336,12 +1446,12 @@ Deno.serve(async (request) => {
                 await supabase
                     .from('support_tickets')
                     .update(ticketUpdate)
-                    .eq('id', threadedTicket.data.id);
+                    .eq('id', threadedTicket.id);
 
                 const decision = decideAutonomy({
                     config: integrationConfig,
                     triage,
-                    tenantKnown: Boolean(threadedTicket.data.tenant_id),
+                    tenantKnown: Boolean(threadedTicket.tenant_id),
                     knowledgeMatches,
                 });
 
@@ -1354,11 +1464,11 @@ Deno.serve(async (request) => {
                         const sent = await sendAutomatedEmail({
                             supabase,
                             config: integrationConfig,
-                            ticketId: threadedTicket.data.id,
-                            ticketNumber: threadedTicket.data.ticket_number,
-                            subject: threadedTicket.data.subject ?? subject,
+                            ticketId: threadedTicket.id,
+                            ticketNumber: threadedTicket.ticket_number,
+                            subject: threadedTicket.subject ?? subject,
                             recipientEmail: senderEmail,
-                            inboundProviderMessageId: inbound.message_id,
+                            inboundProviderMessageId: inboundMessageId ?? undefined,
                             message: decision.response,
                             action: decision.action,
                         });
@@ -1373,10 +1483,10 @@ Deno.serve(async (request) => {
 
                 await upsertAiInsight({
                     supabase,
-                    ticketId: threadedTicket.data.id,
+                    ticketId: threadedTicket.id,
                     triage,
                     config: integrationConfig,
-                    tenantConfidence: threadedTicket.data.tenant_id ? 1 : 0,
+                    tenantConfidence: threadedTicket.tenant_id ? 1 : 0,
                     knowledgeMatches,
                     decision,
                     autoReplySentAt,
@@ -1384,7 +1494,7 @@ Deno.serve(async (request) => {
 
                 await recordAutonomyRun({
                     supabase,
-                    ticketId: threadedTicket.data.id,
+                    ticketId: threadedTicket.id,
                     inboundMessageId: threadedMessage.data.id,
                     responseMessageId,
                     triggerEvent: 'thread_reply',
@@ -1397,11 +1507,11 @@ Deno.serve(async (request) => {
                 });
 
                 await createCustomerImprovementRequest(supabase, {
-                    ticketId: threadedTicket.data.id,
-                    tenantId: threadedTicket.data.tenant_id ?? null,
-                    contactId: threadedTicket.data.contact_id ?? null,
-                    source: threadedTicket.data.source ?? 'Email',
-                    subject: threadedTicket.data.subject ?? subject,
+                    ticketId: threadedTicket.id,
+                    tenantId: threadedTicket.tenant_id ?? null,
+                    contactId: threadedTicket.contact_id ?? null,
+                    source: threadedTicket.source ?? 'Email',
+                    subject: threadedTicket.subject ?? subject,
                     body,
                     triage,
                 });
@@ -1415,13 +1525,12 @@ Deno.serve(async (request) => {
                 return json({
                     ok: true,
                     threaded: true,
-                    ticket_id: threadedTicket.data.id,
-                    ticket_number: threadedTicket.data.ticket_number,
+                    ticket_id: threadedTicket.id,
+                    ticket_number: threadedTicket.ticket_number,
                     autonomy_action: decision.action,
                     auto_reply_sent: autonomyStatus === 'sent',
                     attachment_count: inboundAttachments.filter((attachment) => attachment.status === 'stored').length,
                 });
-            }
         }
 
         const knowledgeMatches = await fetchKnowledgeMatches(supabase, subject, body);
@@ -1501,7 +1610,8 @@ Deno.serve(async (request) => {
                 technical_context: {
                     channel: 'email',
                     resend_email_id: inbound.email_id,
-                    resend_message_id: inbound.message_id,
+                    resend_message_id: inboundMessageId,
+                    email_thread_message_ids: inboundMessageId ? [inboundMessageId] : [],
                     to: inbound.to ?? [],
                     affected_module: triage.affected_module ?? undefined,
                     incident_fingerprint: triage.incident_fingerprint ?? undefined,
@@ -1529,6 +1639,7 @@ Deno.serve(async (request) => {
                 sender_type: 'Client',
                 message: body.trim(),
                 attachments: inboundAttachments,
+                email_message_id: inboundMessageId,
             })
             .select('id')
             .single();
@@ -1583,7 +1694,7 @@ Deno.serve(async (request) => {
                 ticketNumber,
                 subject,
                 recipientEmail: senderEmail,
-                inboundProviderMessageId: inbound.message_id,
+                inboundProviderMessageId: inboundMessageId ?? undefined,
                 message: outboundMessage,
                 action: outboundAction,
             });
@@ -1644,14 +1755,7 @@ Deno.serve(async (request) => {
 
         try {
             if (rawEventId) {
-                const supabase = createClient(
-                    getEnv('SUPABASE_URL'),
-                    getEnv('SUPABASE_SERVICE_ROLE_KEY'),
-                    {
-                        auth: { autoRefreshToken: false, persistSession: false },
-                        db: { schema: 'landlord' },
-                    },
-                );
+                const supabase = createLandlordClient();
                 await supabase.from('raw_support_events')
                     .update({
                         status: 'failed',
