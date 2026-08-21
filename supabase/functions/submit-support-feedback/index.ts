@@ -1,4 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.98.0';
+import {
+    appendHelpdeskEmailSignatureHtml,
+    appendHelpdeskEmailSignatureText,
+} from '../_shared/helpdesk-email-branding.ts';
 
 declare const Deno: {
     env: {
@@ -281,8 +285,8 @@ async function sendClosedTicketSummary(
             from: fromAddress,
             to: [recipientEmail],
             subject: buildSummarySubject(ticket),
-            text: emailBody.text,
-            html: emailBody.html,
+            text: appendHelpdeskEmailSignatureText(emailBody.text),
+            html: appendHelpdeskEmailSignatureHtml(emailBody.html),
             reply_to: [replyToAddress],
             headers: buildThreadHeaders(ticket),
         }),
