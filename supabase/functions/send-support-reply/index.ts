@@ -1,4 +1,8 @@
 import { assertHelpdeskTicketAccess, createHelpdeskAdminClient, isAuthorizationError, requireHelpdeskActor } from '../_shared/helpdesk-auth.ts';
+import {
+    appendHelpdeskEmailSignatureText,
+    buildHelpdeskEmailHtmlFromText,
+} from '../_shared/helpdesk-email-branding.ts';
 
 declare const Deno: {
     env: {
@@ -435,7 +439,8 @@ Deno.serve(async (request) => {
             from: fromAddress,
             to: [recipientEmail],
             subject: emailSubject,
-            text: messageText,
+            text: appendHelpdeskEmailSignatureText(messageText),
+            html: buildHelpdeskEmailHtmlFromText(messageText),
             reply_to: [replyToAddress],
         };
 
