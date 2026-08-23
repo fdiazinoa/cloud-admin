@@ -71,6 +71,8 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     const [activeModuleCounts, setActiveModuleCounts] = useState<Record<string, number>>({});
     const [selectedTenantForTerminals, setSelectedTenantForTerminals] = useState<Tenant | null>(null);
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
+    const [terminalSearchTerm, setTerminalSearchTerm] = useState('');
+    const [terminalStoreFilter, setTerminalStoreFilter] = useState('ALL');
     const [terminalTabs, setTerminalTabs] = useState<Record<string, TerminalTabKey>>({});
     const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkRelease | null>(null);
     const [terminalAdvancedOpen, setTerminalAdvancedOpen] = useState<Record<string, boolean>>({});
@@ -401,6 +403,8 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     const openTerminalModal = async (tenant: Tenant) => {
         setSelectedTenantForTerminals(tenant);
         setTenantTerminals([]);
+        setTerminalSearchTerm('');
+        setTerminalStoreFilter('ALL');
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
         setPosLicenseSeats(null);
@@ -436,6 +440,8 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         setIsTerminalModalOpen(false);
         setSelectedTenantForTerminals(null);
         setTenantTerminals([]);
+        setTerminalSearchTerm('');
+        setTerminalStoreFilter('ALL');
         setAuthAttemptsByTerminal({});
         setFiscalReadinessByTerminal({});
         setLatestPosApkRelease(null);
@@ -1977,6 +1983,34 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         (terminal) => (terminal.registry?.auth_status || '').toUpperCase() === 'LICENSE_EXCEEDED',
     ).length;
     const erpReadyTerminalCount = registryTerminals.filter((terminal) => getErpReadinessStatus(terminal) === 'ready').length;
+    const terminalStoreOptions = Array.from(new Map(
+        tenantTerminals.map((terminal) => {
+            const storeKey = terminal.erp_store_id || 'UNASSIGNED';
+            const storeLabel = terminal.erp_store_name || 'Sin sucursal vinculada';
+            return [storeKey, storeLabel];
+        }),
+    ).entries()).sort((a, b) => a[1].localeCompare(b[1], 'es'));
+    const normalizedTerminalSearch = terminalSearchTerm.trim().toLocaleLowerCase('es');
+    const visibleTenantTerminals = tenantTerminals
+        .filter((terminal) => {
+            const storeKey = terminal.erp_store_id || 'UNASSIGNED';
+            if (terminalStoreFilter !== 'ALL' && terminalStoreFilter !== storeKey) return false;
+            if (!normalizedTerminalSearch) return true;
+
+            return [
+                terminal.name,
+                terminal.terminal_id,
+                terminal.terminal_code,
+                terminal.erp_store_name,
+                terminal.registry?.device_id,
+                terminal.registry?.current_device_id,
+            ].some((value) => value?.toLocaleLowerCase('es').includes(normalizedTerminalSearch));
+        })
+        .sort((a, b) => {
+            const storeComparison = (a.erp_store_name || 'Sin sucursal vinculada')
+                .localeCompare(b.erp_store_name || 'Sin sucursal vinculada', 'es');
+            return storeComparison || a.name.localeCompare(b.name, 'es');
+        });
     const editingTenantHasActiveErp = editingTenant
         ? deriveProductsFromTenant(editingTenant.type, editingTenant.cloud_sync, editingTenant.max_pos_terminals, editingTenant.max_erp_users, {
             posVariant: editingTenant.pos_variant,
@@ -2464,6 +2498,39 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
 
                             {renderTenantSemanticsGrid(selectedTenantForTerminals)}
 
+                            {tenantTerminals.length > 0 ? (
+                                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                                    <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                                        <div className="relative flex-1">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                                            <input
+                                                type="search"
+                                                value={terminalSearchTerm}
+                                                onChange={(event) => setTerminalSearchTerm(event.target.value)}
+                                                placeholder="Buscar sucursal, terminal, código o dispositivo"
+                                                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                                            />
+                                        </div>
+                                        <select
+                                            value={terminalStoreFilter}
+                                            onChange={(event) => setTerminalStoreFilter(event.target.value)}
+                                            aria-label="Filtrar terminales por sucursal"
+                                            className="min-w-64 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-700 outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                                        >
+                                            <option value="ALL">Todas las sucursales ({tenantTerminals.length})</option>
+                                            {terminalStoreOptions.map(([storeId, storeName]) => (
+                                                <option key={storeId} value={storeId}>
+                                                    {storeName} ({tenantTerminals.filter((terminal) => (terminal.erp_store_id || 'UNASSIGNED') === storeId).length})
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <p className="mt-2 text-xs font-semibold text-slate-500">
+                                        Mostrando {visibleTenantTerminals.length} de {tenantTerminals.length} terminal(es), ordenadas por sucursal.
+                                    </p>
+                                </div>
+                            ) : null}
+
                             {isTerminalModalLoading ? (
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500 flex items-center justify-center gap-3">
                                     <Loader2 className="animate-spin text-violet-500" size={20} />
@@ -2473,9 +2540,13 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                 <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500">
                                     No hay terminales ni endpoints reportados para este tenant.
                                 </div>
+                            ) : visibleTenantTerminals.length === 0 ? (
+                                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500">
+                                    No hay terminales que coincidan con la búsqueda o sucursal seleccionada.
+                                </div>
                             ) : (
                                 <div className="grid grid-cols-1 gap-6">
-                                    {tenantTerminals.map((terminal) => {
+                                    {visibleTenantTerminals.map((terminal) => {
                                         const hasOnlineRegistry = (terminal.registries || []).some((reg) => (
                                             getRegistryStatusLabel({ ...terminal, registry: reg }) === 'ONLINE'
                                         ));
@@ -2632,8 +2703,15 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                             {hasOnlineRegistry ? <Wifi size={20} /> : <WifiOff size={20} />}
                                                         </div>
                                                         <div>
-                                                            <div className="flex items-center gap-3">
-                                                                <h4 className="font-black text-slate-800 text-lg">{terminal.name}</h4>
+                                                            <p className={`text-[10px] font-black uppercase tracking-wider ${terminal.erp_store_name ? 'text-blue-600' : 'text-amber-600'}`}>
+                                                                {terminal.erp_store_name ? 'Sucursal' : 'Contexto pendiente'}
+                                                            </p>
+                                                            <div className="mt-0.5 flex flex-wrap items-center gap-3">
+                                                                <h4 className="font-black text-slate-800 text-lg">
+                                                                    <span>{terminal.erp_store_name || 'Sin sucursal vinculada'}</span>
+                                                                    <span className="mx-2 text-slate-300">·</span>
+                                                                    <span>{terminal.name}</span>
+                                                                </h4>
                                                                 <span className={`font-bold text-xs px-2.5 py-1 rounded-lg ${
                                                                     (terminal.registries || []).length > 1 ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                                                                 }`}>
