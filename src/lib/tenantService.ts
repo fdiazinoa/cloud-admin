@@ -341,6 +341,7 @@ interface ErpTerminalBinding {
     deviceId: string;
     erpTerminalId: string;
     storeId: string;
+    storeName?: string | null;
     displayName?: string | null;
     terminalCode?: string | null;
     appVersion?: string | null;
@@ -380,7 +381,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
         const { data: stores, error: storesError } = await supabaseAdmin
             .schema("public")
             .from("erp_stores")
-            .select("id")
+            .select("id,name")
             .eq("tenant_id", erpTenantId);
 
         if (storesError) {
@@ -388,9 +389,15 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
             return new Map();
         }
 
-        const storeIds = ((stores as Array<{ id?: string }> | null) || [])
+        const storeRows = ((stores as Array<{ id?: string; name?: string | null }> | null) || []);
+        const storeIds = storeRows
             .map((store) => store.id)
             .filter((id): id is string => Boolean(id));
+        const storeNamesById = new Map(
+            storeRows
+                .filter((store): store is { id: string; name?: string | null } => Boolean(store.id))
+                .map((store) => [store.id, firstHumanText(store.name)]),
+        );
 
         if (storeIds.length === 0) return new Map();
 
@@ -445,6 +452,7 @@ async function loadErpTerminalBindings(tenantId: string): Promise<Map<string, Er
                 deviceId,
                 erpTerminalId,
                 storeId,
+                storeName: storeNamesById.get(storeId) || null,
                 displayName,
                 terminalCode,
                 appVersion: firstText(
@@ -1363,6 +1371,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             created_at: primaryTerminal.created_at || null,
             erp_terminal_uuid: erpBinding?.erpTerminalId || null,
             erp_store_id: erpBinding?.storeId || null,
+            erp_store_name: erpBinding?.storeName || null,
             erp_current_device_id: erpBinding?.deviceId || null,
             erp_app_version: erpBinding?.appVersion || primaryTerminal.app_version || null,
             erp_app_version_code: erpBinding?.appVersionCode || null,
@@ -1435,6 +1444,7 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
             created_at: primary.created_at || null,
             erp_terminal_uuid: orphanBinding?.erpTerminalId || null,
             erp_store_id: orphanBinding?.storeId || null,
+            erp_store_name: orphanBinding?.storeName || null,
             erp_current_device_id: orphanBinding?.deviceId || null,
             erp_app_version: orphanBinding?.appVersion || null,
             erp_app_version_code: orphanBinding?.appVersionCode || null,
@@ -1468,6 +1478,8 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
         consolidatedSnapshots.set(key, {
             ...existing,
             erp_terminal_uuid: existing.erp_terminal_uuid || snapshot.erp_terminal_uuid,
+            erp_store_id: existing.erp_store_id || snapshot.erp_store_id,
+            erp_store_name: existing.erp_store_name || snapshot.erp_store_name,
             erp_current_device_id: existing.erp_current_device_id || snapshot.erp_current_device_id,
             erp_app_version: existing.erp_app_version || snapshot.erp_app_version,
             erp_app_version_code: existing.erp_app_version_code || snapshot.erp_app_version_code,
