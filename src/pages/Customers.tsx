@@ -151,12 +151,49 @@ export const Customers = () => {
                             <div className="relative"><Search size={15} className="absolute left-3 top-2.5 text-slate-400" /><input className="input pl-9 sm:w-72" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Empresa, contacto o correo" /></div>
                         </div>
                         {loading ? <div className="p-10 text-center text-sm font-bold text-slate-500">Cargando clientes...</div> : (
-                            <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">{filtered.map((customer) => (
-                                <button key={customer.id} type="button" onClick={() => setSelectedId(customer.id)} className={`rounded-xl border p-4 text-left transition ${selectedId === customer.id ? 'border-indigo-300 bg-indigo-50 ring-2 ring-indigo-100' : 'border-slate-200 hover:border-slate-300'}`}>
-                                    <div className="flex items-start justify-between gap-3"><div><p className="font-black text-slate-900">{customer.company_name || customer.name || customer.email}</p><p className="mt-1 text-xs text-slate-500">{customer.email}</p></div><span className={`rounded-full px-2 py-1 text-[10px] font-black ${customer.has_retainership ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{customer.has_retainership ? 'Iguala' : 'Sin iguala'}</span></div>
-                                    <div className="mt-3 flex items-center justify-between text-xs"><span className="text-slate-500">{customer.services.filter((service) => service.status === 'active').length} servicios activos</span><span className="font-bold text-indigo-600">Ver detalle</span></div>
-                                </button>
-                            ))}{filtered.length === 0 ? <p className="p-6 text-sm text-slate-500">No hay clientes con ese filtro.</p> : null}</div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full min-w-[860px] border-collapse text-left">
+                                    <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                                        <tr>
+                                            <th className="px-4 py-3">Cliente</th>
+                                            <th className="px-4 py-3">Contacto</th>
+                                            <th className="px-4 py-3">Tenant</th>
+                                            <th className="px-4 py-3">Contrato</th>
+                                            <th className="px-4 py-3 text-center">Servicios</th>
+                                            <th className="px-4 py-3">Renovación</th>
+                                            <th className="px-4 py-3 text-right">Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {filtered.map((customer) => {
+                                            const activeCustomerServices = customer.services.filter((service) => service.status === 'active').length;
+                                            const isSelected = selectedId === customer.id;
+                                            return (
+                                                <tr key={customer.id} className={`transition-colors ${isSelected ? 'bg-indigo-50/80' : 'hover:bg-slate-50'}`}>
+                                                    <td className={`border-l-2 px-4 py-3 ${isSelected ? 'border-indigo-500' : 'border-transparent'}`}>
+                                                        <button type="button" onClick={() => setSelectedId(customer.id)} className="text-left">
+                                                            <span className="block font-black text-slate-900">{customer.company_name || customer.name || customer.email}</span>
+                                                            <span className="mt-0.5 block text-xs text-slate-500">{customer.email}</span>
+                                                        </button>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className="block text-sm font-bold text-slate-700">{customer.name || 'Sin contacto'}</span>
+                                                        <span className="mt-0.5 block text-xs text-slate-500">{customer.phone || 'Sin teléfono'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-sm text-slate-600">{customer.tenant?.name || 'No vinculado'}</td>
+                                                    <td className="px-4 py-3">
+                                                        <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-black ${customer.has_retainership ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{customer.has_retainership ? 'Iguala' : 'Sin iguala'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-center"><span className="inline-flex min-w-8 justify-center rounded-full bg-indigo-50 px-2 py-1 text-xs font-black text-indigo-700">{activeCustomerServices}</span></td>
+                                                    <td className="px-4 py-3 text-sm text-slate-600">{formatDate(customer.renewal_at)}</td>
+                                                    <td className="px-4 py-3 text-right"><button type="button" onClick={() => setSelectedId(customer.id)} className="text-xs font-black text-indigo-600 hover:text-indigo-800">Ver detalle</button></td>
+                                                </tr>
+                                            );
+                                        })}
+                                        {filtered.length === 0 ? <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-500">No hay clientes con ese filtro.</td></tr> : null}
+                                    </tbody>
+                                </table>
+                            </div>
                         )}
                     </section>
 
