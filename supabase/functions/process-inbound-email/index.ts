@@ -1121,7 +1121,7 @@ async function storeInboundEmailAttachments(params: {
                 .upload(path, fileBytes, {
                     contentType: mimeType,
                     cacheControl: '3600',
-                    upsert: false,
+                    upsert: true,
                 });
             if (uploadError) throw uploadError;
 
@@ -1381,13 +1381,27 @@ Deno.serve(async (request) => {
 
         const existingTicket = await supabase
             .from('support_tickets')
-            .select('id')
+            .select('id, ticket_number')
             .eq('source', 'Email')
             .eq('external_message_id', emailId)
             .maybeSingle();
 
+        if (existingTicket.error) throw existingTicket.error;
+
+        let orphanedTicket: { id: string; ticket_number: number | null } | null = null;
         if (existingTicket.data?.id) {
-            return json({ ok: true, duplicate: true, ticket_id: existingTicket.data.id });
+            const existingMessage = await supabase
+                .from('ticket_messages')
+                .select('id')
+                .eq('ticket_id', existingTicket.data.id)
+                .limit(1)
+                .maybeSingle();
+            if (existingMessage.error) throw existingMessage.error;
+            if (existingMessage.data?.id) {
+                return json({ ok: true, duplicate: true, ticket_id: existingTicket.data.id });
+            }
+
+            orphanedTicket = existingTicket.data;
         }
 
         const senderEmail = extractEmailAddress(inbound.from);
@@ -1402,6 +1416,42 @@ Deno.serve(async (request) => {
             || '(Correo recibido sin cuerpo de texto plano disponible.)';
         const inboundMessageId = receivedEmail.messageId ?? inbound.message_id?.trim() ?? null;
         const referenceMessageIds = extractThreadReferenceMessageIds(receivedEmail.headers);
+
+        if (orphanedTicket) {
+            const inboundAttachments = await storeInboundEmailAttachments({
+                supabase,
+                resendApiKey: integrationConfig.resendApiKey,
+                emailId: inbound.email_id,
+                ticketId: orphanedTicket.id,
+                attachments: inbound.attachments,
+            });
+            const recoveredMessage = await supabase.from('ticket_messages')
+                .insert({
+                    ticket_id: orphanedTicket.id,
+                    sender_type: 'Client',
+                    message: body.trim(),
+                    attachments: inboundAttachments,
+                    email_message_id: inboundMessageId,
+                })
+                .select('id')
+                .single();
+            if (recoveredMessage.error) throw recoveredMessage.error;
+
+            await supabase.from('raw_support_events')
+                .update({ status: 'processed', error_message: null, processed_at: new Date().toISOString() })
+                .eq('source', 'email_resend')
+                .eq('external_id', emailId);
+
+            return json({
+                ok: true,
+                duplicate: true,
+                repaired: true,
+                ticket_id: orphanedTicket.id,
+                ticket_number: orphanedTicket.ticket_number,
+                attachment_count: inboundAttachments.filter((attachment) => attachment.status === 'stored').length,
+            });
+        }
+
         const threadedTicket = await findThreadedTicket({
             supabase,
             subject,
@@ -1668,7 +1718,19 @@ Deno.serve(async (request) => {
             .select('id')
             .single();
 
-        if (messageInsert.error) throw messageInsert.error;
+        if (messageInsert.error) {
+            const storedPaths = inboundAttachments
+                .filter((attachment) => attachment.status === 'stored' && attachment.path)
+                .map((attachment) => attachment.path as string);
+            if (storedPaths.length) {
+                const cleanup = await supabase.storage.from(HELPDESK_ATTACHMENTS_BUCKET).remove(storedPaths);
+                if (cleanup.error) console.error('Could not clean up orphaned inbound attachments', cleanup.error);
+            }
+
+            const rollback = await supabase.from('support_tickets').delete().eq('id', ticketId);
+            if (rollback.error) console.error('Could not roll back ticket without inbound message', rollback.error);
+            throw messageInsert.error;
+        }
 
         let duplicateSignal = triage.duplicate_signal;
         if (triage.incident_fingerprint) {
