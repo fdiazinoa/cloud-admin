@@ -24,7 +24,8 @@ for (const contract of [
     assert.ok(inbound.includes(contract), `Inbound attachment contract missing: ${contract}`);
 }
 
-assert.equal((inbound.match(/attachments: inboundAttachments/g) || []).length, 2, 'New and threaded inbound messages must persist attachments');
+assert.equal((inbound.match(/attachments: inboundAttachments/g) || []).length, 3, 'New, threaded, and recovered inbound messages must persist attachments');
+assert.ok(inbound.includes('upsert: true'), 'Inbound attachment retries must be idempotent');
 assert.ok(inbound.includes("'application/pdf'"), 'Inbound processor must accept PDF files');
 assert.ok(inbound.includes("'text/plain'"), 'Inbound processor must accept text logs');
 assert.equal(inbound.includes('download_url: downloadUrl'), false, 'Temporary Resend download URLs must never be persisted');
