@@ -18,6 +18,7 @@
     "test:tenant-delete-sync-versions": "node scripts/test-tenant-delete-sync-versions.mjs",
     "test:tenant-delete-timeout": "node scripts/test-tenant-delete-timeout.mjs",
     "test:tenant-delete-append-only-history": "node scripts/test-tenant-delete-append-only-history.mjs",
+    "test:auth-user-delete-trigger": "node scripts/test-auth-user-delete-trigger.mjs",
     "test:item-tombstone-tenant-delete": "node scripts/test-item-tombstone-tenant-delete.mjs",
     "test:erp-tenant-delete-version-trigger": "node scripts/test-erp-tenant-delete-version-trigger.mjs",
     "test:erp-orphaned-delete-version-trigger": "node scripts/test-erp-orphaned-delete-version-trigger.mjs",
