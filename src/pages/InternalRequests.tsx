@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Lightbulb, Loader2, Plus, Search, UserRound, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Lightbulb, Loader2, Plus, Search, UserRound, X } from 'lucide-react';
 import {
     createInternalRequest,
     listInternalRequests,
@@ -67,6 +67,7 @@ export const InternalRequests: React.FC = () => {
     const [statusFilter, setStatusFilter] = useState<'all' | InternalRequestStatus>('all');
     const [productFilter, setProductFilter] = useState<'all' | InternalRequestProduct>('all');
     const [isCreateOpen, setIsCreateOpen] = useState(false);
+    const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
 
     const load = async () => {
         setLoading(true);
@@ -169,31 +170,55 @@ export const InternalRequests: React.FC = () => {
                                 {visibleRequests.map((request) => {
                                     const reporter = normalizeRelation(request.reporter);
                                     const assignee = normalizeRelation(request.assignee);
+                                    const isExpanded = expandedRequestId === request.id;
                                     return (
-                                        <tr key={request.id} className="align-middle transition-colors hover:bg-slate-50/80">
-                                            <td className="px-4 py-3">
-                                                <div className="flex items-start gap-2.5">
-                                                    <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${request.request_type === 'problem' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600'}`}>
-                                                        {request.request_type === 'problem' ? <AlertTriangle size={14} /> : <Lightbulb size={14} />}
-                                                    </span>
-                                                    <div className="min-w-0">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-[10px] font-black text-slate-400">#{request.request_number}</span>
-                                                            <span className="text-sm font-black text-slate-900">{request.title}</span>
+                                        <React.Fragment key={request.id}>
+                                            <tr className={`align-middle transition-colors hover:bg-slate-50/80 ${isExpanded ? 'bg-indigo-50/30' : ''}`}>
+                                                <td className="px-4 py-3">
+                                                    <div className="flex items-start gap-2.5">
+                                                        <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${request.request_type === 'problem' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600'}`}>
+                                                            {request.request_type === 'problem' ? <AlertTriangle size={14} /> : <Lightbulb size={14} />}
+                                                        </span>
+                                                        <div className="min-w-0">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[10px] font-black text-slate-400">#{request.request_number}</span>
+                                                                <span className="text-sm font-black text-slate-900">{request.title}</span>
+                                                            </div>
+                                                            <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">{request.description}</p>
+                                                            <button
+                                                                type="button"
+                                                                aria-expanded={isExpanded}
+                                                                aria-controls={`internal-request-detail-${request.id}`}
+                                                                onClick={() => setExpandedRequestId(isExpanded ? null : request.id)}
+                                                                className="mt-1 inline-flex items-center gap-1 text-[11px] font-black text-indigo-600 hover:text-indigo-800"
+                                                            >
+                                                                {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                                                {isExpanded ? 'Ocultar detalle' : 'Ver detalle'}
+                                                            </button>
                                                         </div>
-                                                        <p className="mt-0.5 line-clamp-1 text-xs text-slate-500" title={request.description}>{request.description}</p>
                                                     </div>
-                                                </div>
-                                            </td>
-                                            <td className="px-3 py-3"><span className="rounded-md bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-700">{productLabels[request.product]}</span></td>
-                                            <td className="px-3 py-3"><span className={`rounded-md px-2 py-1 text-[11px] font-black ${priorityStyles[request.priority]}`}>{request.priority}</span></td>
-                                            <td className="px-3 py-3"><select aria-label={`Estado de ${request.title}`} value={request.status} onChange={(event) => void update(request.id, { status: event.target.value as InternalRequestStatus })} className={`w-full rounded-lg border px-2 py-1.5 text-[11px] font-bold ${statusStyles[request.status]}`}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
-                                            <td className="px-3 py-3"><select aria-label={`Responsable de ${request.title}`} value={assignee?.id || ''} onChange={(event) => void update(request.id, { assignedTo: event.target.value || null })} className="input py-1.5 text-[11px]"><option value="">Sin asignar</option>{users.map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}</select></td>
-                                            <td className="px-4 py-3">
-                                                <p className="flex items-center gap-1 text-xs font-bold text-slate-700"><UserRound size={12} />{reporter?.full_name || 'Usuario interno'}</p>
-                                                <p className="mt-0.5 text-[10px] text-slate-400">{formatDate(request.created_at)}</p>
-                                            </td>
-                                        </tr>
+                                                </td>
+                                                <td className="px-3 py-3"><span className="rounded-md bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-700">{productLabels[request.product]}</span></td>
+                                                <td className="px-3 py-3"><span className={`rounded-md px-2 py-1 text-[11px] font-black ${priorityStyles[request.priority]}`}>{request.priority}</span></td>
+                                                <td className="px-3 py-3"><select aria-label={`Estado de ${request.title}`} value={request.status} onChange={(event) => void update(request.id, { status: event.target.value as InternalRequestStatus })} className={`w-full rounded-lg border px-2 py-1.5 text-[11px] font-bold ${statusStyles[request.status]}`}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
+                                                <td className="px-3 py-3"><select aria-label={`Responsable de ${request.title}`} value={assignee?.id || ''} onChange={(event) => void update(request.id, { assignedTo: event.target.value || null })} className="input py-1.5 text-[11px]"><option value="">Sin asignar</option>{users.map((user) => <option key={user.id} value={user.id}>{user.full_name}</option>)}</select></td>
+                                                <td className="px-4 py-3">
+                                                    <p className="flex items-center gap-1 text-xs font-bold text-slate-700"><UserRound size={12} />{reporter?.full_name || 'Usuario interno'}</p>
+                                                    <p className="mt-0.5 text-[10px] text-slate-400">{formatDate(request.created_at)}</p>
+                                                </td>
+                                            </tr>
+                                            {isExpanded ? (
+                                                <tr id={`internal-request-detail-${request.id}`} className="bg-indigo-50/30">
+                                                    <td colSpan={6} className="px-4 pb-4 pt-0">
+                                                        <div className="ml-9 rounded-lg border border-indigo-100 bg-white px-4 py-3 shadow-sm">
+                                                            <p className="text-[10px] font-black uppercase tracking-wider text-indigo-500">Descripción completa</p>
+                                                            <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700">{request.description}</p>
+                                                            {request.source_page ? <p className="mt-3 border-t border-slate-100 pt-2 text-[11px] text-slate-400">Origen: {request.source_page}</p> : null}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ) : null}
+                                        </React.Fragment>
                                     );
                                 })}
                             </tbody>
