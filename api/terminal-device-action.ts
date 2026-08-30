@@ -17,6 +17,9 @@ type DeviceActionPayload = {
     device_id?: unknown;
     action?: unknown;
     reason?: unknown;
+    confirm_action?: unknown;
+    idempotency_key?: unknown;
+    requested_by?: unknown;
 };
 
 type RegistryRecord = {
@@ -54,7 +57,7 @@ function setCors(response: ServerResponse) {
     response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     response.setHeader(
         "Access-Control-Allow-Headers",
-        "Content-Type, Authorization, X-Actor-User-Id, X-Actor-Email, X-Actor-Source",
+        "Content-Type, Authorization, X-Actor-User-Id, X-Actor-Email, X-Actor-Source, Idempotency-Key, X-Idempotency-Key",
     );
 }
 
@@ -930,6 +933,9 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 "X-Actor-Source": getHeader(request.headers, "x-actor-source") || "cloud-admin-api",
                 "X-Actor-Email": getHeader(request.headers, "x-actor-email") || "",
                 "X-Actor-User-Id": getHeader(request.headers, "x-actor-user-id") || "",
+                "Idempotency-Key": getHeader(request.headers, "idempotency-key")
+                    || stringValue(body.idempotency_key)
+                    || "",
             },
             body: JSON.stringify(body),
         });
@@ -963,7 +969,11 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             return;
         }
 
-        if (!edgeResponse.ok && isTenantDeviceUniqueConflict(edgePayload || payloadText)) {
+        if (
+            !edgeResponse.ok
+            && body.action !== "TAKEOVER"
+            && isTenantDeviceUniqueConflict(edgePayload || payloadText)
+        ) {
             const fallback = await repairDuplicateTenantDeviceRegistry(body, request.headers, supabaseUrl, serviceRoleKey);
             sendJson(response, fallback.statusCode, fallback.body);
             return;
