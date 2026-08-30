@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:tenant-semantics": "node scripts/test-tenant-semantics.mjs",
+    "test:tenant-license-provisioning": "node scripts/test-tenant-license-provisioning.mjs",
     "test:activation-tenant-resolution": "node scripts/test-activation-tenant-resolution.mjs",
     "test:auth-password-change": "node scripts/test-auth-password-change.mjs",
     "test:terminal-device-auth": "node scripts/test-terminal-device-auth.mjs",
