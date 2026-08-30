@@ -219,7 +219,7 @@ async function validateCanonicalErpActionScope(
 
 async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
     const requestId = stringValue(payload.request_id);
-    if (!requestId) return { ok: true as const };
+    if (!requestId) return { ok: true as const, requestId: null };
     const tenantId = stringValue(payload.tenant_id);
     const terminalId = stringValue(payload.terminal_id);
     const requestedDeviceId = stringValue(payload.device_id);
@@ -242,31 +242,43 @@ async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
         return { ok: false as const, status: erpResponse.status, error: "ERP_AUTH_ATTEMPTS_FAILED", message: "El ERP no pudo confirmar la solicitud seleccionada." };
     }
     const responseRecord = asRecord(erpPayload);
-    const attempts = Array.isArray(responseRecord.attempts)
-        ? responseRecord.attempts.map(asRecord)
-        : Array.isArray(responseRecord.data)
-            ? responseRecord.data.map(asRecord)
-            : Array.isArray(responseRecord.items)
-                ? responseRecord.items.map(asRecord)
-            : [];
-    const attempt = attempts.find((item) => stringValue(item.id) === requestId);
-    const status = (stringValue(attempt?.resolution_status) || stringValue(attempt?.status) || "").toUpperCase();
-    const legacyPendingInferred = status === "REJECTED"
-        && stringValue(attempt?.reason)?.toUpperCase() === "DEVICE_SUPERSEDED"
-        && !stringValue(attempt?.resolved_at)
-        && !stringValue(attempt?.resolved_by);
-    const attemptDeviceId = stringValue(attempt?.requested_device_id) || stringValue(attempt?.request_device_id);
+    const attempts = Array.isArray(erpPayload)
+        ? erpPayload.map(asRecord)
+        : Array.isArray(responseRecord.attempts)
+            ? responseRecord.attempts.map(asRecord)
+            : Array.isArray(responseRecord.data)
+                ? responseRecord.data.map(asRecord)
+                : Array.isArray(responseRecord.items)
+                    ? responseRecord.items.map(asRecord)
+                    : [];
     const expectedAuthorizedDeviceId = stringValue(payload.expected_authorized_device_id);
-    const attemptAuthorizedDeviceId = stringValue(attempt?.authorized_device_id);
-    if (
-        !attempt
-        || (status !== "PENDING" && !legacyPendingInferred)
-        || attemptDeviceId !== requestedDeviceId
-        || (expectedAuthorizedDeviceId && attemptAuthorizedDeviceId && attemptAuthorizedDeviceId !== expectedAuthorizedDeviceId)
-    ) {
-        return { ok: false as const, status: 409, error: "DEVICE_REQUEST_MISMATCH", message: "La solicitud cambió, dejó de estar pendiente o no coincide con el estado canónico." };
+    const isMatchingPendingAttempt = (attempt: Record<string, unknown>) => {
+        const status = (stringValue(attempt.resolution_status) || stringValue(attempt.status) || "").toUpperCase();
+        const legacyPendingInferred = status === "REJECTED"
+            && stringValue(attempt.reason)?.toUpperCase() === "DEVICE_SUPERSEDED"
+            && !stringValue(attempt.resolved_at)
+            && !stringValue(attempt.resolved_by);
+        const attemptDeviceId = stringValue(attempt.requested_device_id) || stringValue(attempt.request_device_id);
+        const attemptAuthorizedDeviceId = stringValue(attempt.authorized_device_id);
+        return (status === "PENDING" || legacyPendingInferred)
+            && attemptDeviceId === requestedDeviceId
+            && (!expectedAuthorizedDeviceId || !attemptAuthorizedDeviceId || attemptAuthorizedDeviceId === expectedAuthorizedDeviceId);
+    };
+    const exactAttempt = attempts.find((item) => stringValue(item.id) === requestId);
+    const currentAttempt = exactAttempt && isMatchingPendingAttempt(exactAttempt)
+        ? exactAttempt
+        : attempts.find(isMatchingPendingAttempt);
+    if (!currentAttempt) {
+        return {
+            ok: false as const,
+            status: 409,
+            error: exactAttempt ? "DEVICE_REQUEST_NOT_PENDING" : "DEVICE_REQUEST_NOT_FOUND",
+            message: exactAttempt
+                ? "La solicitud seleccionada ya no está pendiente o cambió el dispositivo autorizado. Recarga el estado canónico."
+                : "El ERP ya no devuelve una solicitud pendiente para este dispositivo. Recarga las solicitudes.",
+        };
     }
-    return { ok: true as const };
+    return { ok: true as const, requestId: stringValue(currentAttempt.id) || requestId };
 }
 
 function getTextCandidate(...values: unknown[]) {
@@ -951,6 +963,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             return;
         }
 
+        let validatedRequestId = stringValue(body.request_id);
         if (tenantId) {
             const scopeValidation = await validateCanonicalErpActionScope(admin, body);
             if (!scopeValidation.ok) {
@@ -969,12 +982,14 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                     });
                     return;
                 }
+                validatedRequestId = requestValidation.requestId || validatedRequestId;
             }
             await reactivatePublicTenantCatalog(admin, tenantId);
         }
 
         const verifiedBody = {
             ...body,
+            request_id: validatedRequestId,
             requested_by: actor.email,
             actor_user_id: actor.authUserId,
         };
