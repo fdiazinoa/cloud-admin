@@ -58,6 +58,7 @@ function getAttempts(payload: unknown) {
     const record = asRecord(payload);
     if (Array.isArray(record.attempts)) return record.attempts.map(asRecord);
     if (Array.isArray(record.data)) return record.data.map(asRecord);
+    if (Array.isArray(record.items)) return record.items.map(asRecord);
     return [];
 }
 
