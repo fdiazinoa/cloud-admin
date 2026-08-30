@@ -95,11 +95,13 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
         terminal_id: terminalId,
         requested_device_id: typeof sanitized.requested_device_id === 'string'
             ? sanitized.requested_device_id
-            : typeof sanitized.device_id === 'string'
-                ? sanitized.device_id
-                : typeof sanitized.deviceId === 'string'
-                    ? sanitized.deviceId
-                    : null,
+            : typeof sanitized.request_device_id === 'string'
+                ? sanitized.request_device_id
+                : typeof sanitized.device_id === 'string'
+                    ? sanitized.device_id
+                    : typeof sanitized.deviceId === 'string'
+                        ? sanitized.deviceId
+                        : null,
         authorized_device_id: typeof sanitized.authorized_device_id === 'string'
             ? sanitized.authorized_device_id
             : null,
@@ -115,6 +117,18 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
                 ? sanitized.created_at
                 : null,
     } as AuthAttempt;
+}
+
+function dedupePendingAttempts(attempts: AuthAttempt[]): AuthAttempt[] {
+    const pendingDevices = new Set<string>();
+    return attempts.filter((attempt) => {
+        const status = (attempt.resolution_status || attempt.status || '').toUpperCase();
+        const deviceId = attempt.requested_device_id?.trim().toUpperCase() || '';
+        if (status !== 'PENDING' || !deviceId) return true;
+        if (pendingDevices.has(deviceId)) return false;
+        pendingDevices.add(deviceId);
+        return true;
+    });
 }
 
 function getAttemptsFromPayload(payload: unknown): unknown[] {
@@ -216,7 +230,6 @@ Deno.serve(async (request) => {
         if (tenantError) throw tenantError;
         const tenant = tenantData as TenantRecord | null;
         if (!tenant) return json({ error: 'TENANT_NOT_FOUND', message: 'Tenant no encontrado.' }, 404);
-        const permissivePosErpAuth = tenant.contracted_product === 'POS_ERP' || tenant.cloud_channel === 'ERP_ACTIVE';
 
         const response = await fetch(`${erpApiUrl.replace(/\/$/, '')}/api/sync/terminals/${encodeURIComponent(terminalId)}/auth-attempts`, {
             method: 'GET',
@@ -239,15 +252,14 @@ Deno.serve(async (request) => {
             }, response.status);
         }
 
-        const attempts = getAttemptsFromPayload(payload)
+        const attempts = dedupePendingAttempts(getAttemptsFromPayload(payload)
             .map((attempt) => normalizeAttempt(attempt, tenantId, terminalId))
-            .filter((attempt) => attempt.requested_device_id || attempt.reason || attempt.message);
+            .filter((attempt) => attempt.requested_device_id || attempt.reason || attempt.message));
 
         const latestRejected = attempts.find((attempt) => {
-            const reason = (attempt.reason || '').toUpperCase();
             const status = (attempt.resolution_status || attempt.status || '').toUpperCase();
-            return reason === 'DEVICE_NOT_AUTHORIZED' && status !== 'RESOLVED';
-        }) || attempts[0] || null;
+            return status === 'PENDING' && Boolean(attempt.requested_device_id);
+        }) || null;
         const latestWithVersion = attempts.find((attempt) => getAttemptAppVersion(attempt) || getAttemptAppVersionCode(attempt)) || null;
 
         if (latestRejected?.requested_device_id) {
@@ -255,19 +267,10 @@ Deno.serve(async (request) => {
             const appVersionCode = getAttemptAppVersionCode(latestRejected) || getAttemptAppVersionCode(latestWithVersion);
             const registryUpdate: Record<string, unknown> = {
                 last_rejected_device_id: latestRejected.requested_device_id,
-                authorized_device_id: permissivePosErpAuth
-                    ? latestRejected.requested_device_id
-                    : latestRejected.authorized_device_id || null,
-                auth_status: permissivePosErpAuth ? 'AUTHORIZED' : 'DEVICE_MISMATCH',
-                last_auth_error: permissivePosErpAuth ? null : latestRejected.reason || latestRejected.message || 'DEVICE_NOT_AUTHORIZED',
+                last_auth_error: latestRejected.reason || latestRejected.message || 'DEVICE_NOT_AUTHORIZED',
                 last_auth_attempt_at: latestRejected.attempted_at || latestRejected.created_at || new Date().toISOString(),
-                requires_pos_reauth: false,
                 updated_at: new Date().toISOString(),
             };
-            if (permissivePosErpAuth) {
-                registryUpdate.device_id = latestRejected.requested_device_id;
-                registryUpdate.current_device_id = latestRejected.requested_device_id;
-            }
             if (appVersion) registryUpdate.app_version = appVersion;
             if (appVersionCode) registryUpdate.app_version_code = appVersionCode;
 
@@ -280,10 +283,12 @@ Deno.serve(async (request) => {
             if (updateError) {
                 console.error('Failed to persist latest auth attempt metadata', updateError);
             }
-        } else if (latestWithVersion) {
+        } else if (attempts.length > 0) {
             const appVersion = getAttemptAppVersion(latestWithVersion);
             const appVersionCode = getAttemptAppVersionCode(latestWithVersion);
             const registryUpdate: Record<string, unknown> = {
+                last_rejected_device_id: null,
+                last_auth_error: null,
                 updated_at: new Date().toISOString(),
             };
             if (appVersion) registryUpdate.app_version = appVersion;

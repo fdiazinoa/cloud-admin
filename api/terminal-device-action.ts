@@ -1,5 +1,6 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { createClient } from "@supabase/supabase-js";
+import { CloudAdminAuthError, requireCloudAdminPermission, type AnySupabaseClient } from "./lib/cloud-admin-session";
 
 type ApiRequest = IncomingMessage & {
     body?: unknown;
@@ -14,7 +15,10 @@ type DeviceActionPayload = {
     store_id?: unknown;
     registry_id?: unknown;
     terminal_name?: unknown;
+    device_name?: unknown;
     device_id?: unknown;
+    request_id?: unknown;
+    expected_authorized_device_id?: unknown;
     action?: unknown;
     reason?: unknown;
     confirm_action?: unknown;
@@ -148,7 +152,7 @@ async function readBody(request: ApiRequest) {
 }
 
 async function loadCanonicalErpTerminal(
-    supabase: ReturnType<typeof createClient>,
+    supabase: AnySupabaseClient,
     terminalId: string,
 ) {
     const { data, error } = await supabase
@@ -164,7 +168,7 @@ async function loadCanonicalErpTerminal(
 const canonicalIdentityRequiredMessage = "Debe reconciliarse esta identidad con una terminal ERP antes de modificar la autorización.";
 
 async function validateCanonicalErpActionScope(
-    supabase: ReturnType<typeof createClient>,
+    supabase: AnySupabaseClient,
     payload: DeviceActionPayload,
 ) {
     const tenantId = stringValue(payload.tenant_id);
@@ -214,6 +218,52 @@ async function validateCanonicalErpActionScope(
     return { ok: true as const };
 }
 
+async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
+    const requestId = stringValue(payload.request_id);
+    if (!requestId) return { ok: true as const };
+    const tenantId = stringValue(payload.tenant_id);
+    const terminalId = stringValue(payload.terminal_id);
+    const requestedDeviceId = stringValue(payload.device_id);
+    if (!tenantId || !terminalId || !requestedDeviceId) {
+        return { ok: false as const, status: 400, error: "DEVICE_REQUEST_INVALID", message: "Solicitud, tenant, terminal y dispositivo son requeridos." };
+    }
+
+    const erpApiUrl = getEnv("ERP_API_URL", "CLOUD_ADMIN_ERP_API_URL").replace(/\/$/, "");
+    const erpServiceToken = getEnv("ERP_TAKEOVER_SERVICE_TOKEN", "ERP_SERVICE_TOKEN", "CLOUD_ADMIN_ERP_SERVICE_TOKEN");
+    const erpResponse = await fetch(`${erpApiUrl}/api/sync/terminals/${encodeURIComponent(terminalId)}/auth-attempts`, {
+        headers: {
+            Authorization: `Bearer ${erpServiceToken}`,
+            "X-Tenant-Id": tenantId,
+            "X-Cloud-Admin-Tenant-Id": tenantId,
+        },
+        signal: AbortSignal.timeout(10_000),
+    });
+    const erpPayload = await erpResponse.json().catch(() => null);
+    if (!erpResponse.ok) {
+        return { ok: false as const, status: erpResponse.status, error: "ERP_AUTH_ATTEMPTS_FAILED", message: "El ERP no pudo confirmar la solicitud seleccionada." };
+    }
+    const responseRecord = asRecord(erpPayload);
+    const attempts = Array.isArray(responseRecord.attempts)
+        ? responseRecord.attempts.map(asRecord)
+        : Array.isArray(responseRecord.data)
+            ? responseRecord.data.map(asRecord)
+            : [];
+    const attempt = attempts.find((item) => stringValue(item.id) === requestId);
+    const status = (stringValue(attempt?.resolution_status) || stringValue(attempt?.status) || "").toUpperCase();
+    const attemptDeviceId = stringValue(attempt?.requested_device_id) || stringValue(attempt?.request_device_id);
+    const expectedAuthorizedDeviceId = stringValue(payload.expected_authorized_device_id);
+    const attemptAuthorizedDeviceId = stringValue(attempt?.authorized_device_id);
+    if (
+        !attempt
+        || status !== "PENDING"
+        || attemptDeviceId !== requestedDeviceId
+        || (expectedAuthorizedDeviceId && attemptAuthorizedDeviceId && attemptAuthorizedDeviceId !== expectedAuthorizedDeviceId)
+    ) {
+        return { ok: false as const, status: 409, error: "DEVICE_REQUEST_MISMATCH", message: "La solicitud cambió, dejó de estar pendiente o no coincide con el estado canónico." };
+    }
+    return { ok: true as const };
+}
+
 function getTextCandidate(...values: unknown[]) {
     for (const value of values) {
         const text = stringValue(value);
@@ -232,7 +282,7 @@ function buildCatalogCode(value: string | null, fallback: string) {
 }
 
 async function loadTenantForCatalog(
-    supabase: ReturnType<typeof createClient>,
+    supabase: AnySupabaseClient,
     tenantId: string,
 ) {
     const { data, error } = await supabase
@@ -245,7 +295,7 @@ async function loadTenantForCatalog(
 }
 
 async function preservePublicTerminalCatalog(
-    supabase: ReturnType<typeof createClient>,
+    supabase: AnySupabaseClient,
     tenant: TenantRecord,
     terminal: ErpTerminalRecord | null,
     fallbackTerminalName?: string | null,
@@ -315,7 +365,7 @@ async function preservePublicTerminalCatalog(
 }
 
 async function reactivatePublicTenantCatalog(
-    supabase: ReturnType<typeof createClient>,
+    supabase: AnySupabaseClient,
     tenantId: string,
 ) {
     const tenant = await loadTenantForCatalog(supabase, tenantId);
@@ -405,7 +455,7 @@ function erpTerminalMatchesClearTarget(
 }
 
 async function loadErpTerminalsForClear(
-    supabase: ReturnType<typeof createClient>,
+    supabase: AnySupabaseClient,
     terminalId: string,
     terminalName?: string | null,
 ) {
@@ -476,7 +526,7 @@ function buildArchivedDuplicateErpTerminalConfig(terminal: ErpTerminalRecord, ca
 }
 
 async function clearErpTerminalDeviceBindings(
-    supabase: ReturnType<typeof createClient>,
+    supabase: AnySupabaseClient,
     terminalId: string,
     terminalName?: string | null,
 ) {
@@ -855,15 +905,6 @@ async function repairDuplicateTenantDeviceRegistry(
     };
 }
 
-function isAuthorizedRequest(request: ApiRequest) {
-    const authorization = getHeader(request.headers, "authorization") ?? "";
-    const bearerToken = authorization.replace(/^Bearer\s+/i, "").trim();
-    if (!bearerToken) return false;
-
-    const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-    return bearerToken === serviceRoleKey;
-}
-
 export default async function handler(request: ApiRequest, response: ServerResponse) {
     if (request.method === "OPTIONS") {
         setCors(response);
@@ -877,15 +918,11 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         return;
     }
 
-    if (!isAuthorizedRequest(request)) {
-        sendJson(response, 401, { error: "UNAUTHORIZED", message: "No autorizado para ejecutar esta accion." });
-        return;
-    }
-
     try {
+        const { admin, actor } = await requireCloudAdminPermission(request.headers, "terminal_reauthorization");
         const body = await readBody(request) as DeviceActionPayload;
         const supabaseUrl = getEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/$/, "");
-        const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
+        const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
         const tenantId = stringValue(body.tenant_id);
 
         if (requiresDeviceId(body.action) && !stringValue(body.device_id)) {
@@ -910,11 +947,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         }
 
         if (tenantId) {
-            const supabase = createClient(supabaseUrl, serviceRoleKey, {
-                auth: { autoRefreshToken: false, persistSession: false },
-                db: { schema: "landlord" },
-            });
-            const scopeValidation = await validateCanonicalErpActionScope(supabase, body);
+            const scopeValidation = await validateCanonicalErpActionScope(admin, body);
             if (!scopeValidation.ok) {
                 sendJson(response, scopeValidation.status, {
                     error: scopeValidation.error,
@@ -922,22 +955,38 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 });
                 return;
             }
-            await reactivatePublicTenantCatalog(supabase, tenantId);
+            if (body.action === "TAKEOVER") {
+                const requestValidation = await validatePendingDeviceRequest(body);
+                if (!requestValidation.ok) {
+                    sendJson(response, requestValidation.status, {
+                        error: requestValidation.error,
+                        message: requestValidation.message,
+                    });
+                    return;
+                }
+            }
+            await reactivatePublicTenantCatalog(admin, tenantId);
         }
+
+        const verifiedBody = {
+            ...body,
+            requested_by: actor.email,
+            actor_user_id: actor.authUserId,
+        };
 
         const edgeResponse = await fetch(`${supabaseUrl}/functions/v1/request-terminal-device-authorization`, {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${serviceRoleKey}`,
                 "Content-Type": "application/json",
-                "X-Actor-Source": getHeader(request.headers, "x-actor-source") || "cloud-admin-api",
-                "X-Actor-Email": getHeader(request.headers, "x-actor-email") || "",
-                "X-Actor-User-Id": getHeader(request.headers, "x-actor-user-id") || "",
+                "X-Actor-Source": "cloud-admin-api",
+                "X-Actor-Email": actor.email,
+                "X-Actor-User-Id": actor.authUserId,
                 "Idempotency-Key": getHeader(request.headers, "idempotency-key")
                     || stringValue(body.idempotency_key)
                     || "",
             },
-            body: JSON.stringify(body),
+            body: JSON.stringify(verifiedBody),
         });
 
         const payloadText = await edgeResponse.text();
@@ -984,6 +1033,10 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         response.setHeader("Content-Type", edgeResponse.headers.get("content-type") || "application/json");
         response.end(payloadText || "{}");
     } catch (error) {
+        if (error instanceof CloudAdminAuthError) {
+            sendJson(response, error.status, { error: error.code, message: error.message });
+            return;
+        }
         console.error("terminal-device-action proxy failed", error);
         sendJson(response, 500, {
             error: "INTERNAL_ERROR",

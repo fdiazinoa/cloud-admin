@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
-import { createClient } from "@supabase/supabase-js";
+import { CloudAdminAuthError, requireCloudAdminPermission } from "./lib/cloud-admin-session";
 
 type ApiRequest = IncomingMessage & {
     body?: unknown;
@@ -14,8 +14,6 @@ type AuthAttemptsPayload = {
 
 type TenantRecord = {
     id: string;
-    contracted_product?: string | null;
-    cloud_channel?: string | null;
 };
 
 type AuthAttempt = {
@@ -69,11 +67,6 @@ function getEnv(...names: string[]) {
     throw new Error(`Missing required environment variable: ${names.join(" or ")}`);
 }
 
-function getHeader(headers: IncomingHttpHeaders, name: string) {
-    const value = headers[name.toLowerCase()];
-    return Array.isArray(value) ? value[0] : value;
-}
-
 function stringValue(value: unknown) {
     return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -120,6 +113,7 @@ function getAttemptsFromPayload(payload: unknown): unknown[] {
 function normalizeAttempt(value: unknown, tenantId: string, terminalId: string): AuthAttempt {
     const sanitized = sanitizePayload(asRecord(value)) as Record<string, unknown>;
     const requestedDeviceId = stringValue(sanitized.requested_device_id)
+        || stringValue(sanitized.request_device_id)
         || stringValue(sanitized.device_id)
         || stringValue(sanitized.deviceId)
         || stringValue(sanitized.requestedDeviceId);
@@ -142,6 +136,18 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
         resolution_status: resolutionStatus,
         attempted_at: attemptedAt,
     };
+}
+
+function dedupePendingAttempts(attempts: AuthAttempt[]) {
+    const pendingDevices = new Set<string>();
+    return attempts.filter((attempt) => {
+        const status = (attempt.resolution_status || attempt.status || "").toUpperCase();
+        const deviceId = attempt.requested_device_id?.trim().toUpperCase() || "";
+        if (status !== "PENDING" || !deviceId) return true;
+        if (pendingDevices.has(deviceId)) return false;
+        pendingDevices.add(deviceId);
+        return true;
+    });
 }
 
 function getAttemptAppVersion(attempt: AuthAttempt | null) {
@@ -194,13 +200,39 @@ function getErpAuthAttemptsErrorMessage(status: number, payload: unknown) {
     return detail || "No se pudieron cargar los intentos rechazados desde el ERP.";
 }
 
-function isAuthorizedRequest(request: ApiRequest) {
-    const authorization = getHeader(request.headers, "authorization") ?? "";
-    const bearerToken = authorization.replace(/^Bearer\s+/i, "").trim();
-    if (!bearerToken) return false;
+async function validateTerminalTenantScope(
+    admin: Awaited<ReturnType<typeof requireCloudAdminPermission>>["admin"],
+    tenantId: string,
+    terminalId: string,
+) {
+    const { data: terminal, error: terminalError } = await admin
+        .schema("public")
+        .from("erp_terminals")
+        .select("id,store_id")
+        .eq("id", terminalId)
+        .maybeSingle();
+    if (terminalError) throw terminalError;
+    const storeId = stringValue((terminal as Record<string, unknown> | null)?.store_id);
+    if (!storeId) return false;
 
-    const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
-    return bearerToken === serviceRoleKey;
+    const { data: store, error: storeError } = await admin
+        .schema("public")
+        .from("erp_stores")
+        .select("tenant_id")
+        .eq("id", storeId)
+        .maybeSingle();
+    if (storeError) throw storeError;
+
+    const { data: erpTenant, error: tenantError } = await admin
+        .schema("public")
+        .from("erp_tenants")
+        .select("id")
+        .eq("config->>cloudAdminTenantId", tenantId)
+        .maybeSingle();
+    if (tenantError) throw tenantError;
+
+    return stringValue((store as Record<string, unknown> | null)?.tenant_id)
+        === stringValue((erpTenant as Record<string, unknown> | null)?.id);
 }
 
 export default async function handler(request: ApiRequest, response: ServerResponse) {
@@ -216,12 +248,8 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         return;
     }
 
-    if (!isAuthorizedRequest(request)) {
-        sendJson(response, 401, { error: "UNAUTHORIZED", message: "No autorizado para consultar intentos de autorizacion." });
-        return;
-    }
-
     try {
+        const { admin } = await requireCloudAdminPermission(request.headers, "terminal_reauthorization");
         const body = await readBody(request) as AuthAttemptsPayload;
         const tenantId = stringValue(body.tenant_id);
         const terminalId = stringValue(body.terminal_id);
@@ -234,24 +262,25 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             return;
         }
 
-        const supabaseUrl = getEnv("SUPABASE_URL", "VITE_SUPABASE_URL").replace(/\/$/, "");
-        const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY", "VITE_SUPABASE_SERVICE_ROLE_KEY");
         const erpApiUrl = getEnv("ERP_API_URL", "CLOUD_ADMIN_ERP_API_URL").replace(/\/$/, "");
         const erpServiceToken = getEnv("ERP_TAKEOVER_SERVICE_TOKEN", "ERP_SERVICE_TOKEN", "CLOUD_ADMIN_ERP_SERVICE_TOKEN");
-        const supabase = createClient(supabaseUrl, serviceRoleKey, {
-            auth: { autoRefreshToken: false, persistSession: false },
-            db: { schema: "landlord" },
-        });
 
-        const { data: tenantData, error: tenantError } = await supabase
+        const { data: tenantData, error: tenantError } = await admin
             .from("tenants")
-            .select("id,contracted_product,cloud_channel")
+            .select("id")
             .eq("id", tenantId)
             .maybeSingle();
         if (tenantError) throw tenantError;
         const tenant = tenantData as TenantRecord | null;
         if (!tenant) {
             sendJson(response, 404, { error: "TENANT_NOT_FOUND", message: "Tenant no encontrado." });
+            return;
+        }
+        if (!await validateTerminalTenantScope(admin, tenantId, terminalId)) {
+            sendJson(response, 403, {
+                error: "TERMINAL_TENANT_MISMATCH",
+                message: "La terminal y el tenant no pertenecen al mismo contexto ERP.",
+            });
             return;
         }
 
@@ -282,40 +311,29 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             return;
         }
 
-        const attempts = getAttemptsFromPayload(erpPayload)
+        const attempts = dedupePendingAttempts(getAttemptsFromPayload(erpPayload)
             .map((attempt) => normalizeAttempt(attempt, tenantId, terminalId))
-            .filter((attempt) => attempt.requested_device_id || attempt.reason || attempt.message);
+            .filter((attempt) => attempt.requested_device_id || attempt.reason || attempt.message));
 
         const latestRejected = attempts.find((attempt) => {
-            const reason = (attempt.reason || "").toUpperCase();
             const status = (attempt.resolution_status || attempt.status || "").toUpperCase();
-            return reason === "DEVICE_NOT_AUTHORIZED" && status !== "RESOLVED";
-        }) || attempts[0] || null;
+            return status === "PENDING" && Boolean(attempt.requested_device_id);
+        }) || null;
         const latestWithVersion = attempts.find((attempt) => getAttemptAppVersion(attempt) || getAttemptAppVersionCode(attempt)) || null;
 
         if (latestRejected?.requested_device_id) {
-            const permissivePosErpAuth = tenant.contracted_product === "POS_ERP" || tenant.cloud_channel === "ERP_ACTIVE";
             const appVersion = getAttemptAppVersion(latestRejected) || getAttemptAppVersion(latestWithVersion);
             const appVersionCode = getAttemptAppVersionCode(latestRejected) || getAttemptAppVersionCode(latestWithVersion);
             const registryUpdate: Record<string, unknown> = {
                 last_rejected_device_id: latestRejected.requested_device_id,
-                authorized_device_id: permissivePosErpAuth
-                    ? latestRejected.requested_device_id
-                    : latestRejected.authorized_device_id || null,
-                auth_status: permissivePosErpAuth ? "AUTHORIZED" : "DEVICE_MISMATCH",
-                last_auth_error: permissivePosErpAuth ? null : latestRejected.reason || latestRejected.message || "DEVICE_NOT_AUTHORIZED",
+                last_auth_error: latestRejected.reason || latestRejected.message || "DEVICE_NOT_AUTHORIZED",
                 last_auth_attempt_at: latestRejected.attempted_at || latestRejected.created_at || new Date().toISOString(),
-                requires_pos_reauth: false,
                 updated_at: new Date().toISOString(),
             };
-            if (permissivePosErpAuth) {
-                registryUpdate.device_id = latestRejected.requested_device_id;
-                registryUpdate.current_device_id = latestRejected.requested_device_id;
-            }
             if (appVersion) registryUpdate.app_version = appVersion;
             if (appVersionCode) registryUpdate.app_version_code = appVersionCode;
 
-            const { error: updateError } = await supabase
+            const { error: updateError } = await admin
                 .from("tenant_server_registry")
                 .update(registryUpdate)
                 .eq("tenant_id", tenantId)
@@ -324,6 +342,17 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             if (updateError) {
                 console.warn("terminal-auth-attempts registry update failed", updateError);
             }
+        } else if (attempts.length > 0) {
+            const { error: updateError } = await admin
+                .from("tenant_server_registry")
+                .update({
+                    last_rejected_device_id: null,
+                    last_auth_error: null,
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("tenant_id", tenantId)
+                .eq("terminal_id", terminalId);
+            if (updateError) console.warn("terminal-auth-attempts stale request cleanup failed", updateError);
         }
 
         sendJson(response, 200, {
@@ -331,6 +360,10 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             attempts,
         });
     } catch (error) {
+        if (error instanceof CloudAdminAuthError) {
+            sendJson(response, error.status, { error: error.code, message: error.message });
+            return;
+        }
         console.error("terminal-auth-attempts proxy failed", error);
         sendJson(response, 500, {
             error: "INTERNAL_ERROR",

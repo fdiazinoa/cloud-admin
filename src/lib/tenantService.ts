@@ -614,7 +614,10 @@ export interface RequestTerminalDeviceActionInput {
     storeId?: string | null;
     registryId?: string | null;
     terminalName?: string | null;
+    deviceName?: string | null;
     deviceId?: string | null;
+    requestId?: string | null;
+    expectedAuthorizedDeviceId?: string | null;
     action: TerminalDeviceAction;
     reason: string;
     idempotencyKey?: string;
@@ -630,6 +633,8 @@ export interface TerminalDeviceActionResult {
     terminal_id?: string | null;
     previous_device_id?: string | null;
     operation_id?: string | null;
+    request_id?: string | null;
+    request_status?: string | null;
     takeover_confirmed?: boolean;
     previous_device_revoked?: boolean;
     rotate_device_token?: boolean;
@@ -640,6 +645,22 @@ export interface TerminalDeviceActionResult {
     cleared_registry_count?: number | null;
     cleared_device_ids?: string[] | null;
     message?: string;
+}
+
+export interface RejectTerminalDeviceRequestInput {
+    tenantId: string;
+    terminalId: string;
+    requestId: string;
+    requestedDeviceId: string;
+    idempotencyKey?: string;
+}
+
+export interface TerminalDeviceRequestResult {
+    status: string;
+    request_id: string;
+    request_status: "REJECTED";
+    operation_id?: string | null;
+    reconciled?: boolean;
 }
 
 export interface TerminalDeviceAuditEntry {
@@ -1724,10 +1745,13 @@ export async function getTerminalAuthAttempts(
     tenantId: string,
     terminalId: string,
 ): Promise<TerminalAuthAttempt[]> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) throw new Error("Sesión administrativa requerida.");
     const response = await fetch("/api/terminal-auth-attempts", {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -1937,10 +1961,12 @@ export async function requestTerminalDeviceAction(
         : input.idempotencyKey;
     const { data: sessionData } = await supabase.auth.getSession();
     const actor = sessionData.session?.user;
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) throw new Error("Sesión administrativa requerida.");
     const response = await fetch("/api/terminal-device-action", {
         method: "POST",
         headers: {
-            Authorization: `Bearer ${supabaseServiceRoleKey}`,
+            Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
             "X-Actor-User-Id": actor?.id || "",
@@ -1954,7 +1980,10 @@ export async function requestTerminalDeviceAction(
             store_id: input.storeId || null,
             registry_id: input.registryId || null,
             terminal_name: input.terminalName || null,
+            device_name: input.deviceName || null,
             device_id: input.deviceId || null,
+            request_id: input.requestId || null,
+            expected_authorized_device_id: input.expectedAuthorizedDeviceId || null,
             action: input.action,
             reason: input.action === "TAKEOVER"
                 ? "CLOUD_ADMIN_TERMINAL_REAUTHORIZATION"
@@ -1982,14 +2011,49 @@ export async function requestTerminalDeviceAction(
             && payload.previous_device_revoked === true
             && payload.rotate_device_token === true
             && payload.operation_id === idempotencyKey;
-        if (!contractValid) {
+        const requestContractValid = !input.requestId
+            || (payload?.request_id === input.requestId && payload.request_status?.toUpperCase() === "APPROVED");
+        if (!contractValid || !requestContractValid) {
             throw new Error(
-                "ERP_TAKEOVER_CONFIRMATION_INVALID: la respuesta no confirmó terminal, dispositivo autorizado, revocación y rotación de credenciales.",
+                "ERP_TAKEOVER_CONFIRMATION_INVALID: la respuesta no confirmó terminal, solicitud aprobada, dispositivo autorizado, revocación y rotación de credenciales.",
             );
         }
     }
 
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
+}
+
+export async function rejectTerminalDeviceRequest(
+    input: RejectTerminalDeviceRequestInput,
+): Promise<TerminalDeviceRequestResult> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) throw new Error("Sesión administrativa requerida.");
+    const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
+    const response = await fetch("/api/terminal-device-request", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey,
+        },
+        body: JSON.stringify({
+            tenant_id: input.tenantId,
+            terminal_id: input.terminalId,
+            request_id: input.requestId,
+            requested_device_id: input.requestedDeviceId,
+            reason: "CLOUD_ADMIN_TERMINAL_DEVICE_REQUEST_REJECTED",
+            idempotency_key: idempotencyKey,
+        }),
+    });
+    const payload = await response.json().catch(() => null) as (TerminalDeviceRequestResult & { message?: string; error?: string }) | null;
+    if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || "No se pudo rechazar la solicitud de dispositivo.");
+    }
+    if (payload?.request_id !== input.requestId || payload.request_status !== "REJECTED") {
+        throw new Error("ERP_REJECTION_CONFIRMATION_INVALID: el ERP no confirmó la solicitud rechazada.");
+    }
+    return payload;
 }
 
 export async function getTerminalDeviceAudit(
@@ -2640,6 +2704,7 @@ export const tenantService = {
     getTerminalSyncPending,
     retryTerminalSyncPending,
     getTerminalAuthAttempts,
+    rejectTerminalDeviceRequest,
     getTerminalDeviceAudit,
     requestTerminalDeviceAction,
     requestTerminalReconciliation,
