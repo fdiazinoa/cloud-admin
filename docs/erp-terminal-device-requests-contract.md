@@ -145,3 +145,5 @@ Rechazar no modifica `erp_terminals.authorized_device_id` ni las credenciales de
 El ERP debe devolver códigos estables: `DEVICE_SUPERSEDED`, `DEVICE_NOT_AUTHORIZED`, `TAKEOVER_REQUIRED`, `TAKEOVER_POLICY_DENIED`, `TERMINAL_NOT_FOUND`, `TENANT_MISMATCH`, `DEVICE_REQUEST_MISMATCH`, `DEVICE_REQUEST_NOT_PENDING`, `TERMINAL_BINDING_CHANGED_RETRY` y `TAKEOVER_RESPONSE_AMBIGUOUS`.
 
 Ninguno de estos flujos puede usar `/api/sync/terminals/register`, `/api/setup/bind-terminal` ni un JWT administrativo enviado desde el POS.
+
+El `catalog_terminal_id` puede coincidir con el `terminal_id` canónico cuando el catálogo Cloud fue reconciliado reutilizando el UUID ERP. Esa igualdad no bloquea la operación: el backend debe comprobar que el UUID existe en `erp_terminals`, que su `store_id` coincide y que la tienda pertenece al tenant ERP resuelto para el tenant de Cloud Admin.
