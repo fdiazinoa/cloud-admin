@@ -8,6 +8,45 @@ export interface ChangeCurrentPasswordInput {
     confirmPassword: string;
 }
 
+export interface ResetPasswordInput {
+    newPassword: string;
+    confirmPassword: string;
+}
+
+export function buildPasswordRecoveryRedirectUrl(location: Pick<Location, 'origin' | 'pathname'> = window.location): string {
+    const redirectUrl = new URL(location.pathname || '/', location.origin);
+    redirectUrl.searchParams.set('passwordRecovery', '1');
+    return redirectUrl.toString();
+}
+
+export async function requestPasswordReset(email: string): Promise<void> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) throw new Error('Ingresa tu correo electrónico.');
+
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+        redirectTo: buildPasswordRecoveryRedirectUrl(),
+    });
+    if (error) throw error;
+}
+
+export function validateRecoveredPassword(input: ResetPasswordInput): string | null {
+    if (input.newPassword.length < MIN_ACCOUNT_PASSWORD_LENGTH) {
+        return `La nueva contraseña debe tener al menos ${MIN_ACCOUNT_PASSWORD_LENGTH} caracteres.`;
+    }
+    if (input.newPassword !== input.confirmPassword) {
+        return 'La confirmación no coincide con la nueva contraseña.';
+    }
+    return null;
+}
+
+export async function completePasswordRecovery(input: ResetPasswordInput): Promise<void> {
+    const validationError = validateRecoveredPassword(input);
+    if (validationError) throw new Error(validationError);
+
+    const { error } = await supabase.auth.updateUser({ password: input.newPassword });
+    if (error) throw error;
+}
+
 export function validatePasswordChange(input: ChangeCurrentPasswordInput): string | null {
     if (!input.currentPassword) return 'Ingresa tu contraseña actual.';
     if (input.newPassword.length < MIN_ACCOUNT_PASSWORD_LENGTH) {
@@ -49,4 +88,3 @@ export async function changeCurrentUserPassword(input: ChangeCurrentPasswordInpu
     });
     if (updateError) throw updateError;
 }
-
