@@ -23,6 +23,7 @@
     "test:item-tombstone-tenant-delete": "node scripts/test-item-tombstone-tenant-delete.mjs",
     "test:erp-tenant-delete-version-trigger": "node scripts/test-erp-tenant-delete-version-trigger.mjs",
     "test:erp-orphaned-delete-version-trigger": "node scripts/test-erp-orphaned-delete-version-trigger.mjs",
+    "test:erp-sync-domain-version-delete-regression": "node scripts/test-erp-sync-domain-version-delete-regression.mjs",
     "cleanup:tenant-pos-registry": "node scripts/cleanup-tenant-pos-registry.mjs",
     "test:terminal-fiscal-config": "node scripts/test-terminal-fiscal-config.mjs",
     "test:helpdesk-ticketing": "node scripts/test-helpdesk-ticketing-parity.mjs",
