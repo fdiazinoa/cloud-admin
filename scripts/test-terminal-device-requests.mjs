@@ -25,6 +25,10 @@ const [
     readFile(new URL('../docs/erp-terminal-device-requests-contract.md', import.meta.url), 'utf8'),
 ]);
 
+for (const source of [attemptsProxy, actionProxy, rejectionProxy]) {
+    assert.match(source, /from "\.\/lib\/cloud-admin-session\.js"/, 'Vercel ESM functions must import shared auth with an explicit .js extension');
+}
+
 for (const source of [attemptsProxy, edgeAttempts]) {
     assert.doesNotMatch(source, /permissivePosErpAuth/);
     assert.doesNotMatch(source, /authorized_device_id:\s*latestRejected\.requested_device_id/);
@@ -59,6 +63,7 @@ assert.match(rejectionProxy, /responseStatus !== "REJECTED"/);
 assert.match(rejectionProxy, /DEVICE_REQUEST_REJECTED/);
 
 assert.match(page, /Solicitudes de dispositivo/);
+assert.match(page, /No se pudieron cargar las solicitudes de dispositivo\./, 'UI must not present request API failures as an empty list');
 assert.match(page, /Autorizar y reemplazar/);
 assert.match(page, /Rechazar/);
 assert.match(page, /UUID ERP:/);
