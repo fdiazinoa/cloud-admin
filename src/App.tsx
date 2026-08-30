@@ -2,6 +2,8 @@ import { lazy, Suspense, useEffect, useState, type FormEvent, type ReactNode } f
 import type { Session, User } from '@supabase/supabase-js'
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { ForgotPasswordDialog } from './components/ForgotPasswordDialog'
+import { ResetPasswordScreen } from './components/ResetPasswordScreen'
 import { supabase, supabaseAdmin } from './lib/supabase'
 import type { CloudAdminProfile, CloudAdminUser } from './types'
 import type { CloudAdminPermissionKey } from './types'
@@ -42,6 +44,16 @@ function clearSupabaseAuthStorage() {
     clearMatchingKeys(window.sessionStorage);
 }
 
+function isPasswordRecoveryRedirect() {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('passwordRecovery') === '1';
+}
+
+function clearPasswordRecoveryUrl() {
+    if (typeof window === 'undefined') return;
+    window.history.replaceState(null, '', window.location.pathname || '/');
+}
+
 async function resolveCloudAdminSession(session: Session | null): Promise<CloudAdminSession | null> {
     const authUser = session?.user;
     if (!authUser?.id) return null;
@@ -75,6 +87,7 @@ function App() {
     const [cloudAdminSession, setCloudAdminSession] = useState<CloudAdminSession | null>(null);
     const [authError, setAuthError] = useState<string | null>(null);
     const [signingOut, setSigningOut] = useState(false);
+    const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(isPasswordRecoveryRedirect);
 
     useEffect(() => {
         let mounted = true;
@@ -83,6 +96,13 @@ function App() {
             try {
                 const { data, error } = await supabase.auth.getSession();
                 if (error) throw error;
+                if (isPasswordRecoveryRedirect()) {
+                    if (!mounted) return;
+                    setPasswordRecoveryMode(true);
+                    setCloudAdminSession(null);
+                    setAuthStatus(data.session ? 'authenticated' : 'unauthenticated');
+                    return;
+                }
                 const resolved = await resolveCloudAdminSession(data.session);
                 if (!mounted) return;
                 setCloudAdminSession(resolved);
@@ -105,6 +125,13 @@ function App() {
         void loadSession();
 
         const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && isPasswordRecoveryRedirect())) {
+                setPasswordRecoveryMode(true);
+                setCloudAdminSession(null);
+                setAuthStatus('authenticated');
+                return;
+            }
+
             if (event === 'SIGNED_OUT') {
                 setCloudAdminSession(null);
                 setAuthStatus('unauthenticated');
@@ -169,8 +196,27 @@ function App() {
         }
     };
 
+    const leavePasswordRecovery = async () => {
+        try {
+            await supabase.auth.signOut();
+        } catch (error) {
+            console.warn('Supabase recovery sign out returned an error; clearing local session anyway.', error);
+        } finally {
+            clearSupabaseAuthStorage();
+            clearPasswordRecoveryUrl();
+            setPasswordRecoveryMode(false);
+            setCloudAdminSession(null);
+            setAuthStatus('unauthenticated');
+            setAuthError(null);
+        }
+    };
+
     if (authStatus === 'loading') {
         return <AuthLoadingScreen />;
+    }
+
+    if (passwordRecoveryMode) {
+        return <ResetPasswordScreen onComplete={leavePasswordRecovery} onCancel={leavePasswordRecovery} />;
     }
 
     if (!cloudAdminSession) {
@@ -256,6 +302,7 @@ function LoginScreen({ error, onLogin }: { error: string | null; onLogin: (email
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [localError, setLocalError] = useState<string | null>(null);
+    const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
@@ -304,7 +351,10 @@ function LoginScreen({ error, onLogin }: { error: string | null; onLogin: (email
                         />
                     </label>
                     <label className="block">
-                        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Clave</span>
+                        <span className="flex items-center justify-between gap-3 text-xs font-black uppercase tracking-wide text-slate-500">
+                            <span>Clave</span>
+                            <button type="button" onClick={() => setForgotPasswordOpen(true)} className="normal-case tracking-normal text-indigo-600 hover:text-indigo-800">¿Olvidaste tu contraseña?</button>
+                        </span>
                         <input
                             required
                             type="password"
@@ -324,6 +374,7 @@ function LoginScreen({ error, onLogin }: { error: string | null; onLogin: (email
                     {loading ? 'Validando...' : 'Entrar'}
                 </button>
             </form>
+            <ForgotPasswordDialog open={forgotPasswordOpen} initialEmail={email} onClose={() => setForgotPasswordOpen(false)} />
         </div>
     );
 }
