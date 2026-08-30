@@ -48,6 +48,8 @@ assert.match(attemptsProxy, /requireCloudAdminPermission\(request\.headers, "ter
 assert.doesNotMatch(`${attemptsProxy}\n${actionProxy}`, /bearerToken === serviceRoleKey/);
 assert.match(actionProxy, /validateCanonicalErpActionScope/);
 assert.match(actionProxy, /validatePendingDeviceRequest/);
+assert.doesNotMatch(actionProxy, /terminalId === catalogTerminalId/, 'a catalog row may legitimately reuse the canonical ERP UUID after database scope verification');
+assert.doesNotMatch(edgeAction, /terminalId === catalogTerminalId/, 'the Edge Function must rely on the canonical ERP\/store\/tenant lookup, not UUID inequality');
 
 assert.match(edgeAction, /request_id:\s*requestId/);
 assert.match(edgeAction, /expected_authorized_device_id:\s*expectedAuthorizedDeviceId/);

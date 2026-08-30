@@ -1400,7 +1400,6 @@ Deno.serve(async (request) => {
         let canonicalErpTerminal: ErpTerminalRecord | null = null;
         if (requiresCanonicalErp) {
             const blocked = !isUuid(terminalId)
-                || terminalId === catalogTerminalId
                 || !requestedStoreId
                 || !isUuid(requestedStoreId);
             if (blocked) {
