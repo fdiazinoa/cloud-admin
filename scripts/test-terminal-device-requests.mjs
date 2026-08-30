@@ -37,7 +37,8 @@ for (const source of [attemptsProxy, edgeAttempts]) {
     assert.match(source, /dedupePendingAttempts/);
     assert.match(source, /legacyPendingInferred/);
     assert.match(source, /DEVICE_SUPERSEDED/);
-    assert.match(source, /serverless/);
+    assert.match(source, /resolved_at/);
+    assert.match(source, /resolved_by/);
 }
 
 assert.match(sessionGuard, /admin\.auth\.getUser\(accessToken\)/);
