@@ -55,6 +55,7 @@ async function readBody(request: ApiRequest) {
 }
 
 function getAttempts(payload: unknown) {
+    if (Array.isArray(payload)) return payload.map(asRecord);
     const record = asRecord(payload);
     if (Array.isArray(record.attempts)) return record.attempts.map(asRecord);
     if (Array.isArray(record.data)) return record.data.map(asRecord);

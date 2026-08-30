@@ -48,7 +48,13 @@ assert.match(attemptsProxy, /requireCloudAdminPermission\(request\.headers, "ter
 assert.doesNotMatch(`${attemptsProxy}\n${actionProxy}`, /bearerToken === serviceRoleKey/);
 assert.match(actionProxy, /validateCanonicalErpActionScope/);
 assert.match(actionProxy, /validatePendingDeviceRequest/);
+assert.match(actionProxy, /Array\.isArray\(erpPayload\)/, 'takeover validation must accept a root-array ERP response');
 assert.match(actionProxy, /responseRecord\.items/, 'takeover validation must accept the canonical ERP items collection');
+assert.match(actionProxy, /attempts\.find\(isMatchingPendingAttempt\)/, 'retry churn must resolve the newest equivalent pending request for the same device');
+assert.match(actionProxy, /request_id: validatedRequestId/, 'takeover must forward the canonical request id selected during validation');
+assert.match(actionProxy, /DEVICE_REQUEST_NOT_PENDING/);
+assert.match(actionProxy, /DEVICE_REQUEST_NOT_FOUND/);
+assert.match(rejectionProxy, /Array\.isArray\(payload\)/, 'request rejection must accept a root-array ERP response');
 assert.match(rejectionProxy, /record\.items/, 'request rejection must accept the canonical ERP items collection');
 assert.doesNotMatch(actionProxy, /terminalId === catalogTerminalId/, 'a catalog row may legitimately reuse the canonical ERP UUID after database scope verification');
 assert.doesNotMatch(edgeAction, /terminalId === catalogTerminalId/, 'the Edge Function must rely on the canonical ERP\/store\/tenant lookup, not UUID inequality');
