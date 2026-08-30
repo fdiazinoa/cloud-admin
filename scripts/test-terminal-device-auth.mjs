@@ -43,8 +43,8 @@ assert.match(actionFunction, /auth_status:\s*'AUTHORIZED'/, 'confirmed ERP repai
 assert.match(actionFunction, /runtime:\s*\{\}/, 'archived duplicate ERP terminals must not keep runtime tokens');
 assert.match(actionFunction, /terminal_id:\s*null/, 'archived duplicate ERP terminals must not keep operational terminal_id metadata');
 assert.doesNotMatch(actionFunction, /permissivePosErpAuth/, 'POS_ERP mismatch must never bypass canonical takeover confirmation');
-assert.match(attemptsFunction, /permissivePosErpAuth/, 'auth attempts must not re-block POS_ERP registries');
-assert.match(attemptsFunction, /auth_status:\s*permissivePosErpAuth \? 'AUTHORIZED' : 'DEVICE_MISMATCH'/, 'POS_ERP rejected attempts must stay authorized');
+assert.doesNotMatch(attemptsFunction, /permissivePosErpAuth/, 'auth attempts must never authorize the requesting device');
+assert.doesNotMatch(attemptsFunction, /registryUpdate\.device_id\s*=\s*latestRejected\.requested_device_id/, 'auth attempts must preserve the currently authorized device');
 assert.match(actionFunction, /WAITING_ERP_CONFIRMATION/, 'device action must keep repair pending when ERP does not confirm');
 assert.match(actionFunction, /BOUND_AUTH_MISMATCH/, 'device action must detect Cloud/ERP bound auth mismatch');
 assert.match(actionFunction, /CLOUD_ADMIN_REPAIR_REQUESTED/, 'device action must audit repair requests');
@@ -110,10 +110,10 @@ assert.match(erpBindingMetadataMigration, /authorizedDeviceId/, 'ERP binding mig
 assert.match(erpBindingMetadataMigration, /canonicalDeviceId/, 'ERP binding migration must persist canonicalDeviceId');
 assert.match(erpBindingMetadataMigration, /NOT_REQUIRED/, 'ERP binding migration must preserve pairing NOT_REQUIRED');
 
-assert.match(tenantsPage, /Intentos de conexion rechazados/, 'UI must render rejected connection attempts');
+assert.match(tenantsPage, /Solicitudes de dispositivo/, 'UI must render pending device requests');
 assert.match(tenantsPage, /Limpiar devices/, 'UI must expose terminal device cleanup action');
 assert.match(tenantsPage, /LIMPIAR/, 'UI must require strong confirmation for device cleanup');
-assert.match(tenantsPage, /Reautorizar/, 'UI must expose reauthorization action');
+assert.match(tenantsPage, /Autorizar y reemplazar/, 'UI must expose explicit replacement action');
 assert.match(tenantsPage, /Reparar enlace ERP/, 'UI must expose Cloud/ERP device mapping repair action');
 assert.match(tenantsPage, /!erpCurrentDeviceId \|\| authorizedDeviceId !== erpCurrentDeviceId/, 'ERP repair action must appear when ERP device is missing or mismatched');
 assert.match(tenantsPage, /El ERP debe confirmar explícitamente el takeover y la rotación/, 'manual device authorization must explain the canonical ERP confirmation requirement');
