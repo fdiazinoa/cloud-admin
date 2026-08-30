@@ -617,6 +617,7 @@ export interface RequestTerminalDeviceActionInput {
     deviceId?: string | null;
     action: TerminalDeviceAction;
     reason: string;
+    idempotencyKey?: string;
 }
 
 export interface TerminalDeviceActionResult {
@@ -626,6 +627,12 @@ export interface TerminalDeviceActionResult {
     old_device_id?: string | null;
     new_device_id?: string | null;
     authorized_device_id?: string | null;
+    terminal_id?: string | null;
+    previous_device_id?: string | null;
+    operation_id?: string | null;
+    takeover_confirmed?: boolean;
+    previous_device_revoked?: boolean;
+    rotate_device_token?: boolean;
     revoked_device_id?: string | null;
     deviceTokenIssued?: boolean;
     deviceTokenStatus?: string | null;
@@ -633,6 +640,21 @@ export interface TerminalDeviceActionResult {
     cleared_registry_count?: number | null;
     cleared_device_ids?: string[] | null;
     message?: string;
+}
+
+export interface TerminalDeviceAuditEntry {
+    id: string;
+    terminal_id: string;
+    terminal_name?: string | null;
+    old_device_id?: string | null;
+    new_device_id?: string | null;
+    performed_by?: string | null;
+    performed_at: string;
+    result?: string | null;
+    action: string;
+    reason?: string | null;
+    erp_error_code?: string | null;
+    metadata?: Record<string, unknown> | null;
 }
 
 export type TerminalReconciliationMode = "DRY_RUN" | "EXECUTE" | "ROLLBACK";
@@ -1910,12 +1932,20 @@ export async function requestTerminalDeviceAction(
         });
     }
 
+    const idempotencyKey = input.action === "TAKEOVER"
+        ? input.idempotencyKey || crypto.randomUUID()
+        : input.idempotencyKey;
+    const { data: sessionData } = await supabase.auth.getSession();
+    const actor = sessionData.session?.user;
     const response = await fetch("/api/terminal-device-action", {
         method: "POST",
         headers: {
             Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
+            "X-Actor-User-Id": actor?.id || "",
+            "X-Actor-Email": actor?.email || "",
+            ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
         },
         body: JSON.stringify({
             tenant_id: input.tenantId,
@@ -1926,18 +1956,56 @@ export async function requestTerminalDeviceAction(
             terminal_name: input.terminalName || null,
             device_id: input.deviceId || null,
             action: input.action,
-            reason: input.reason,
+            reason: input.action === "TAKEOVER"
+                ? "CLOUD_ADMIN_TERMINAL_REAUTHORIZATION"
+                : input.reason,
+            requested_by: actor?.email || actor?.id || "cloud-admin-ui",
+            takeover: input.action === "TAKEOVER",
+            rotate_device_token: input.action === "TAKEOVER",
+            idempotency_key: idempotencyKey || null,
             confirm_action: true,
         }),
     });
 
-    const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+    const payload = await response.json().catch(() => null) as (TerminalDeviceActionResult & { message?: string; error?: string }) | null;
 
     if (!response.ok) {
         throw new Error(payload?.message || payload?.error || "No se pudo ejecutar la accion de autorizacion.");
     }
 
+    if (input.action === "TAKEOVER") {
+        const contractValid = payload?.terminal_id === input.terminalId
+            && payload.previous_device_id !== undefined
+            && payload.authorized_device_id === input.deviceId
+            && payload.new_device_id === input.deviceId
+            && payload.takeover_confirmed === true
+            && payload.previous_device_revoked === true
+            && payload.rotate_device_token === true
+            && payload.operation_id === idempotencyKey;
+        if (!contractValid) {
+            throw new Error(
+                "ERP_TAKEOVER_CONFIRMATION_INVALID: la respuesta no confirmó terminal, dispositivo autorizado, revocación y rotación de credenciales.",
+            );
+        }
+    }
+
     return (payload || { status: "success" }) as TerminalDeviceActionResult;
+}
+
+export async function getTerminalDeviceAudit(
+    tenantId: string,
+    terminalId: string,
+    limit = 20,
+): Promise<TerminalDeviceAuditEntry[]> {
+    const { data, error } = await supabaseAdmin
+        .from("terminal_device_audit")
+        .select("id,terminal_id,terminal_name,old_device_id,new_device_id,performed_by,performed_at,result,action,reason,erp_error_code,metadata")
+        .eq("tenant_id", tenantId)
+        .eq("terminal_id", terminalId)
+        .order("performed_at", { ascending: false })
+        .limit(limit);
+    if (error) throw error;
+    return (data || []) as TerminalDeviceAuditEntry[];
 }
 
 export async function requestTerminalReconciliation(
@@ -2572,6 +2640,7 @@ export const tenantService = {
     getTerminalSyncPending,
     retryTerminalSyncPending,
     getTerminalAuthAttempts,
+    getTerminalDeviceAudit,
     requestTerminalDeviceAction,
     requestTerminalReconciliation,
     syncTerminalAuthorizedDevice,
