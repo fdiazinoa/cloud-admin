@@ -67,11 +67,9 @@ function requestStatus(request: Record<string, unknown>) {
 
 function isPendingRequest(request: Record<string, unknown>) {
     const status = requestStatus(request);
-    const metadata = asRecord(request.metadata);
     return status === "PENDING" || (
         status === "REJECTED"
         && stringValue(request.reason)?.toUpperCase() === "DEVICE_SUPERSEDED"
-        && stringValue(metadata.runtime)?.toLowerCase() === "serverless"
         && !stringValue(request.resolved_at)
         && !stringValue(request.resolved_by)
     );

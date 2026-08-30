@@ -90,9 +90,6 @@ function sanitizePayload(value: unknown): unknown {
 function normalizeAttempt(value: unknown, tenantId: string, terminalId: string): AuthAttempt {
     const record = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
     const sanitized = sanitizePayload(record) as Record<string, unknown>;
-    const metadata = sanitized.metadata && typeof sanitized.metadata === 'object'
-        ? sanitized.metadata as Record<string, unknown>
-        : {};
     const rawResolutionStatus = typeof sanitized.resolution_status === 'string'
         ? sanitized.resolution_status
         : typeof sanitized.status === 'string'
@@ -101,7 +98,6 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
     const reason = typeof sanitized.reason === 'string' ? sanitized.reason : null;
     const legacyPendingInferred = rawResolutionStatus?.toUpperCase() === 'REJECTED'
         && reason?.toUpperCase() === 'DEVICE_SUPERSEDED'
-        && String(metadata.runtime || '').toLowerCase() === 'serverless'
         && typeof sanitized.resolved_at !== 'string'
         && typeof sanitized.resolved_by !== 'string';
     return {
