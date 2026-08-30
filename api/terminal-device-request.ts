@@ -65,6 +65,18 @@ function requestStatus(request: Record<string, unknown>) {
     return (stringValue(request.resolution_status) || stringValue(request.status) || "").toUpperCase();
 }
 
+function isPendingRequest(request: Record<string, unknown>) {
+    const status = requestStatus(request);
+    const metadata = asRecord(request.metadata);
+    return status === "PENDING" || (
+        status === "REJECTED"
+        && stringValue(request.reason)?.toUpperCase() === "DEVICE_SUPERSEDED"
+        && stringValue(metadata.runtime)?.toLowerCase() === "serverless"
+        && !stringValue(request.resolved_at)
+        && !stringValue(request.resolved_by)
+    );
+}
+
 async function auditRejection(
     admin: Awaited<ReturnType<typeof requireCloudAdminPermission>>["admin"],
     input: {
@@ -180,7 +192,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             sendJson(response, 409, { error: "DEVICE_REQUEST_MISMATCH", message: "La solicitud cambió o no pertenece al dispositivo seleccionado." });
             return;
         }
-        if (requestStatus(pending) !== "PENDING") {
+        if (!isPendingRequest(pending)) {
             sendJson(response, 409, { error: "DEVICE_REQUEST_NOT_PENDING", message: "La solicitud ya no está pendiente." });
             return;
         }

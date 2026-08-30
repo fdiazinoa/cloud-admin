@@ -14,6 +14,8 @@ El ERP debe ampliar `public.terminal_auth_attempts` (o renombrarla sin romper el
 
 Debe existir una restricción idempotente para una solicitud pendiente por `(tenant_id, terminal_id, requested_device_id)`. Repetir el bootstrap del mismo dispositivo actualiza `updated_at` y los metadatos; no inserta otra fila.
 
+Compatibilidad temporal: el runtime serverless actualmente guarda estos eventos como `REJECTED` aunque no exista rechazo administrativo (`reason = DEVICE_SUPERSEDED`, `metadata.runtime = serverless`, sin `resolved_at` ni `resolved_by`). Cloud Admin interpreta únicamente el evento legacy más reciente como pendiente. El hotfix ERP debe persistirlo directamente como `PENDING` y eliminar esta ambigüedad.
+
 ## Bootstrap POS
 
 `POST /api/sync/bootstrap/check`

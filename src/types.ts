@@ -306,6 +306,7 @@ export interface TerminalAuthAttempt {
     message?: string | null;
     status?: string | null;
     resolution_status?: string | null;
+    legacy_pending_inferred?: boolean;
     endpoint_url?: string | null;
     ip_address?: string | null;
     apk_version?: string | null;
@@ -315,6 +316,8 @@ export interface TerminalAuthAttempt {
     updated_at?: string | null;
     approved_at?: string | null;
     approved_by?: string | null;
+    resolved_at?: string | null;
+    resolved_by?: string | null;
     pairing_required?: boolean | null;
     metadata?: Record<string, unknown> | null;
 }

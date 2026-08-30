@@ -29,6 +29,7 @@ interface AuthAttempt {
     message?: string | null;
     status?: string | null;
     resolution_status?: string | null;
+    legacy_pending_inferred?: boolean;
     attempted_at?: string | null;
     created_at?: string | null;
     pairing_required?: boolean | null;
@@ -89,6 +90,20 @@ function sanitizePayload(value: unknown): unknown {
 function normalizeAttempt(value: unknown, tenantId: string, terminalId: string): AuthAttempt {
     const record = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
     const sanitized = sanitizePayload(record) as Record<string, unknown>;
+    const metadata = sanitized.metadata && typeof sanitized.metadata === 'object'
+        ? sanitized.metadata as Record<string, unknown>
+        : {};
+    const rawResolutionStatus = typeof sanitized.resolution_status === 'string'
+        ? sanitized.resolution_status
+        : typeof sanitized.status === 'string'
+            ? sanitized.status
+            : null;
+    const reason = typeof sanitized.reason === 'string' ? sanitized.reason : null;
+    const legacyPendingInferred = rawResolutionStatus?.toUpperCase() === 'REJECTED'
+        && reason?.toUpperCase() === 'DEVICE_SUPERSEDED'
+        && String(metadata.runtime || '').toLowerCase() === 'serverless'
+        && typeof sanitized.resolved_at !== 'string'
+        && typeof sanitized.resolved_by !== 'string';
     return {
         ...sanitized,
         tenant_id: tenantId,
@@ -105,12 +120,9 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
         authorized_device_id: typeof sanitized.authorized_device_id === 'string'
             ? sanitized.authorized_device_id
             : null,
-        reason: typeof sanitized.reason === 'string' ? sanitized.reason : null,
-        resolution_status: typeof sanitized.resolution_status === 'string'
-            ? sanitized.resolution_status
-            : typeof sanitized.status === 'string'
-                ? sanitized.status
-                : null,
+        reason,
+        resolution_status: legacyPendingInferred ? 'PENDING' : rawResolutionStatus,
+        legacy_pending_inferred: legacyPendingInferred,
         attempted_at: typeof sanitized.attempted_at === 'string'
             ? sanitized.attempted_at
             : typeof sanitized.created_at === 'string'
@@ -121,10 +133,15 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
 
 function dedupePendingAttempts(attempts: AuthAttempt[]): AuthAttempt[] {
     const pendingDevices = new Set<string>();
+    let inferredLegacyRequestSeen = false;
     return attempts.filter((attempt) => {
         const status = (attempt.resolution_status || attempt.status || '').toUpperCase();
         const deviceId = attempt.requested_device_id?.trim().toUpperCase() || '';
         if (status !== 'PENDING' || !deviceId) return true;
+        if (attempt.legacy_pending_inferred === true) {
+            if (inferredLegacyRequestSeen) return false;
+            inferredLegacyRequestSeen = true;
+        }
         if (pendingDevices.has(deviceId)) return false;
         pendingDevices.add(deviceId);
         return true;
