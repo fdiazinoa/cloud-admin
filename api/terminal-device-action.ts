@@ -250,12 +250,18 @@ async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
             : [];
     const attempt = attempts.find((item) => stringValue(item.id) === requestId);
     const status = (stringValue(attempt?.resolution_status) || stringValue(attempt?.status) || "").toUpperCase();
+    const attemptMetadata = asRecord(attempt?.metadata);
+    const legacyPendingInferred = status === "REJECTED"
+        && stringValue(attempt?.reason)?.toUpperCase() === "DEVICE_SUPERSEDED"
+        && stringValue(attemptMetadata.runtime)?.toLowerCase() === "serverless"
+        && !stringValue(attempt?.resolved_at)
+        && !stringValue(attempt?.resolved_by);
     const attemptDeviceId = stringValue(attempt?.requested_device_id) || stringValue(attempt?.request_device_id);
     const expectedAuthorizedDeviceId = stringValue(payload.expected_authorized_device_id);
     const attemptAuthorizedDeviceId = stringValue(attempt?.authorized_device_id);
     if (
         !attempt
-        || status !== "PENDING"
+        || (status !== "PENDING" && !legacyPendingInferred)
         || attemptDeviceId !== requestedDeviceId
         || (expectedAuthorizedDeviceId && attemptAuthorizedDeviceId && attemptAuthorizedDeviceId !== expectedAuthorizedDeviceId)
     ) {

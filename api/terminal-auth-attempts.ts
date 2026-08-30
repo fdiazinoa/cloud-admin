@@ -122,6 +122,13 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
     const resolutionStatus = stringValue(sanitized.resolution_status)
         || stringValue(sanitized.resolutionStatus)
         || stringValue(sanitized.status);
+    const reason = stringValue(sanitized.reason);
+    const metadata = asRecord(sanitized.metadata);
+    const legacyPendingInferred = resolutionStatus?.toUpperCase() === "REJECTED"
+        && reason?.toUpperCase() === "DEVICE_SUPERSEDED"
+        && stringValue(metadata.runtime)?.toLowerCase() === "serverless"
+        && !stringValue(sanitized.resolved_at)
+        && !stringValue(sanitized.resolved_by);
     const attemptedAt = stringValue(sanitized.attempted_at)
         || stringValue(sanitized.created_at)
         || stringValue(sanitized.createdAt);
@@ -132,18 +139,24 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
         terminal_id: terminalId,
         requested_device_id: requestedDeviceId,
         authorized_device_id: authorizedDeviceId,
-        reason: stringValue(sanitized.reason),
-        resolution_status: resolutionStatus,
+        reason,
+        resolution_status: legacyPendingInferred ? "PENDING" : resolutionStatus,
+        legacy_pending_inferred: legacyPendingInferred,
         attempted_at: attemptedAt,
     };
 }
 
 function dedupePendingAttempts(attempts: AuthAttempt[]) {
     const pendingDevices = new Set<string>();
+    let inferredLegacyRequestSeen = false;
     return attempts.filter((attempt) => {
         const status = (attempt.resolution_status || attempt.status || "").toUpperCase();
         const deviceId = attempt.requested_device_id?.trim().toUpperCase() || "";
         if (status !== "PENDING" || !deviceId) return true;
+        if (attempt.legacy_pending_inferred === true) {
+            if (inferredLegacyRequestSeen) return false;
+            inferredLegacyRequestSeen = true;
+        }
         if (pendingDevices.has(deviceId)) return false;
         pendingDevices.add(deviceId);
         return true;
