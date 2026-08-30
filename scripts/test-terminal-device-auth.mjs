@@ -18,7 +18,8 @@ const tenantService = readFileSync('src/lib/tenantService.ts', 'utf8');
 const observabilityService = readFileSync('src/lib/observabilityService.ts', 'utf8');
 
 assert.match(attemptsFunction, /\/api\/sync\/terminals\/.*auth-attempts/, 'auth attempts must call the ERP sync attempts endpoint');
-assert.match(actionFunction, /\/api\/sync\/terminals\/.*takeover/, 'device action must call the ERP sync takeover endpoint');
+assert.match(actionFunction, /\/api\/settings\/terminals\/.*takeover/, 'device action must call the canonical ERP settings takeover endpoint');
+assert.doesNotMatch(actionFunction, /`\/api\/sync\/terminals\/\$\{terminalPathId\}\/takeover`/, 'device action must not fall back to a non-canonical takeover endpoint');
 assert.match(actionFunction, /requestedAction === 'GENERATE_PAIRING_CODE' \? 'TAKEOVER' : requestedAction/, 'pairing-code generation must route through the takeover authorization flow');
 assert.match(actionFunction, /rotateDeviceToken:\s*true/, 'takeover/rotation must request token rotation');
 assert.match(actionFunction, /GENERATE_PAIRING_CODE/, 'device action must support pairing code generation');
@@ -29,7 +30,7 @@ assert.match(actionFunction, /erp_terminal_cleared/, 'clear action must report w
 assert.match(actionFunction, /`ARCHIVED-\$\{terminalName\}`/, 'clear action must scrub archived ERP duplicates for the terminal name');
 assert.doesNotMatch(actionFunction, /return Array\\.from\\(matches\\.values\\(\\)\\)\\.filter\\(\\(terminal\\) => !isArchivedErpTerminal\\(terminal\\)\\)/, 'clear action must not skip archived duplicates before scrubbing tokens');
 assert.doesNotMatch(actionFunction, /error:\s*'SAME_DEVICE_ID'/, 'takeover must be able to repair ERP mapping even when Cloud already authorizes the device');
-assert.match(actionFunction, /ERP_DEVICE_MAPPING_REPAIR/, 'same-device takeover must repair Cloud/ERP terminal mapping drift');
+assert.match(actionFunction, /CLOUD_ADMIN_TERMINAL_REAUTHORIZATION/, 'takeover must use the canonical Cloud Admin reason');
 assert.match(actionFunction, /tokenKeys/, 'function must define token keys to sanitize sensitive payloads');
 assert.doesNotMatch(actionFunction, /return json\([\s\S]*syncAuthToken/, 'function must not return syncAuthToken directly');
 assert.match(actionFunction, /buildErpBindingConfirmation/, 'device action must verify ERP canonical binding before marking repair success');
@@ -41,8 +42,7 @@ assert.match(actionFunction, /requires_pos_reauth:\s*false/, 'confirmed ERP repa
 assert.match(actionFunction, /auth_status:\s*'AUTHORIZED'/, 'confirmed ERP repair must use POS-compatible authorized status');
 assert.match(actionFunction, /runtime:\s*\{\}/, 'archived duplicate ERP terminals must not keep runtime tokens');
 assert.match(actionFunction, /terminal_id:\s*null/, 'archived duplicate ERP terminals must not keep operational terminal_id metadata');
-assert.match(actionFunction, /permissivePosErpAuth/, 'POS_ERP device mismatch must be audited without blocking the repair flow');
-assert.match(actionFunction, /result:\s*'BYPASSED'/, 'permissive POS_ERP auth must audit bypassed device mismatch');
+assert.doesNotMatch(actionFunction, /permissivePosErpAuth/, 'POS_ERP mismatch must never bypass canonical takeover confirmation');
 assert.match(attemptsFunction, /permissivePosErpAuth/, 'auth attempts must not re-block POS_ERP registries');
 assert.match(attemptsFunction, /auth_status:\s*permissivePosErpAuth \? 'AUTHORIZED' : 'DEVICE_MISMATCH'/, 'POS_ERP rejected attempts must stay authorized');
 assert.match(actionFunction, /WAITING_ERP_CONFIRMATION/, 'device action must keep repair pending when ERP does not confirm');
@@ -116,8 +116,8 @@ assert.match(tenantsPage, /LIMPIAR/, 'UI must require strong confirmation for de
 assert.match(tenantsPage, /Reautorizar/, 'UI must expose reauthorization action');
 assert.match(tenantsPage, /Reparar enlace ERP/, 'UI must expose Cloud/ERP device mapping repair action');
 assert.match(tenantsPage, /!erpCurrentDeviceId \|\| authorizedDeviceId !== erpCurrentDeviceId/, 'ERP repair action must appear when ERP device is missing or mismatched');
-assert.match(tenantsPage, /Tambien se vinculara inmediatamente en ERP/, 'manual device authorization must tell POS_ERP users it also binds ERP immediately');
-assert.match(tenantsPage, /requiresErpConfirmation \? 'ERP_DEVICE_MAPPING_REPAIR' : 'DEVICE_REINSTALL_OR_REPLACEMENT'/, 'manual POS_ERP authorization must request ERP repair on the first authorize action');
+assert.match(tenantsPage, /El ERP debe confirmar explícitamente el takeover y la rotación/, 'manual device authorization must explain the canonical ERP confirmation requirement');
+assert.match(tenantsPage, /reason: 'CLOUD_ADMIN_TERMINAL_REAUTHORIZATION'/, 'manual POS_ERP authorization must use the canonical takeover reason');
 assert.match(tenantsPage, /requiresErpConfirmation/, 'UI must require ERP confirmation for POS_ERP authorization success');
 assert.match(tenantsPage, /normalized === 'TAKEOVER_COMPLETED'\) return 'WAITING_ERP_CONFIRMATION'/, 'UI must keep legacy takeover completed waiting for ERP confirmation');
 assert.match(tenantsPage, /WAITING_ERP_CONFIRMATION/, 'UI must not show completed takeover while ERP confirmation is missing');

@@ -34,6 +34,8 @@ interface DeviceActionRequest {
     action?: DeviceAction;
     reason?: string;
     confirm_action?: boolean;
+    idempotency_key?: string;
+    requested_by?: string;
 }
 
 interface TenantRecord {
@@ -86,7 +88,7 @@ interface ErpTerminalRecord {
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-actor-user-id, x-actor-email, x-actor-source',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-actor-user-id, x-actor-email, x-actor-source, idempotency-key, x-idempotency-key',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -174,6 +176,21 @@ function getErrorCode(payload: unknown): string | null {
 
 function getErrorMessage(status: number, payload: unknown) {
     const code = getErrorCode(payload);
+    const actionableErrors: Record<string, string> = {
+        DEVICE_SUPERSEDED: 'El dispositivo seleccionado ya fue reemplazado. Recarga el estado canónico antes de reintentar.',
+        DEVICE_NOT_AUTHORIZED: 'El ERP no reconoce este dispositivo como autorizado para la terminal.',
+        TAKEOVER_REQUIRED: 'El ERP requiere un takeover explícito para reemplazar el dispositivo actual.',
+        TAKEOVER_POLICY_DENIED: 'La política del ERP denegó el takeover. Verifica permisos, tenant y terminal.',
+        TERMINAL_NOT_FOUND: 'La terminal canónica no fue encontrada en el ERP.',
+        ERP_TERMINAL_NOT_FOUND: 'La terminal canónica no fue encontrada en el ERP.',
+        TENANT_NOT_FOUND: 'El tenant no fue encontrado en el ERP.',
+        ERP_TENANT_NOT_FOUND: 'El tenant no fue encontrado en el ERP.',
+        TENANT_MISMATCH: 'La terminal no pertenece al tenant indicado.',
+        ERP_STORE_TENANT_MISMATCH: 'La terminal no pertenece al tenant indicado.',
+        CONFLICT: 'Otra reautorización modificó la terminal al mismo tiempo. Se consultará el estado canónico.',
+    };
+    if (code && actionableErrors[code]) return actionableErrors[code];
+    if (status === 409) return 'Conflicto de concurrencia: el estado de la terminal cambió durante la reautorización. Recarga el estado canónico.';
     if (code === 'DEVICE_NOT_AUTHORIZED') {
         return 'Este POS intenta usar una terminal que esta autorizada para otro equipo. Puedes reautorizar este equipo si realmente reemplazaste el dispositivo.';
     }
@@ -194,6 +211,88 @@ function getErrorMessage(status: number, payload: unknown) {
         return `ERP rechazo la autorizacion del device (HTTP ${status}) sin detalle. Verifica el tenant ERP, el token de servicio ERP y que la terminal este activa.`;
     }
     return 'El ERP no pudo completar la accion de autorizacion.';
+}
+
+const canonicalTakeoverReason = 'CLOUD_ADMIN_TERMINAL_REAUTHORIZATION';
+
+function getPayloadText(payload: unknown, ...keys: string[]) {
+    const record = asRecord(payload);
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+}
+
+function getCanonicalTakeoverConfirmation(payload: unknown) {
+    const record = asRecord(payload);
+    const terminal = Object.keys(asRecord(record.terminal)).length > 0 ? asRecord(record.terminal) : record;
+    const terminalConfig = asRecord(terminal.config);
+    const terminalMetadata = asRecord(terminalConfig.metadata);
+    const credentials = asRecord(record.credentials);
+    const terminalId = getPayloadText(record, 'terminal_id', 'terminalId', 'id')
+        || getPayloadText(terminal, 'id', 'terminal_id', 'terminalId');
+    const previousDeviceId = getPayloadText(record, 'previous_device_id', 'previousDeviceId', 'old_device_id', 'oldDeviceId');
+    const authorizedDeviceId = getPayloadText(record, 'authorized_device_id', 'authorizedDeviceId', 'new_device_id', 'newDeviceId', 'device_id', 'deviceId')
+        || getPayloadText(terminal, 'authorized_device_id', 'authorizedDeviceId', 'device_id', 'deviceId')
+        || getPayloadText(terminalMetadata, 'authorized_device_id', 'authorizedDeviceId', 'current_device_id', 'currentDeviceId');
+    const takeoverConfirmed = record.takeover === true
+        || record.takeover_confirmed === true
+        || record.takeoverConfirmed === true
+        || record.action === 'terminal_takeover_completed'
+        || record.status === 'TAKEOVER_COMPLETED';
+    const rotationConfirmed = record.rotate_device_token === true
+        || record.device_token_rotated === true
+        || record.credentials_rotated === true
+        || credentials.rotated === true
+        || ['ROTATED', 'REVOKED_AND_ROTATED'].includes(String(record.device_token_status || record.deviceTokenStatus || ''));
+    const revocationConfirmed = record.previous_device_revoked === true
+        || record.credentials_revoked === true
+        || record.previous_credentials_revoked === true
+        || credentials.previous_revoked === true
+        || record.revocation_confirmed === true;
+
+    return {
+        terminalId,
+        previousDeviceId,
+        authorizedDeviceId,
+        takeoverConfirmed,
+        rotationConfirmed,
+        revocationConfirmed,
+    };
+}
+
+function validateCanonicalTakeoverConfirmation(
+    payload: unknown,
+    expectedTerminalId: string,
+    expectedDeviceId: string,
+) {
+    const confirmation = getCanonicalTakeoverConfirmation(payload);
+    const errors: string[] = [];
+    if (confirmation.terminalId !== expectedTerminalId) errors.push('terminal_id');
+    if (!confirmation.previousDeviceId) errors.push('previous_device_id');
+    if (confirmation.authorizedDeviceId !== expectedDeviceId) errors.push('authorized_device_id');
+    if (!confirmation.takeoverConfirmed) errors.push('takeover');
+    if (!confirmation.rotationConfirmed) errors.push('rotate_device_token');
+    if (!confirmation.revocationConfirmed) errors.push('previous_credentials_revoked');
+    return { confirmed: errors.length === 0, errors, confirmation };
+}
+
+async function fetchCanonicalTerminalState(
+    erpApiUrl: string,
+    erpServiceToken: string,
+    erpTenantId: string,
+    terminalId: string,
+) {
+    const response = await fetch(`${erpApiUrl.replace(/\/$/, '')}/api/settings/terminals/${encodeURIComponent(terminalId)}`, {
+        method: 'GET',
+        headers: {
+            Authorization: `Bearer ${erpServiceToken}`,
+            'X-Tenant-Id': erpTenantId,
+        },
+    });
+    const payload = await response.json().catch(async () => ({ message: await response.text().catch(() => '') }));
+    return { response, payload };
 }
 
 function getUnknownErrorMessage(error: unknown) {
@@ -669,20 +768,6 @@ async function reactivatePublicTenantCatalog(
     if (error) throw error;
 }
 
-async function fetchFirstAvailableErpRoute(
-    baseUrl: string,
-    paths: string[],
-    init: RequestInit,
-) {
-    let lastResponse: Response | null = null;
-    for (const path of paths) {
-        const response = await fetch(`${baseUrl.replace(/\/$/, '')}${path}`, init);
-        if (response.status !== 404) return response;
-        lastResponse = response;
-    }
-    return lastResponse as Response;
-}
-
 async function resolveErpTenantId(
     supabase: ReturnType<typeof createClient>,
     cloudTenantId: string,
@@ -1054,6 +1139,8 @@ async function archiveOrDeleteErpTerminal(
     return { mode: 'archived', id: duplicate.id };
 }
 
+// Conservado solo para acciones legacy no-takeover; el flujo canónico no lo invoca.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function consolidateErpTerminalDeviceDuplicates(
     supabase: ReturnType<typeof createClient>,
     input: {
@@ -1203,9 +1290,16 @@ Deno.serve(async (request) => {
         const deviceId = normalizeRequiredDeviceId(body.device_id);
         const requestedAction = body.action;
         const action = requestedAction === 'GENERATE_PAIRING_CODE' ? 'TAKEOVER' : requestedAction;
-        const reason = body.reason?.trim() || 'DEVICE_REINSTALL_OR_REPLACEMENT';
+        const reason = action === 'TAKEOVER'
+            ? canonicalTakeoverReason
+            : body.reason?.trim() || 'DEVICE_REINSTALL_OR_REPLACEMENT';
+        const idempotencyKey = body.idempotency_key?.trim()
+            || request.headers.get('idempotency-key')?.trim()
+            || request.headers.get('x-idempotency-key')?.trim()
+            || null;
         const performedBy = request.headers.get('x-actor-email')
             || request.headers.get('x-actor-user-id')
+            || body.requested_by?.trim()
             || request.headers.get('x-actor-source')
             || 'cloud-admin';
 
@@ -1214,6 +1308,18 @@ Deno.serve(async (request) => {
                 error: 'VALIDATION_ERROR',
                 message: 'Selecciona tenant, terminal y accion.',
             }, 400);
+        }
+        if (action === 'TAKEOVER' && !idempotencyKey) {
+            return json({
+                error: 'IDEMPOTENCY_KEY_REQUIRED',
+                message: 'La reautorización requiere una clave de idempotencia.',
+            }, 400);
+        }
+        if (action === 'TAKEOVER' && !isUuid(terminalId)) {
+            return json({
+                error: 'CANONICAL_ERP_IDENTITY_REQUIRED',
+                message: 'La reautorización requiere el terminal_id UUID canónico del ERP.',
+            }, 409);
         }
 
         const tenantResolution = await resolveCloudTenantForDeviceAuthorization(supabase, requestedTenantId);
@@ -1580,16 +1686,9 @@ Deno.serve(async (request) => {
         const erpTenantId = action === 'TAKEOVER' || action === 'ROTATE_TOKEN'
             ? resolvedErpTenantId || await resolveErpTenantId(supabase, tenantId)
             : null;
-        const preErpConsolidation = action === 'TAKEOVER' && deviceId
-            ? await consolidateErpTerminalDeviceDuplicates(supabase, {
-                tenantId,
-                erpTenantId: erpTenantId || tenantId,
-                terminalId,
-                terminalName: terminalDisplayCode,
-                deviceId,
-                copyAuthToCanonical: false,
-            })
-            : { archived: [], deleted: [], copied_auth: false };
+        // El takeover pertenece exclusivamente al ERP. Cloud Admin no corrige ni
+        // reasigna filas de erp_terminals antes de recibir una confirmación canónica.
+        const preErpConsolidation = { archived: [], deleted: [], copied_auth: false };
 
         await insertDeviceAudit(supabase, {
             tenant_id: tenantId,
@@ -1608,6 +1707,7 @@ Deno.serve(async (request) => {
                 requested_action: requestedAction,
                 pre_erp_consolidation: preErpConsolidation,
                 already_authorized_device: alreadyAuthorizedDevice,
+                operation_id: idempotencyKey,
             },
         });
         if (action === 'TAKEOVER') {
@@ -1619,13 +1719,14 @@ Deno.serve(async (request) => {
                 new_device_id: deviceId,
                 action: 'CLOUD_ADMIN_REPAIR_REQUESTED',
                 performed_by: performedBy,
-                reason: alreadyAuthorizedDevice ? 'ERP_DEVICE_MAPPING_REPAIR' : reason,
+                reason,
                 result: 'REQUESTED',
                 metadata: {
                     registry_id: registry?.id || null,
                     canonical_erp_terminal_id: terminalId,
                     already_authorized_device: alreadyAuthorizedDevice,
                     requested_action: requestedAction,
+                    operation_id: idempotencyKey,
                 },
             });
         }
@@ -1691,12 +1792,13 @@ Deno.serve(async (request) => {
             cloud_admin_tenant_id: cloudAdminTenantId,
             rotateDeviceToken: true,
             rotate_device_token: true,
+            takeover: action === 'TAKEOVER',
             reason: action === 'ROTATE_TOKEN'
                 ? 'TOKEN_ROTATION_REQUIRED'
-                : alreadyAuthorizedDevice
-                    ? 'ERP_DEVICE_MAPPING_REPAIR'
-                    : reason,
+                : reason,
             performedBy,
+            requested_by: performedBy,
+            idempotency_key: idempotencyKey,
         };
 
         logCloudAdminDeviceEvent('cloud_admin_device_authorization_started', {
@@ -1724,17 +1826,16 @@ Deno.serve(async (request) => {
         const erpApiUrl = getEnv('ERP_API_URL', 'CLOUD_ADMIN_ERP_API_URL');
         const erpServiceToken = getEnv('ERP_TAKEOVER_SERVICE_TOKEN', 'ERP_SERVICE_TOKEN', 'CLOUD_ADMIN_ERP_SERVICE_TOKEN');
         const terminalPathId = encodeURIComponent(terminalId);
-        const erpPaths = [
-            `/api/sync/terminals/${terminalPathId}/takeover`,
-            `/api/settings/terminals/${terminalPathId}/takeover`,
-        ];
+        const canonicalErpPath = `/api/settings/terminals/${terminalPathId}/takeover`;
         const erpRequestInit = {
             method: 'POST',
+            signal: AbortSignal.timeout(15_000),
             headers: {
                 Authorization: `Bearer ${erpServiceToken}`,
                 'Content-Type': 'application/json',
                 'X-Tenant-Id': erpTenantId || tenantId,
                 'X-Cloud-Admin-Tenant-Id': tenantId,
+                'Idempotency-Key': idempotencyKey || '',
             },
             body: JSON.stringify({
                 ...erpPayloadBody,
@@ -1744,51 +1845,57 @@ Deno.serve(async (request) => {
                 erp_tenant_id: erpTenantId,
             }),
         };
-        let erpResponse = await fetchFirstAvailableErpRoute(erpApiUrl, erpPaths, erpRequestInit);
-
-        let erpPayload = await erpResponse.json().catch(async () => ({
-            message: await erpResponse.text().catch(() => ''),
-        }));
-        let erpErrorCode = getErrorCode(erpPayload);
-        const erpErrorMessage = getUnknownErrorMessage(erpPayload);
-
-        if (!erpResponse.ok && action === 'TAKEOVER' && deviceId && (
-            erpErrorCode === '23505'
-            || erpErrorMessage.includes('erp_terminals_device_id_key')
-            || erpErrorMessage.includes('duplicate key value')
-        )) {
-            const retryConsolidation = await consolidateErpTerminalDeviceDuplicates(supabase, {
-                tenantId,
-                erpTenantId: erpTenantId || tenantId,
-                terminalId,
-                terminalName: terminalDisplayCode,
-                deviceId,
-                copyAuthToCanonical: false,
-            });
+        let erpResponse: Response;
+        try {
+            erpResponse = await fetch(`${erpApiUrl.replace(/\/$/, '')}${canonicalErpPath}`, erpRequestInit);
+        } catch (error) {
+            let reconciliation: Record<string, unknown> = { checked: false };
+            try {
+                const state = await fetchCanonicalTerminalState(
+                    erpApiUrl,
+                    erpServiceToken,
+                    erpTenantId || tenantId,
+                    terminalId,
+                );
+                reconciliation = {
+                    checked: true,
+                    status: state.response.status,
+                    payload: sanitizePayload(state.payload),
+                };
+            } catch (reconciliationError) {
+                reconciliation = { checked: false, error: getUnknownErrorMessage(reconciliationError) };
+            }
             await insertDeviceAudit(supabase, {
                 tenant_id: tenantId,
                 terminal_id: terminalId,
                 terminal_name: terminalDisplayCode,
                 old_device_id: previousDeviceId,
-                new_device_id: deviceId,
-                action: 'DUPLICATE_PREVENTED',
+                new_device_id: effectiveDeviceId,
+                action,
                 performed_by: performedBy,
-                reason: 'Retry takeover after freeing device_id from duplicate ERP terminal.',
-                result: 'SUCCESS',
-                erp_response_status: erpResponse.status,
-                erp_error_code: erpErrorCode || '23505',
+                reason,
+                result: 'AMBIGUOUS',
+                erp_error_code: 'TAKEOVER_RESPONSE_AMBIGUOUS',
                 metadata: {
-                    retry_consolidation: retryConsolidation,
-                    erp_payload: sanitizePayload(erpPayload),
+                    operation_id: idempotencyKey,
+                    error: getUnknownErrorMessage(error),
+                    canonical_reconciliation: reconciliation,
                 },
             });
-
-            erpResponse = await fetchFirstAvailableErpRoute(erpApiUrl, erpPaths, erpRequestInit);
-            erpPayload = await erpResponse.json().catch(async () => ({
-                message: await erpResponse.text().catch(() => ''),
-            }));
-            erpErrorCode = getErrorCode(erpPayload);
+            return json({
+                error: 'TAKEOVER_RESPONSE_AMBIGUOUS',
+                message: 'El ERP no confirmó la reautorización. Se consultó el estado canónico, pero Cloud Admin no mostrará éxito sin confirmación completa.',
+                operation_id: idempotencyKey,
+                canonical_reconciliation: reconciliation,
+            }, 504);
         }
+
+        const erpPayload = await erpResponse.json().catch(async () => ({
+            message: await erpResponse.text().catch(() => ''),
+        }));
+        const erpErrorCode = getErrorCode(erpPayload);
+        // Los conflictos se devuelven al cliente; Cloud Admin nunca libera o
+        // reasigna directamente un device_id en las tablas ERP.
 
         if (!erpResponse.ok) {
             await insertDeviceAudit(supabase, {
@@ -1823,38 +1930,74 @@ Deno.serve(async (request) => {
             ? sanitizedPayload.deviceTokenStatus
             : typeof sanitizedPayload.device_token_status === 'string'
                 ? sanitizedPayload.device_token_status
-                : action === 'ROTATE_TOKEN' || action === 'TAKEOVER'
+                : action === 'ROTATE_TOKEN'
                     ? 'ROTATED'
                     : null;
         const tokenPreview = getTokenPreview(sanitizedPayload);
         const completedAt = new Date().toISOString();
         const newAuthorizedDeviceId = action === 'ROTATE_TOKEN' ? effectiveAuthorizedDeviceId || effectiveDeviceId : effectiveDeviceId;
-        const postErpConsolidation = action === 'TAKEOVER' && newAuthorizedDeviceId
-            ? await consolidateErpTerminalDeviceDuplicates(supabase, {
-                tenantId,
-                erpTenantId: erpTenantId || tenantId,
-                terminalId,
-                terminalName: terminalDisplayCode,
-                deviceId: newAuthorizedDeviceId,
-                copyAuthToCanonical: true,
-            })
-            : { archived: [], deleted: [], copied_auth: false };
-        const confirmedErpTerminal = action === 'TAKEOVER' || action === 'ROTATE_TOKEN'
+        const postErpConsolidation = { archived: [], deleted: [], copied_auth: false };
+        const responseConfirmation = action === 'TAKEOVER'
+            ? validateCanonicalTakeoverConfirmation(sanitizedPayload, terminalId, newAuthorizedDeviceId || '')
+            : null;
+        let canonicalStatePayload: unknown = null;
+        let canonicalStateStatus: number | null = null;
+        let canonicalStateError: string | null = null;
+        if (action === 'TAKEOVER') {
+            try {
+                const canonicalState = await fetchCanonicalTerminalState(
+                    erpApiUrl,
+                    erpServiceToken,
+                    erpTenantId || tenantId,
+                    terminalId,
+                );
+                canonicalStateStatus = canonicalState.response.status;
+                canonicalStatePayload = sanitizePayload(canonicalState.payload);
+                if (!canonicalState.response.ok) canonicalStateError = getErrorMessage(canonicalState.response.status, canonicalState.payload);
+            } catch (error) {
+                canonicalStateError = getUnknownErrorMessage(error);
+            }
+        }
+        const canonicalStateFields = action === 'TAKEOVER'
+            ? getCanonicalTakeoverConfirmation(canonicalStatePayload)
+            : null;
+        const canonicalStateConfirmed = action !== 'TAKEOVER' || Boolean(
+            canonicalStateStatus
+            && canonicalStateStatus >= 200
+            && canonicalStateStatus < 300
+            && canonicalStateFields?.terminalId === terminalId
+            && canonicalStateFields.authorizedDeviceId === newAuthorizedDeviceId
+        );
+        const confirmedErpTerminal = action === 'ROTATE_TOKEN'
             ? await loadCanonicalErpTerminal(supabase, terminalId)
             : null;
-        const erpBindingConfirmation = action === 'TAKEOVER' || action === 'ROTATE_TOKEN'
-            ? buildErpBindingConfirmation({
-                terminal: confirmedErpTerminal,
-                expectedTerminalId: terminalId,
-                expectedDeviceId: newAuthorizedDeviceId || '',
-                deviceTokenIssued,
-                deviceTokenStatus,
-                tokenPreview,
-            })
-            : { confirmed: true, status: 'AUTHORIZED', checks: {} };
-        const permissivePosErpAuth = tenant.contracted_product === 'POS_ERP';
+        const erpBindingConfirmation = action === 'TAKEOVER'
+            ? {
+                confirmed: Boolean(responseConfirmation?.confirmed && canonicalStateConfirmed),
+                status: responseConfirmation?.confirmation.authorizedDeviceId
+                    && responseConfirmation.confirmation.authorizedDeviceId !== newAuthorizedDeviceId
+                    ? 'BOUND_AUTH_MISMATCH'
+                    : 'ERP_CONFIRMATION_AMBIGUOUS',
+                checks: {
+                    response: responseConfirmation,
+                    canonical_state_confirmed: canonicalStateConfirmed,
+                    canonical_state: canonicalStatePayload,
+                    canonical_state_status: canonicalStateStatus,
+                    canonical_state_error: canonicalStateError,
+                },
+            }
+            : action === 'ROTATE_TOKEN'
+                ? buildErpBindingConfirmation({
+                    terminal: confirmedErpTerminal,
+                    expectedTerminalId: terminalId,
+                    expectedDeviceId: newAuthorizedDeviceId || '',
+                    deviceTokenIssued,
+                    deviceTokenStatus,
+                    tokenPreview,
+                })
+                : { confirmed: true, status: 'AUTHORIZED', checks: {} };
 
-        if (!erpBindingConfirmation.confirmed && !permissivePosErpAuth) {
+        if (!erpBindingConfirmation.confirmed) {
             const failedAt = new Date().toISOString();
             if (registry?.id) {
                 const { error: updateError } = await supabase
@@ -1933,27 +2076,6 @@ Deno.serve(async (request) => {
                 message: 'ERP no confirmo que el device quedara autorizado en la terminal canonica. Cloud-Admin no marcara takeover completado hasta que ERP confirme.',
             }, 409);
         }
-        if (!erpBindingConfirmation.confirmed && permissivePosErpAuth) {
-            await insertDeviceAudit(supabase, {
-                tenant_id: tenantId,
-                terminal_id: terminalId,
-                terminal_name: terminalDisplayCode,
-                old_device_id: previousDeviceId,
-                new_device_id: newAuthorizedDeviceId,
-                action: 'CLOUD_ADMIN_DEVICE_MISMATCH_DETECTED',
-                performed_by: performedBy,
-                reason: 'POS_ERP permissive device mode bypassed blocking mismatch after ERP response.',
-                result: 'BYPASSED',
-                erp_response_status: erpResponse.status,
-                erp_error_code: erpBindingConfirmation.status,
-                metadata: {
-                    erp_payload: sanitizedPayload,
-                    erp_binding_confirmation: erpBindingConfirmation,
-                    permissive_pos_erp_auth: true,
-                },
-            });
-        }
-
         const registryUpdate: Record<string, unknown> = {
             terminal_id: terminalId,
             terminal_name: terminalDisplayCode,
@@ -2050,6 +2172,8 @@ Deno.serve(async (request) => {
                 archived_duplicate_registry_ids: archivedDuplicateRegistryIds,
                 alreadyAuthorizedDevice,
                 erp_binding_confirmation: erpBindingConfirmation,
+                operation_id: idempotencyKey,
+                idempotency_key: idempotencyKey,
             },
         });
 
@@ -2071,6 +2195,7 @@ Deno.serve(async (request) => {
                 deviceTokenStatus,
                 tokenPreview,
                 erp_binding_confirmation: erpBindingConfirmation,
+                operation_id: idempotencyKey,
             },
         });
 
@@ -2098,14 +2223,20 @@ Deno.serve(async (request) => {
         return json({
             status: 'success',
             success: true,
+            operation_id: idempotencyKey,
+            terminal_id: terminalId,
             action: action === 'TAKEOVER'
                 ? alreadyAuthorizedDevice
                     ? 'terminal_authorization_refreshed'
                     : 'terminal_takeover_completed'
                 : 'terminal_token_rotated',
-            old_device_id: previousDeviceId,
+            previous_device_id: responseConfirmation?.confirmation.previousDeviceId || previousDeviceId,
+            old_device_id: responseConfirmation?.confirmation.previousDeviceId || previousDeviceId,
             new_device_id: newAuthorizedDeviceId,
             authorized_device_id: newAuthorizedDeviceId,
+            takeover_confirmed: action === 'TAKEOVER' ? true : undefined,
+            previous_device_revoked: action === 'TAKEOVER' ? true : undefined,
+            rotate_device_token: action === 'TAKEOVER' ? true : undefined,
             deviceTokenIssued,
             deviceTokenStatus,
             tokenPreview,

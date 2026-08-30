@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Search, Plus, Power, Edit3, Loader2, X, Boxes, Monitor, Wifi, WifiOff, Trash2, RefreshCcw, KeyRound, ShieldCheck, Ban, CheckCircle2, Unlink, Puzzle } from 'lucide-react';
 import type { CloudAdminPermissions, Distributor, Tenant, TerminalAuthAttempt, TerminalFiscalReadiness, TerminalSyncDocument, TerminalSyncPendingResult, TenantTerminalErpReadiness, TenantTerminalSnapshot } from '../types';
-import { tenantService, type TenantPosLicenseSeats, type TerminalReconciliationResult } from '../lib/tenantService';
+import { tenantService, type TerminalDeviceAuditEntry, type TenantPosLicenseSeats, type TerminalReconciliationResult } from '../lib/tenantService';
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import { ErpModuleStoreModal } from '../components/ErpModuleStoreModal';
 import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
@@ -86,8 +86,10 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     const [isRebuildSubmitting, setIsRebuildSubmitting] = useState(false);
     const [erpReadinessSubmittingKey, setErpReadinessSubmittingKey] = useState<string | null>(null);
     const [authAttemptsByTerminal, setAuthAttemptsByTerminal] = useState<Record<string, TerminalAuthAttempt[]>>({});
+    const [deviceAuditByTerminal, setDeviceAuditByTerminal] = useState<Record<string, TerminalDeviceAuditEntry[]>>({});
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
+    const deviceActionInFlightRef = useRef(false);
     const [manualDeviceIds, setManualDeviceIds] = useState<Record<string, string>>({});
     const [reconciliationDrafts, setReconciliationDrafts] = useState<Record<string, ReconciliationDraft>>({});
     const [reconciliationSubmittingKey, setReconciliationSubmittingKey] = useState<string | null>(null);
@@ -408,6 +410,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         setTerminalSearchTerm('');
         setTerminalStoreFilter('ALL');
         setAuthAttemptsByTerminal({});
+        setDeviceAuditByTerminal({});
         setFiscalReadinessByTerminal({});
         setPosLicenseSeats(null);
         setSyncPendingByTerminal({});
@@ -445,6 +448,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         setTerminalSearchTerm('');
         setTerminalStoreFilter('ALL');
         setAuthAttemptsByTerminal({});
+        setDeviceAuditByTerminal({});
         setFiscalReadinessByTerminal({});
         setLatestPosApkRelease(null);
         setPosLicenseSeats(null);
@@ -987,10 +991,20 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
 
         setAuthAttemptsLoadingKey(key);
         try {
-            const attempts = await tenantService.getTerminalAuthAttempts(tenantId, terminalId);
+            const [attempts, audit] = await Promise.all([
+                tenantService.getTerminalAuthAttempts(tenantId, terminalId),
+                tenantService.getTerminalDeviceAudit(tenantId, terminalId).catch((auditError) => {
+                    console.warn('Error fetching terminal device audit:', auditError);
+                    return [];
+                }),
+            ]);
             setAuthAttemptsByTerminal((current) => ({
                 ...current,
                 [key]: attempts,
+            }));
+            setDeviceAuditByTerminal((current) => ({
+                ...current,
+                [key]: audit,
             }));
         } catch (err) {
             console.warn('Error fetching terminal auth attempts:', err);
@@ -998,6 +1012,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                 ...current,
                 [key]: [],
             }));
+            setDeviceAuditByTerminal((current) => ({ ...current, [key]: [] }));
         } finally {
             setAuthAttemptsLoadingKey((current) => current === key ? null : current);
         }
@@ -1153,6 +1168,10 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         authorizedDeviceIdInput?: string | null,
     ) => {
         if (!selectedTenantForTerminals) return;
+        if (deviceActionInFlightRef.current) {
+            alert('Ya existe una autorización de terminal en curso. Espera a que finalice y se recargue el estado canónico.');
+            return;
+        }
         if (isCanonicalTerminalActionBlocked(terminal)) {
             alert(CANONICAL_ERP_IDENTITY_REQUIRED_MESSAGE);
             return;
@@ -1168,16 +1187,20 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         const requiresErpConfirmation = selectedTenantForTerminals.contracted_product === 'POS_ERP';
         const authorizedDeviceId = authorizedDeviceIdInput || getTerminalAuthorizedDeviceId(terminal) || 'N/D';
         const confirmed = confirm(
-            `Esta accion autorizara ${requestedDeviceId} para usar ${terminal.name} / ${terminalId}. `
-            + `El equipo anterior (${authorizedDeviceId}) dejara de poder sincronizar como esta terminal. `
+            `Terminal a transferir: ${terminal.name} / ${terminalId}\n`
+            + `Dispositivo actualmente autorizado: ${authorizedDeviceId}\n`
+            + `Nuevo dispositivo: ${requestedDeviceId}\n\n`
+            + 'El dispositivo anterior será bloqueado y todas sus credenciales/tokens serán revocados. '
             + (requiresErpConfirmation
-                ? 'Tambien se vinculara inmediatamente en ERP; si ERP no confirma, Cloud-Admin dejara la reparacion pendiente. '
+                ? 'El ERP debe confirmar explícitamente el takeover y la rotación; de lo contrario Cloud Admin no mostrará éxito. '
                 : '')
-            + 'No se borraran ventas, productos ni datos operativos. El POS solo debe reintentar conexion.',
+            + '\n\n¿Confirmas esta reautorización?',
         );
         if (!confirmed) return;
 
         const key = `${getTerminalKey(terminal)}-TAKEOVER-${requestedDeviceId}`;
+        const operationId = crypto.randomUUID();
+        deviceActionInFlightRef.current = true;
         setDeviceActionSubmittingKey(key);
         try {
             const result = await tenantService.requestTerminalDeviceAction({
@@ -1189,14 +1212,27 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                 terminalName: terminal.name,
                 deviceId: requestedDeviceId,
                 action: 'TAKEOVER',
-                reason: requiresErpConfirmation ? 'ERP_DEVICE_MAPPING_REPAIR' : 'DEVICE_REINSTALL_OR_REPLACEMENT',
+                reason: 'CLOUD_ADMIN_TERMINAL_REAUTHORIZATION',
+                idempotencyKey: operationId,
             });
-            alert(result.message || 'Device autorizado. Reintenta conexion desde el POS.');
-            await refreshTerminalModalData();
+            const canonicalData = await tenantService.getTenantTerminalOverview(selectedTenantForTerminals.id);
+            const canonicalTerminal = canonicalData.find((item) => getTerminalTakeoverId(item) === terminalId);
+            const canonicalAuthorizedDevice = canonicalTerminal ? getTerminalAuthorizedDeviceId(canonicalTerminal) : null;
+            if (!canonicalTerminal || canonicalAuthorizedDevice !== requestedDeviceId) {
+                throw new Error(
+                    `ERP_CANONICAL_STATE_MISMATCH: el ERP/overview reporta ${canonicalAuthorizedDevice || 'N/D'} como autorizado; se esperaba ${requestedDeviceId}.`,
+                );
+            }
+            setTenantTerminals(canonicalData);
+            setAuthAttemptsByTerminal((current) => ({ ...current, [getTerminalKey(terminal)]: [] }));
+            setDeviceAuditByTerminal((current) => ({ ...current, [getTerminalKey(terminal)]: [] }));
+            await loadTerminalAuthAttempts(selectedTenantForTerminals.id, canonicalTerminal);
+            alert(`${result.message || 'Device autorizado. Reintenta conexion desde el POS.'}\n\nOperación: ${result.operation_id || operationId}`);
         } catch (err: unknown) {
             console.error('Error authorizing terminal device:', err);
             alert(getErrorMessage(err));
         } finally {
+            deviceActionInFlightRef.current = false;
             setDeviceActionSubmittingKey(null);
         }
     };
@@ -2584,6 +2620,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                         const isSyncLoading = syncPendingLoadingKey === terminalKey;
                                         const syncBulkSubmitting = syncRetrySubmittingKey === `${terminalKey}-bulk`;
                                         const authAttempts = authAttemptsByTerminal[terminalKey] || [];
+                                        const deviceAudit = deviceAuditByTerminal[terminalKey] || [];
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
                                         const identity = buildTerminalIdentitySummary(terminal, authAttempts);
                                         const canonicalActionBlocked = isCanonicalTerminalActionBlocked(terminal);
@@ -3326,6 +3363,47 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                                                         </td>
                                                                                     </tr>
                                                                                 </React.Fragment>
+                                                                            );
+                                                                        })}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="mt-4 rounded-xl border border-white/60 bg-white/70 overflow-hidden">
+                                                        <div className="px-3 py-2 border-b border-white/60">
+                                                            <p className="text-xs font-bold uppercase tracking-wider">Auditoría de reautorización</p>
+                                                        </div>
+                                                        {deviceAudit.length === 0 ? (
+                                                            <p className="px-3 py-4 text-sm opacity-75">No hay operaciones auditadas para esta terminal.</p>
+                                                        ) : (
+                                                            <div className="overflow-x-auto">
+                                                                <table className="w-full text-left text-xs">
+                                                                    <thead className="bg-white/80 uppercase tracking-wider opacity-70">
+                                                                        <tr>
+                                                                            <th className="px-3 py-2">Anterior</th>
+                                                                            <th className="px-3 py-2">Nuevo</th>
+                                                                            <th className="px-3 py-2">Usuario</th>
+                                                                            <th className="px-3 py-2">Fecha</th>
+                                                                            <th className="px-3 py-2">Resultado</th>
+                                                                            <th className="px-3 py-2">Operación</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody className="divide-y divide-white/70">
+                                                                        {deviceAudit.map((entry) => {
+                                                                            const operationId = typeof entry.metadata?.operation_id === 'string'
+                                                                                ? entry.metadata.operation_id
+                                                                                : entry.id;
+                                                                            return (
+                                                                                <tr key={entry.id}>
+                                                                                    <td className="px-3 py-2 font-mono">{entry.old_device_id || 'N/D'}</td>
+                                                                                    <td className="px-3 py-2 font-mono font-bold">{entry.new_device_id || 'N/D'}</td>
+                                                                                    <td className="px-3 py-2">{entry.performed_by || 'N/D'}</td>
+                                                                                    <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(entry.performed_at)}</td>
+                                                                                    <td className="px-3 py-2 font-bold">{entry.result || entry.erp_error_code || 'N/D'}</td>
+                                                                                    <td className="px-3 py-2 font-mono text-[10px] break-all">{operationId}</td>
+                                                                                </tr>
                                                                             );
                                                                         })}
                                                                     </tbody>
