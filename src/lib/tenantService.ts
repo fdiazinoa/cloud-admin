@@ -20,7 +20,11 @@ import type {
     TenantType,
     Terminal,
 } from "../types";
-import type { ProvisionTenantInput } from "./tenantProvisioning";
+import {
+    getTenantLicenseProvisioningMismatch,
+    normalizeTenantLicenseLimit,
+    type ProvisionTenantInput,
+} from "./tenantProvisioning";
 import {
     deriveTenantSemanticsFromTenant,
     type TenantSemanticConfig,
@@ -876,10 +880,14 @@ export async function createTenant({
     backupEnabled,
     lifecycleStatus,
     provisioningStatus,
+    maxPosTerminals = 1,
+    maxErpUsers = 1,
 }: CreateTenantInput): Promise<{ tenantId: string; tempPassword: string }> {
     const accessEmail = email.trim().toLowerCase();
     const contactMail = contactEmail.trim().toLowerCase();
     const tempPassword = generateTempPassword();
+    const normalizedMaxPosTerminals = normalizeTenantLicenseLimit(maxPosTerminals);
+    const normalizedMaxErpUsers = normalizeTenantLicenseLimit(maxErpUsers);
     const semantics = normalizeTenantSemantics({
         name,
         slug,
@@ -976,6 +984,8 @@ export async function createTenant({
         p_backup_enabled: semantics.backupEnabled,
         p_lifecycle_status: semantics.lifecycleStatus,
         p_provisioning_status: semantics.provisioningStatus,
+        p_max_pos_terminals: normalizedMaxPosTerminals,
+        p_max_erp_users: normalizedMaxErpUsers,
         p_contact_name: contactName.trim(),
         p_contact_email: contactMail,
         p_city: city.trim(),
@@ -990,6 +1000,25 @@ export async function createTenant({
     }
 
     const tenantId = data as string;
+
+    const { data: tenantRows, error: licenseVerificationError } = await supabaseAdmin
+        .from("tenants")
+        .select("id,max_pos_terminals,max_erp_users")
+        .eq("id", tenantId)
+        .limit(1);
+    const licenseMismatch = licenseVerificationError
+        ? "No se pudo verificar la cantidad de licencias del tenant recién creado."
+        : getTenantLicenseProvisioningMismatch(
+            tenantRows?.[0],
+            normalizedMaxPosTerminals,
+            normalizedMaxErpUsers,
+        );
+
+    if (licenseMismatch) {
+        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        throw new Error(licenseMismatch);
+    }
 
     const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(
         authUserId,
