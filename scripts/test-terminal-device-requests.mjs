@@ -31,6 +31,9 @@ for (const source of [attemptsProxy, edgeAttempts]) {
     assert.doesNotMatch(source, /registryUpdate\.device_id\s*=\s*latestRejected\.requested_device_id/);
     assert.match(source, /last_rejected_device_id:\s*latestRejected\.requested_device_id/);
     assert.match(source, /dedupePendingAttempts/);
+    assert.match(source, /legacyPendingInferred/);
+    assert.match(source, /DEVICE_SUPERSEDED/);
+    assert.match(source, /serverless/);
 }
 
 assert.match(sessionGuard, /admin\.auth\.getUser\(accessToken\)/);
@@ -50,7 +53,7 @@ assert.match(tenantService, /Authorization: `Bearer \$\{accessToken\}`/);
 assert.doesNotMatch(tenantService.match(/export async function getTerminalAuthAttempts[\s\S]*?return Array\.isArray\(payload\?\.attempts\)/)?.[0] || '', /supabaseServiceRoleKey/);
 
 assert.match(rejectionProxy, /auth-attempts\/\$\{encodeURIComponent\(requestId\)\}\/reject/);
-assert.match(rejectionProxy, /requestStatus\(pending\) !== "PENDING"/);
+assert.match(rejectionProxy, /!isPendingRequest\(pending\)/);
 assert.match(rejectionProxy, /REJECTION_RESPONSE_AMBIGUOUS/);
 assert.match(rejectionProxy, /responseStatus !== "REJECTED"/);
 assert.match(rejectionProxy, /DEVICE_REQUEST_REJECTED/);
