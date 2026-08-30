@@ -246,6 +246,8 @@ async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
         ? responseRecord.attempts.map(asRecord)
         : Array.isArray(responseRecord.data)
             ? responseRecord.data.map(asRecord)
+            : Array.isArray(responseRecord.items)
+                ? responseRecord.items.map(asRecord)
             : [];
     const attempt = attempts.find((item) => stringValue(item.id) === requestId);
     const status = (stringValue(attempt?.resolution_status) || stringValue(attempt?.status) || "").toUpperCase();
