@@ -174,7 +174,6 @@ async function validateCanonicalErpActionScope(
     const tenantId = stringValue(payload.tenant_id);
     const terminalId = stringValue(payload.terminal_id);
     const storeId = stringValue(payload.store_id);
-    const catalogTerminalId = stringValue(payload.catalog_terminal_id);
     if (!tenantId) return { ok: false as const, status: 400, error: "TENANT_ID_REQUIRED", message: "tenant_id es requerido." };
 
     const { data: tenant, error: tenantError } = await supabase
@@ -190,7 +189,7 @@ async function validateCanonicalErpActionScope(
         || tenantRecord.type === "full";
     if (!requiresErp) return { ok: true as const };
 
-    if (!terminalId || !isUuid(terminalId) || terminalId === catalogTerminalId || !storeId || !isUuid(storeId)) {
+    if (!terminalId || !isUuid(terminalId) || !storeId || !isUuid(storeId)) {
         return { ok: false as const, status: 409, error: "CANONICAL_ERP_IDENTITY_REQUIRED", message: canonicalIdentityRequiredMessage };
     }
     const terminal = await loadCanonicalErpTerminal(supabase, terminalId);
