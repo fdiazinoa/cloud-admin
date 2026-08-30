@@ -297,6 +297,8 @@ export interface TerminalAuthAttempt {
     terminal_id?: string | null;
     terminal_name?: string | null;
     requested_device_id?: string | null;
+    request_device_id?: string | null;
+    device_name?: string | null;
     authorized_device_id?: string | null;
     device_id?: string | null;
     deviceId?: string | null;
@@ -310,6 +312,9 @@ export interface TerminalAuthAttempt {
     app_version?: string | null;
     attempted_at?: string | null;
     created_at?: string | null;
+    updated_at?: string | null;
+    approved_at?: string | null;
+    approved_by?: string | null;
     pairing_required?: boolean | null;
     metadata?: Record<string, unknown> | null;
 }
@@ -431,6 +436,7 @@ export type CloudAdminPermissionKey =
     | 'profiles_manage'
     | 'licenses_view'
     | 'licenses_manage'
+    | 'terminal_reauthorization'
     | 'audit_view';
 
 export type CloudAdminPermissions = Record<CloudAdminPermissionKey, boolean>;

@@ -30,7 +30,10 @@ interface DeviceActionRequest {
     store_id?: string | null;
     registry_id?: string | null;
     terminal_name?: string | null;
+    device_name?: string | null;
     device_id?: string;
+    request_id?: string | null;
+    expected_authorized_device_id?: string | null;
     action?: DeviceAction;
     reason?: string;
     confirm_action?: boolean;
@@ -1287,6 +1290,9 @@ Deno.serve(async (request) => {
         const requestedStoreId = body.store_id?.trim() || null;
         const registryId = body.registry_id?.trim() || null;
         const terminalName = body.terminal_name?.trim() || null;
+        const deviceName = body.device_name?.trim() || null;
+        const requestId = body.request_id?.trim() || null;
+        const expectedAuthorizedDeviceId = body.expected_authorized_device_id?.trim() || null;
         const deviceId = normalizeRequiredDeviceId(body.device_id);
         const requestedAction = body.action;
         const action = requestedAction === 'GENERATE_PAIRING_CODE' ? 'TAKEOVER' : requestedAction;
@@ -1782,8 +1788,14 @@ Deno.serve(async (request) => {
             erp_terminal_id: canonicalErpTerminalId,
             terminalName: terminalName || registry?.terminal_name || publicTerminal?.code || null,
             terminal_name: terminalName || registry?.terminal_name || publicTerminal?.code || null,
+            deviceName,
+            device_name: deviceName,
             deviceId: effectiveDeviceId,
             device_id: effectiveDeviceId,
+            requestId,
+            request_id: requestId,
+            expectedAuthorizedDeviceId,
+            expected_authorized_device_id: expectedAuthorizedDeviceId,
             tenantId: erpTenantId || tenantId,
             tenant_id: erpTenantId || tenantId,
             erpTenantId,
@@ -2224,6 +2236,8 @@ Deno.serve(async (request) => {
             status: 'success',
             success: true,
             operation_id: idempotencyKey,
+            request_id: getPayloadText(sanitizedPayload, 'request_id', 'requestId') || requestId,
+            request_status: getPayloadText(sanitizedPayload, 'request_status', 'requestStatus', 'resolution_status', 'resolutionStatus'),
             terminal_id: terminalId,
             action: action === 'TAKEOVER'
                 ? alreadyAuthorizedDevice
