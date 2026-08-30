@@ -142,6 +142,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     });
     const canViewErpModules = hasCloudAdminPermission(permissions, 'licenses_view');
     const canManageErpModules = hasCloudAdminPermission(permissions, 'licenses_manage');
+    const canReauthorizeTerminals = hasCloudAdminPermission(permissions, 'terminal_reauthorization');
 
     const getErrorMessage = (error: unknown) => {
         if (typeof error === 'string') return error;
@@ -433,6 +434,11 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
             setTenantTerminals(data);
             setPosLicenseSeats(seats);
             setLatestPosApkRelease(releases.find((release) => release.is_latest) || releases[0] || null);
+            if (canReauthorizeTerminals) {
+                await Promise.all(data
+                    .filter((terminal) => hasCanonicalErpBinding(terminal))
+                    .map((terminal) => loadTerminalAuthAttempts(tenant.id, terminal)));
+            }
         } catch (err) {
             console.error('Error fetching tenant terminals:', err);
             alert('No se pudieron cargar las terminales de este tenant.');
@@ -558,6 +564,14 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     const getTerminalKey = (terminal: TenantTerminalSnapshot) => `${terminal.id}-${terminal.registry?.id || 'catalog'}`;
 
     const getAttemptTime = (attempt: TerminalAuthAttempt) => attempt.attempted_at || attempt.created_at || null;
+    const getDeviceRequestStatusLabel = (attempt: TerminalAuthAttempt) => {
+        const status = (attempt.resolution_status || attempt.status || 'PENDING').toUpperCase();
+        if (status === 'PENDING') return 'PENDIENTE';
+        if (status === 'APPROVED' || status === 'RESOLVED') return 'APROBADA';
+        if (status === 'REJECTED') return 'RECHAZADA';
+        if (status === 'EXPIRED' || status === 'IGNORED') return 'EXPIRADA';
+        return status;
+    };
     const getAuthStatusLabel = (status: string) => {
         switch (status) {
             case 'AUTHORIZED': return 'Autorizado';
@@ -1166,8 +1180,13 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         terminal: TenantTerminalSnapshot,
         requestedDeviceIdInput: string,
         authorizedDeviceIdInput?: string | null,
+        request?: TerminalAuthAttempt | null,
     ) => {
         if (!selectedTenantForTerminals) return;
+        if (!canReauthorizeTerminals) {
+            alert('No tienes permiso para reautorizar dispositivos de terminales.');
+            return;
+        }
         if (deviceActionInFlightRef.current) {
             alert('Ya existe una autorización de terminal en curso. Espera a que finalice y se recargue el estado canónico.');
             return;
@@ -1210,7 +1229,11 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                 storeId: terminal.erp_store_id,
                 registryId: terminal.registry?.id || null,
                 terminalName: terminal.name,
+                deviceName: request?.device_name
+                    || (typeof request?.metadata?.device_name === 'string' ? request.metadata.device_name : null),
                 deviceId: requestedDeviceId,
+                requestId: request?.id || null,
+                expectedAuthorizedDeviceId: authorizedDeviceId !== 'N/D' ? authorizedDeviceId : null,
                 action: 'TAKEOVER',
                 reason: 'CLOUD_ADMIN_TERMINAL_REAUTHORIZATION',
                 idempotencyKey: operationId,
@@ -1247,7 +1270,52 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
             alert('El intento rechazado no tiene terminal o device_id suficiente para reautorizar.');
             return;
         }
-        await handleAuthorizeDeviceForTerminal(terminal, requestedDeviceId, attempt.authorized_device_id);
+        if (!attempt.id) {
+            alert('El ERP no devolvió un identificador canónico para esta solicitud. No se puede aprobar de forma segura.');
+            return;
+        }
+        await handleAuthorizeDeviceForTerminal(
+            terminal,
+            requestedDeviceId,
+            getTerminalAuthorizedDeviceId(terminal),
+            attempt,
+        );
+    };
+
+    const handleRejectDeviceRequest = async (terminal: TenantTerminalSnapshot, attempt: TerminalAuthAttempt) => {
+        if (!selectedTenantForTerminals || !attempt.id) return;
+        if (!canReauthorizeTerminals) {
+            alert('No tienes permiso para rechazar solicitudes de dispositivos.');
+            return;
+        }
+        if (deviceActionInFlightRef.current) {
+            alert('Ya existe una operación de terminal en curso. Espera a que finalice.');
+            return;
+        }
+        const terminalId = getTerminalTakeoverId(terminal);
+        const requestedDeviceId = getAttemptDeviceId(attempt);
+        if (!terminalId || !requestedDeviceId) return;
+        if (!confirm(`¿Rechazar la solicitud de ${requestedDeviceId} para ${terminal.name}? El dispositivo seguirá sin autorización.`)) return;
+
+        const key = `${getTerminalKey(terminal)}-REJECT-${attempt.id}`;
+        deviceActionInFlightRef.current = true;
+        setDeviceActionSubmittingKey(key);
+        try {
+            await tenantService.rejectTerminalDeviceRequest({
+                tenantId: selectedTenantForTerminals.id,
+                terminalId,
+                requestId: attempt.id,
+                requestedDeviceId,
+            });
+            await loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal);
+            alert('Solicitud de dispositivo rechazada por el ERP.');
+        } catch (err: unknown) {
+            console.error('Error rejecting terminal device request:', err);
+            alert(getErrorMessage(err));
+        } finally {
+            deviceActionInFlightRef.current = false;
+            setDeviceActionSubmittingKey(null);
+        }
     };
 
     const handleRepairErpDeviceMapping = async (terminal: TenantTerminalSnapshot) => {
@@ -2661,9 +2729,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                         const actionableAuthAttempts = authAttempts.filter((attempt) => {
                                             const requestedDeviceId = getAttemptDeviceId(attempt);
                                             return isPendingDeviceUnauthorizedAttempt(attempt)
-                                                && requestedDeviceId !== authorizedDeviceId
-                                                && requestedDeviceId !== posReportedDeviceId
-                                                && requestedDeviceId !== erpCurrentDeviceId;
+                                                && requestedDeviceId !== authorizedDeviceId;
                                         });
                                         const lastRejectedDeviceId = identity.lastRejectedDeviceId !== 'N/D' ? identity.lastRejectedDeviceId : '';
                                         const lastAuthAttempt = authAttempts[0] || null;
@@ -2715,12 +2781,14 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                         const baseTerminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
                                             { key: 'summary', label: 'Resumen' },
                                             { key: 'devices', label: 'Dispositivos' },
+                                            ...(canReauthorizeTerminals
+                                                ? [{ key: 'attempts' as TerminalTabKey, label: 'Solicitudes', count: actionableAuthAttempts.length }]
+                                                : []),
                                         ];
                                         const advancedTerminalTabOptions: Array<{ key: TerminalTabKey; label: string; count?: number }> = [
                                             { key: 'erp', label: 'Preparacion ERP' },
                                             { key: 'sync', label: 'Sync', count: syncPending.summary.pending },
                                             ...(isFiscalEligibleTenant(selectedTenantForTerminals) ? [{ key: 'fiscal' as TerminalTabKey, label: 'Fiscal' }] : []),
-                                            { key: 'attempts', label: 'Intentos', count: authAttempts.length },
                                         ];
                                         const terminalTabOptions = isAdvancedOpen
                                             ? [...baseTerminalTabOptions, ...advancedTerminalTabOptions]
@@ -2856,7 +2924,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                                         Quitar bloqueo POS
                                                                     </button>
                                                                 ) : null}
-                                                                {needsAuthorizedDeviceSync ? (
+                                                                {needsAuthorizedDeviceSync && selectedTenantForTerminals.contracted_product !== 'POS_ERP' ? (
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => void handleSyncAuthorizedDevice(terminal)}
@@ -2876,7 +2944,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                                     {isAuthAttemptsLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
                                                                     Actualizar intentos
                                                                 </button>
-                                                                {detectedAuthorizationDeviceId ? (
+                                                                {detectedAuthorizationDeviceId && canReauthorizeTerminals ? (
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => void handleAuthorizeDeviceForManualInput(terminal, detectedAuthorizationDeviceId)}
@@ -2890,7 +2958,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => void handleRotateTerminalCredentials(terminal)}
-                                                                    disabled={canonicalActionBlocked || !authorizedDeviceId || deviceActionSubmittingKey === rotateSubmittingKey}
+                                                                    disabled={!canReauthorizeTerminals || canonicalActionBlocked || !authorizedDeviceId || deviceActionSubmittingKey !== null}
                                                                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-bold text-blue-700 shadow-sm hover:bg-blue-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                                                                 >
                                                                     {deviceActionSubmittingKey === rotateSubmittingKey ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
@@ -3185,7 +3253,8 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                                             : '';
                                                                         const rowDeviceId = deviceRow.deviceId.trim();
                                                                         const authorizeRowKey = rowDeviceId ? `${terminalKey}-TAKEOVER-${rowDeviceId}` : '';
-                                                                        const canAuthorizeDeviceRow = Boolean(rowDeviceId)
+                                                                        const canAuthorizeDeviceRow = canReauthorizeTerminals
+                                                                            && Boolean(rowDeviceId)
                                                                             && !deviceRow.roles.includes('AUTHORIZED_CURRENT')
                                                                             && !deviceRow.roles.includes('LICENSE_EXCEEDED');
 
@@ -3249,7 +3318,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                                                             <button
                                                                                                 type="button"
                                                                                                 onClick={() => void handleAuthorizeDeviceForManualInput(terminal, rowDeviceId)}
-                                                                                                disabled={canonicalActionBlocked || deviceActionSubmittingKey === authorizeRowKey}
+                                                                                                disabled={canonicalActionBlocked || deviceActionSubmittingKey !== null}
                                                                                                 title={`Autoriza ${rowDeviceId} para ${terminal.name} y revoca el device activo anterior.`}
                                                                                                 className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-[10px] font-bold uppercase text-emerald-900 hover:bg-emerald-100 transition-colors disabled:opacity-60"
                                                                                             >
@@ -3296,52 +3365,45 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
 
                                                 {activeTerminalTab === 'attempts' ? (
                                                 <div className={`mx-5 rounded-2xl border px-4 py-4 ${authStatusClasses}`}>
-                                                    <p className="text-xs font-bold uppercase tracking-wider">Intentos de conexion rechazados</p>
+                                                    <p className="text-xs font-bold uppercase tracking-wider">Solicitudes de dispositivo</p>
                                                     <div className="mt-3 rounded-xl border border-white/60 bg-white/70 overflow-hidden">
                                                         <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/60">
-                                                            <p className="text-xs font-bold uppercase tracking-wider">Intentos de conexion rechazados</p>
+                                                            <div>
+                                                                <p className="text-sm font-black text-slate-800">{terminal.name} / {terminal.terminal_code || terminal.terminal_id || 'N/D'}</p>
+                                                                <p className="mt-0.5 font-mono text-[10px] text-slate-500">UUID ERP: {getTerminalTakeoverId(terminal) || 'N/D'}</p>
+                                                            </div>
                                                             {isAuthAttemptsLoading ? <Loader2 size={15} className="animate-spin" /> : null}
                                                         </div>
                                                         {authAttempts.length === 0 ? (
                                                             <div className="px-3 py-4 text-sm opacity-75">
-                                                                <p>No hay intentos rechazados reportados por ERP para esta terminal.</p>
-                                                                {manualDeviceId ? (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => void handleAuthorizeDeviceForManualInput(terminal, manualDeviceId)}
-                                                                        disabled={canonicalActionBlocked || deviceActionSubmittingKey === manualAuthorizeKey}
-                                                                        className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-60"
-                                                                    >
-                                                                        {deviceActionSubmittingKey === manualAuthorizeKey ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                                                                        Autorizar {manualDeviceId}
-                                                                    </button>
-                                                                ) : null}
+                                                                <p>No hay solicitudes de dispositivo reportadas por el ERP para esta terminal.</p>
                                                             </div>
                                                         ) : (
                                                             <div className="overflow-x-auto">
                                                                 <table className="w-full text-left text-xs">
                                                                     <thead className="bg-white/80 uppercase tracking-wider opacity-70">
                                                                         <tr>
-                                                                            <th className="px-3 py-2">Device solicitado</th>
-                                                                            <th className="px-3 py-2">Autorizado</th>
-                                                                            <th className="px-3 py-2">Motivo</th>
-                                                                            <th className="px-3 py-2">Fecha</th>
+                                                                            <th className="px-3 py-2">Dispositivo autorizado</th>
+                                                                            <th className="px-3 py-2">Dispositivo solicitante</th>
+                                                                            <th className="px-3 py-2">Solicitud</th>
                                                                             <th className="px-3 py-2">Estado</th>
-                                                                            <th className="px-3 py-2 text-right">Accion</th>
+                                                                            <th className="px-3 py-2 text-right">Acciones</th>
                                                                         </tr>
                                                                     </thead>
                                                                     <tbody className="divide-y divide-white/70">
                                                                         {authAttempts.map((attempt, attemptIndex) => {
                                                                             const requestedDeviceId = getAttemptDeviceId(attempt);
-                                                                            const attemptStatus = attempt.resolution_status || attempt.status || 'PENDING';
-                                                                            const canReauthorize = isPendingDeviceUnauthorizedAttempt(attempt);
+                                                                            const attemptStatus = getDeviceRequestStatusLabel(attempt);
+                                                                            const canReauthorize = canReauthorizeTerminals
+                                                                                && Boolean(attempt.id)
+                                                                                && isPendingDeviceUnauthorizedAttempt(attempt);
                                                                             const reauthorizeKey = `${terminalKey}-TAKEOVER-${requestedDeviceId}`;
+                                                                            const rejectKey = `${terminalKey}-REJECT-${attempt.id || requestedDeviceId}`;
                                                                             return (
                                                                                 <React.Fragment key={attempt.id || `${requestedDeviceId}-${attemptIndex}`}>
                                                                                     <tr>
-                                                                                        <td className="px-3 py-2 font-mono font-bold">{requestedDeviceId || 'N/D'}</td>
                                                                                         <td className="px-3 py-2 font-mono">{attempt.authorized_device_id || authorizedDeviceId || 'N/D'}</td>
-                                                                                        <td className="px-3 py-2">{attempt.reason || attempt.message || 'N/D'}</td>
+                                                                                        <td className="px-3 py-2 font-mono font-bold">{requestedDeviceId || 'N/D'}</td>
                                                                                         <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(getAttemptTime(attempt))}</td>
                                                                                         <td className="px-3 py-2 font-bold uppercase">{attemptStatus}</td>
                                                                                         <td className="px-3 py-2 text-right">
@@ -3350,11 +3412,20 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                                                                     <button
                                                                                                         type="button"
                                                                                                         onClick={() => void handleReauthorizeAttempt(terminal, attempt)}
-                                                                                                        disabled={deviceActionSubmittingKey === reauthorizeKey}
+                                                                                                        disabled={canonicalActionBlocked || deviceActionSubmittingKey !== null}
                                                                                                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-60"
                                                                                                     >
                                                                                                         {deviceActionSubmittingKey === reauthorizeKey ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
-                                                                                                        Reautorizar
+                                                                                                        Autorizar y reemplazar
+                                                                                                    </button>
+                                                                                                    <button
+                                                                                                        type="button"
+                                                                                                        onClick={() => void handleRejectDeviceRequest(terminal, attempt)}
+                                                                                                        disabled={deviceActionSubmittingKey !== null}
+                                                                                                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                                                                                                    >
+                                                                                                        {deviceActionSubmittingKey === rejectKey ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />}
+                                                                                                        Rechazar
                                                                                                     </button>
                                                                                                 </div>
                                                                                             ) : (

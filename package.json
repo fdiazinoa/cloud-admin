@@ -14,6 +14,7 @@
     "test:auth-password-change": "node scripts/test-auth-password-change.mjs",
     "test:terminal-device-auth": "node scripts/test-terminal-device-auth.mjs",
     "test:terminal-reauthorization": "node scripts/test-terminal-reauthorization.mjs",
+    "test:terminal-device-requests": "node scripts/test-terminal-device-requests.mjs",
     "test:terminal-canonical-identity": "node --experimental-strip-types scripts/test-terminal-canonical-identity.mjs",
     "test:terminal-reconciliation": "node --experimental-strip-types scripts/test-terminal-reconciliation.mjs",
     "test:terminal-activation-license": "node scripts/test-terminal-activation-license.mjs",

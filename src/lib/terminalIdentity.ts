@@ -194,6 +194,7 @@ export function getCanonicalIdentityBlockingMessage(terminal: TenantTerminalSnap
 
 export function getAttemptDeviceId(attempt: TerminalAuthAttempt): string {
     return attempt.requested_device_id?.trim()
+        || attempt.request_device_id?.trim()
         || attempt.device_id?.trim()
         || attempt.deviceId?.trim()
         || '';
@@ -202,7 +203,8 @@ export function getAttemptDeviceId(attempt: TerminalAuthAttempt): string {
 export function isPendingDeviceUnauthorizedAttempt(attempt: TerminalAuthAttempt): boolean {
     const reason = (attempt.reason || '').toUpperCase();
     const status = (attempt.resolution_status || attempt.status || '').toUpperCase();
-    return reason === 'DEVICE_NOT_AUTHORIZED' && status !== 'RESOLVED' && status !== 'COMPLETED';
+    return status === 'PENDING'
+        || (!status && ['DEVICE_NOT_AUTHORIZED', 'DEVICE_SUPERSEDED', 'TAKEOVER_REQUIRED'].includes(reason));
 }
 
 export function getTerminalLastRejectedDeviceId(
