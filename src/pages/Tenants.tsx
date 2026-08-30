@@ -86,6 +86,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     const [isRebuildSubmitting, setIsRebuildSubmitting] = useState(false);
     const [erpReadinessSubmittingKey, setErpReadinessSubmittingKey] = useState<string | null>(null);
     const [authAttemptsByTerminal, setAuthAttemptsByTerminal] = useState<Record<string, TerminalAuthAttempt[]>>({});
+    const [authAttemptsErrorByTerminal, setAuthAttemptsErrorByTerminal] = useState<Record<string, string>>({});
     const [deviceAuditByTerminal, setDeviceAuditByTerminal] = useState<Record<string, TerminalDeviceAuditEntry[]>>({});
     const [authAttemptsLoadingKey, setAuthAttemptsLoadingKey] = useState<string | null>(null);
     const [deviceActionSubmittingKey, setDeviceActionSubmittingKey] = useState<string | null>(null);
@@ -411,6 +412,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         setTerminalSearchTerm('');
         setTerminalStoreFilter('ALL');
         setAuthAttemptsByTerminal({});
+        setAuthAttemptsErrorByTerminal({});
         setDeviceAuditByTerminal({});
         setFiscalReadinessByTerminal({});
         setPosLicenseSeats(null);
@@ -454,6 +456,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         setTerminalSearchTerm('');
         setTerminalStoreFilter('ALL');
         setAuthAttemptsByTerminal({});
+        setAuthAttemptsErrorByTerminal({});
         setDeviceAuditByTerminal({});
         setFiscalReadinessByTerminal({});
         setLatestPosApkRelease(null);
@@ -1004,6 +1007,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         if (!terminalId) return;
 
         setAuthAttemptsLoadingKey(key);
+        setAuthAttemptsErrorByTerminal((current) => ({ ...current, [key]: '' }));
         try {
             const [attempts, audit] = await Promise.all([
                 tenantService.getTerminalAuthAttempts(tenantId, terminalId),
@@ -1016,12 +1020,17 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                 ...current,
                 [key]: attempts,
             }));
+            setAuthAttemptsErrorByTerminal((current) => ({ ...current, [key]: '' }));
             setDeviceAuditByTerminal((current) => ({
                 ...current,
                 [key]: audit,
             }));
         } catch (err) {
             console.warn('Error fetching terminal auth attempts:', err);
+            setAuthAttemptsErrorByTerminal((current) => ({
+                ...current,
+                [key]: getErrorMessage(err),
+            }));
             setAuthAttemptsByTerminal((current) => ({
                 ...current,
                 [key]: [],
@@ -2688,6 +2697,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                         const isSyncLoading = syncPendingLoadingKey === terminalKey;
                                         const syncBulkSubmitting = syncRetrySubmittingKey === `${terminalKey}-bulk`;
                                         const authAttempts = authAttemptsByTerminal[terminalKey] || [];
+                                        const authAttemptsError = authAttemptsErrorByTerminal[terminalKey] || '';
                                         const deviceAudit = deviceAuditByTerminal[terminalKey] || [];
                                         const authStatus = getTerminalAuthStatus(terminal, authAttempts);
                                         const identity = buildTerminalIdentitySummary(terminal, authAttempts);
@@ -3374,7 +3384,21 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                             </div>
                                                             {isAuthAttemptsLoading ? <Loader2 size={15} className="animate-spin" /> : null}
                                                         </div>
-                                                        {authAttempts.length === 0 ? (
+                                                        {authAttemptsError ? (
+                                                            <div className="px-3 py-4 text-sm text-red-800">
+                                                                <p className="font-bold">No se pudieron cargar las solicitudes de dispositivo.</p>
+                                                                <p className="mt-1 text-xs">{authAttemptsError}</p>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => void loadTerminalAuthAttempts(selectedTenantForTerminals.id, terminal)}
+                                                                    disabled={isAuthAttemptsLoading}
+                                                                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-bold text-red-800 hover:bg-red-50 disabled:opacity-60"
+                                                                >
+                                                                    {isAuthAttemptsLoading ? <Loader2 size={13} className="animate-spin" /> : null}
+                                                                    Reintentar carga
+                                                                </button>
+                                                            </div>
+                                                        ) : authAttempts.length === 0 ? (
                                                             <div className="px-3 py-4 text-sm opacity-75">
                                                                 <p>No hay solicitudes de dispositivo reportadas por el ERP para esta terminal.</p>
                                                             </div>

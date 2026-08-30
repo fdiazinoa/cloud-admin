@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
-import { CloudAdminAuthError, requireCloudAdminPermission } from "./lib/cloud-admin-session";
+import { CloudAdminAuthError, requireCloudAdminPermission } from "./lib/cloud-admin-session.js";
 
 type ApiRequest = IncomingMessage & { body?: unknown; headers: IncomingHttpHeaders; method?: string };
 type RejectPayload = {

@@ -1,6 +1,6 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { createClient } from "@supabase/supabase-js";
-import { CloudAdminAuthError, requireCloudAdminPermission, type AnySupabaseClient } from "./lib/cloud-admin-session";
+import { CloudAdminAuthError, requireCloudAdminPermission, type AnySupabaseClient } from "./lib/cloud-admin-session.js";
 
 type ApiRequest = IncomingMessage & {
     body?: unknown;
