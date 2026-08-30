@@ -64,6 +64,8 @@ interface ProvisionTenantInput {
     plan?: string;
     type?: TenantType;
     cloudSync?: boolean;
+    maxPosTerminals?: number;
+    maxErpUsers?: number;
     initialPassword: string;
 }
 
@@ -86,6 +88,8 @@ type ProvisionPayload = {
     servicedByDistributorId?: unknown;
     type?: unknown;
     cloudSync?: unknown;
+    maxPosTerminals?: unknown;
+    maxErpUsers?: unknown;
 };
 
 type ExistingTenant = {
@@ -160,6 +164,12 @@ function isNonEmptyString(value: unknown): value is string {
 
 function optionalString(value: unknown): string | null {
     return isNonEmptyString(value) ? value.trim() : null;
+}
+
+function normalizeTenantLicenseLimit(value: unknown): number {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return 1;
+    return Math.max(1, Math.trunc(numericValue));
 }
 
 function normalizeOptional(value?: string | null): string | null {
@@ -255,12 +265,16 @@ async function provisionTenant(
         plan = "TRIAL",
         type = "full",
         cloudSync = true,
+        maxPosTerminals = 1,
+        maxErpUsers = 1,
         initialPassword,
     }: ProvisionTenantInput,
 ) {
     const accessEmail = email.trim().toLowerCase();
     const contactMail = contactEmail.trim().toLowerCase();
     const tempPassword = initialPassword.trim();
+    const normalizedMaxPosTerminals = normalizeTenantLicenseLimit(maxPosTerminals);
+    const normalizedMaxErpUsers = normalizeTenantLicenseLimit(maxErpUsers);
 
     const { error: authError, data: authUser } = await supabaseAdmin.auth.admin.createUser({
         email: accessEmail,
@@ -297,6 +311,8 @@ async function provisionTenant(
         p_email: accessEmail,
         p_type: type,
         p_cloud_sync: cloudSync,
+        p_max_pos_terminals: normalizedMaxPosTerminals,
+        p_max_erp_users: normalizedMaxErpUsers,
         p_contact_name: contactName.trim(),
         p_contact_email: contactMail,
         p_city: city.trim(),
@@ -311,6 +327,23 @@ async function provisionTenant(
     }
 
     const tenantId = data as string;
+
+    const { data: tenantRows, error: licenseVerificationError } = await supabaseAdmin
+        .from("tenants")
+        .select("id,max_pos_terminals,max_erp_users")
+        .eq("id", tenantId)
+        .limit(1);
+    const createdTenant = (tenantRows as Array<Record<string, unknown>> | null)?.[0];
+    const licenseMismatch = licenseVerificationError
+        || !createdTenant
+        || Number(createdTenant.max_pos_terminals) !== normalizedMaxPosTerminals
+        || Number(createdTenant.max_erp_users) !== normalizedMaxErpUsers;
+
+    if (licenseMismatch) {
+        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        throw new Error("No se pudo verificar la cantidad de licencias del tenant recién creado.");
+    }
 
     const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(authUserId, {
         user_metadata: {
@@ -410,6 +443,8 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         const city = rawCity.trim();
         const password = rawPassword.trim();
         const cloudSync = typeof payload.cloudSync === "boolean" ? payload.cloudSync : true;
+        const maxPosTerminals = normalizeTenantLicenseLimit(payload.maxPosTerminals);
+        const maxErpUsers = normalizeTenantLicenseLimit(payload.maxErpUsers);
 
         const supabase = createClient(
             getEnv("SUPABASE_URL", "VITE_SUPABASE_URL"),
@@ -454,6 +489,8 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             servicedByDistributorId: optionalString(payload.servicedByDistributorId),
             type: type as TenantType,
             cloudSync,
+            maxPosTerminals,
+            maxErpUsers,
             initialPassword: password,
             plan: "TRIAL",
         });

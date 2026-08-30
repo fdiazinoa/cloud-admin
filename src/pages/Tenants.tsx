@@ -342,6 +342,8 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                 backupEnabled: semanticConfig.backupEnabled,
                 lifecycleStatus: semanticConfig.lifecycleStatus,
                 provisioningStatus: semanticConfig.provisioningStatus,
+                maxPosTerminals: products.pos_licenses,
+                maxErpUsers: products.erp_users,
             });
 
             if (formData.taxId.trim()) {

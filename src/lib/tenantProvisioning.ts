@@ -87,6 +87,8 @@ export interface ProvisionTenantInput {
     backupEnabled?: boolean;
     lifecycleStatus?: TenantLifecycleStatus;
     provisioningStatus?: TenantProvisioningStatus;
+    maxPosTerminals?: number;
+    maxErpUsers?: number;
     initialPassword?: string;
 }
 
@@ -99,6 +101,31 @@ function normalizeOptional(value?: string | null): string | null {
     if (!value) return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+}
+
+export function normalizeTenantLicenseLimit(value?: number): number {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return 1;
+    return Math.max(1, Math.trunc(numericValue));
+}
+
+export function getTenantLicenseProvisioningMismatch(
+    tenant: unknown,
+    expectedMaxPosTerminals: number,
+    expectedMaxErpUsers: number,
+): string | null {
+    if (!tenant || typeof tenant !== "object") {
+        return "No se pudo verificar el tenant recién creado.";
+    }
+
+    const row = tenant as Record<string, unknown>;
+    if (Number(row.max_pos_terminals) !== expectedMaxPosTerminals) {
+        return `Las licencias POS no se guardaron correctamente (${String(row.max_pos_terminals)} de ${expectedMaxPosTerminals}).`;
+    }
+    if (Number(row.max_erp_users) !== expectedMaxErpUsers) {
+        return `Las licencias ERP no se guardaron correctamente (${String(row.max_erp_users)} de ${expectedMaxErpUsers}).`;
+    }
+    return null;
 }
 
 function generateTempPassword(): string {
@@ -242,12 +269,16 @@ export async function provisionTenant(
         backupEnabled,
         lifecycleStatus,
         provisioningStatus,
+        maxPosTerminals = 1,
+        maxErpUsers = 1,
         initialPassword,
     }: ProvisionTenantInput,
 ): Promise<ProvisionTenantResult> {
     const accessEmail = email.trim().toLowerCase();
     const contactMail = contactEmail.trim().toLowerCase();
     const tempPassword = initialPassword?.trim() || generateTempPassword();
+    const normalizedMaxPosTerminals = normalizeTenantLicenseLimit(maxPosTerminals);
+    const normalizedMaxErpUsers = normalizeTenantLicenseLimit(maxErpUsers);
     const semantics = normalizeTenantSemantics({
         name,
         slug,
@@ -343,6 +374,8 @@ export async function provisionTenant(
         p_backup_enabled: semantics.backupEnabled,
         p_lifecycle_status: semantics.lifecycleStatus,
         p_provisioning_status: semantics.provisioningStatus,
+        p_max_pos_terminals: normalizedMaxPosTerminals,
+        p_max_erp_users: normalizedMaxErpUsers,
         p_contact_name: contactName.trim(),
         p_contact_email: contactMail,
         p_city: city.trim(),
@@ -357,6 +390,25 @@ export async function provisionTenant(
     }
 
     const tenantId = data as string;
+
+    const { data: tenantRows, error: licenseVerificationError } = await supabaseAdmin
+        .from("tenants")
+        .select("id,max_pos_terminals,max_erp_users")
+        .eq("id", tenantId)
+        .limit(1);
+    const licenseMismatch = licenseVerificationError
+        ? "No se pudo verificar la cantidad de licencias del tenant recién creado."
+        : getTenantLicenseProvisioningMismatch(
+            Array.isArray(tenantRows) ? tenantRows[0] : null,
+            normalizedMaxPosTerminals,
+            normalizedMaxErpUsers,
+        );
+
+    if (licenseMismatch) {
+        await supabaseAdmin.from("tenants").delete().eq("id", tenantId);
+        await supabaseAdmin.auth.admin.deleteUser(authUserId);
+        throw new Error(licenseMismatch);
+    }
 
     const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(
         authUserId,
