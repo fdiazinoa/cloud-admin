@@ -123,10 +123,8 @@ function normalizeAttempt(value: unknown, tenantId: string, terminalId: string):
         || stringValue(sanitized.resolutionStatus)
         || stringValue(sanitized.status);
     const reason = stringValue(sanitized.reason);
-    const metadata = asRecord(sanitized.metadata);
     const legacyPendingInferred = resolutionStatus?.toUpperCase() === "REJECTED"
         && reason?.toUpperCase() === "DEVICE_SUPERSEDED"
-        && stringValue(metadata.runtime)?.toLowerCase() === "serverless"
         && !stringValue(sanitized.resolved_at)
         && !stringValue(sanitized.resolved_by);
     const attemptedAt = stringValue(sanitized.attempted_at)
