@@ -1286,7 +1286,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         await handleAuthorizeDeviceForTerminal(
             terminal,
             requestedDeviceId,
-            getTerminalAuthorizedDeviceId(terminal),
+            attempt.authorized_device_id || getTerminalAuthorizedDeviceId(terminal),
             attempt,
         );
     };
