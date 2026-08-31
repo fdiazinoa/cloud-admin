@@ -53,6 +53,7 @@ type ErpTerminalRecord = {
     name?: string | null;
     store_id?: string | null;
     device_id?: string | null;
+    authorized_device_id?: string | null;
     config?: Record<string, unknown> | null;
 };
 
@@ -158,7 +159,7 @@ async function loadCanonicalErpTerminal(
     const { data, error } = await supabase
         .schema("public")
         .from("erp_terminals")
-        .select("id,name,store_id,device_id,config")
+        .select("id,name,store_id,device_id,authorized_device_id,config")
         .eq("id", terminalId)
         .maybeSingle();
     if (error) throw error;
@@ -187,7 +188,14 @@ async function validateCanonicalErpActionScope(
     const requiresErp = tenantRecord.contracted_product === "POS_ERP"
         || tenantRecord.cloud_channel === "ERP_ACTIVE"
         || tenantRecord.type === "full";
-    if (!requiresErp) return { ok: true as const };
+    if (!requiresErp) {
+        return {
+            ok: true as const,
+            requiresErp: false as const,
+            erpTenantId: null,
+            canonicalAuthorizedDeviceId: null,
+        };
+    }
 
     if (!terminalId || !isUuid(terminalId) || !storeId || !isUuid(storeId)) {
         return { ok: false as const, status: 409, error: "CANONICAL_ERP_IDENTITY_REQUIRED", message: canonicalIdentityRequiredMessage };
@@ -214,12 +222,28 @@ async function validateCanonicalErpActionScope(
     if (!erpTenantId || stringValue((store as Record<string, unknown> | null)?.tenant_id) !== erpTenantId) {
         return { ok: false as const, status: 409, error: "ERP_STORE_TENANT_MISMATCH", message: canonicalIdentityRequiredMessage };
     }
-    return { ok: true as const };
+    return {
+        ok: true as const,
+        requiresErp: true as const,
+        erpTenantId,
+        canonicalAuthorizedDeviceId: stringValue(terminal.authorized_device_id) || stringValue(terminal.device_id),
+    };
 }
 
-async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
+async function validatePendingDeviceRequest(
+    supabase: AnySupabaseClient,
+    payload: DeviceActionPayload,
+    erpTenantId: string,
+    canonicalAuthorizedDeviceId: string | null,
+) {
     const requestId = stringValue(payload.request_id);
-    if (!requestId) return { ok: true as const, requestId: null };
+    if (!requestId) {
+        return {
+            ok: true as const,
+            requestId: null,
+            expectedAuthorizedDeviceId: canonicalAuthorizedDeviceId,
+        };
+    }
     const tenantId = stringValue(payload.tenant_id);
     const terminalId = stringValue(payload.terminal_id);
     const requestedDeviceId = stringValue(payload.device_id);
@@ -227,31 +251,16 @@ async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
         return { ok: false as const, status: 400, error: "DEVICE_REQUEST_INVALID", message: "Solicitud, tenant, terminal y dispositivo son requeridos." };
     }
 
-    const erpApiUrl = getEnv("ERP_API_URL", "CLOUD_ADMIN_ERP_API_URL").replace(/\/$/, "");
-    const erpServiceToken = getEnv("ERP_TAKEOVER_SERVICE_TOKEN", "ERP_SERVICE_TOKEN", "CLOUD_ADMIN_ERP_SERVICE_TOKEN");
-    const erpResponse = await fetch(`${erpApiUrl}/api/sync/terminals/${encodeURIComponent(terminalId)}/auth-attempts`, {
-        headers: {
-            Authorization: `Bearer ${erpServiceToken}`,
-            "X-Tenant-Id": tenantId,
-            "X-Cloud-Admin-Tenant-Id": tenantId,
-        },
-        signal: AbortSignal.timeout(10_000),
-    });
-    const erpPayload = await erpResponse.json().catch(() => null);
-    if (!erpResponse.ok) {
-        return { ok: false as const, status: erpResponse.status, error: "ERP_AUTH_ATTEMPTS_FAILED", message: "El ERP no pudo confirmar la solicitud seleccionada." };
-    }
-    const responseRecord = asRecord(erpPayload);
-    const attempts = Array.isArray(erpPayload)
-        ? erpPayload.map(asRecord)
-        : Array.isArray(responseRecord.attempts)
-            ? responseRecord.attempts.map(asRecord)
-            : Array.isArray(responseRecord.data)
-                ? responseRecord.data.map(asRecord)
-                : Array.isArray(responseRecord.items)
-                    ? responseRecord.items.map(asRecord)
-                    : [];
-    const expectedAuthorizedDeviceId = stringValue(payload.expected_authorized_device_id);
+    const { data, error } = await supabase
+        .schema("public")
+        .from("terminal_auth_attempts")
+        .select("id,tenant_id,terminal_id,requested_device_id,authorized_device_id,reason,resolution_status,resolved_at,resolved_by,created_at")
+        .eq("tenant_id", erpTenantId)
+        .eq("terminal_id", terminalId)
+        .order("created_at", { ascending: false })
+        .limit(100);
+    if (error) throw error;
+    const attempts = ((data as Record<string, unknown>[] | null) || []).map(asRecord);
     const isMatchingPendingAttempt = (attempt: Record<string, unknown>) => {
         const status = (stringValue(attempt.resolution_status) || stringValue(attempt.status) || "").toUpperCase();
         const legacyPendingInferred = status === "REJECTED"
@@ -262,7 +271,7 @@ async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
         const attemptAuthorizedDeviceId = stringValue(attempt.authorized_device_id);
         return (status === "PENDING" || legacyPendingInferred)
             && attemptDeviceId === requestedDeviceId
-            && (!expectedAuthorizedDeviceId || !attemptAuthorizedDeviceId || attemptAuthorizedDeviceId === expectedAuthorizedDeviceId);
+            && (!canonicalAuthorizedDeviceId || !attemptAuthorizedDeviceId || attemptAuthorizedDeviceId === canonicalAuthorizedDeviceId);
     };
     const exactAttempt = attempts.find((item) => stringValue(item.id) === requestId);
     const currentAttempt = exactAttempt && isMatchingPendingAttempt(exactAttempt)
@@ -278,7 +287,12 @@ async function validatePendingDeviceRequest(payload: DeviceActionPayload) {
                 : "El ERP ya no devuelve una solicitud pendiente para este dispositivo. Recarga las solicitudes.",
         };
     }
-    return { ok: true as const, requestId: stringValue(currentAttempt.id) || requestId };
+    const requestAuthorizedDeviceId = stringValue(currentAttempt.authorized_device_id);
+    return {
+        ok: true as const,
+        requestId: stringValue(currentAttempt.id) || requestId,
+        expectedAuthorizedDeviceId: requestAuthorizedDeviceId || canonicalAuthorizedDeviceId,
+    };
 }
 
 function getTextCandidate(...values: unknown[]) {
@@ -964,6 +978,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         }
 
         let validatedRequestId = stringValue(body.request_id);
+        let canonicalExpectedAuthorizedDeviceId = stringValue(body.expected_authorized_device_id);
         if (tenantId) {
             const scopeValidation = await validateCanonicalErpActionScope(admin, body);
             if (!scopeValidation.ok) {
@@ -973,8 +988,13 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 });
                 return;
             }
-            if (body.action === "TAKEOVER") {
-                const requestValidation = await validatePendingDeviceRequest(body);
+            if (body.action === "TAKEOVER" && scopeValidation.requiresErp && scopeValidation.erpTenantId) {
+                const requestValidation = await validatePendingDeviceRequest(
+                    admin,
+                    body,
+                    scopeValidation.erpTenantId,
+                    scopeValidation.canonicalAuthorizedDeviceId,
+                );
                 if (!requestValidation.ok) {
                     sendJson(response, requestValidation.status, {
                         error: requestValidation.error,
@@ -983,6 +1003,9 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                     return;
                 }
                 validatedRequestId = requestValidation.requestId || validatedRequestId;
+                canonicalExpectedAuthorizedDeviceId = requestValidation.expectedAuthorizedDeviceId
+                    || scopeValidation.canonicalAuthorizedDeviceId
+                    || canonicalExpectedAuthorizedDeviceId;
             }
             await reactivatePublicTenantCatalog(admin, tenantId);
         }
@@ -990,6 +1013,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         const verifiedBody = {
             ...body,
             request_id: validatedRequestId,
+            expected_authorized_device_id: canonicalExpectedAuthorizedDeviceId,
             requested_by: actor.email,
             actor_user_id: actor.authUserId,
         };
