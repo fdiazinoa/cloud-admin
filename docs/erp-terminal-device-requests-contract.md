@@ -75,6 +75,8 @@ El botón “Reintentar” del POS solo vuelve a consultar este endpoint.
 
 Se mantiene `GET /api/sync/terminals/{terminal_id}/auth-attempts`. Cada elemento debe incluir los campos canónicos anteriores y nunca incluir tokens. El endpoint debe verificar el tenant de la credencial de servicio y la terminal.
 
+Mientras el ERP normaliza ese contrato HTTP, el backend server-side de Cloud Admin valida la solicitud seleccionada directamente contra `public.terminal_auth_attempts`, usando el tenant ERP resuelto desde la sesión y el UUID canónico de la terminal. Esta lectura no autoriza, no resuelve solicitudes y no modifica terminales: la única mutación sigue siendo el takeover canónico del ERP. El navegador no aporta el tenant ERP ni puede acceder con la service role.
+
 ## Aprobar y reemplazar
 
 Cloud Admin usa exclusivamente `POST /api/settings/terminals/{terminal_id}/takeover` con:

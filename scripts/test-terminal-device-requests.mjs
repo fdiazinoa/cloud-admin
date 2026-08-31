@@ -48,10 +48,17 @@ assert.match(attemptsProxy, /requireCloudAdminPermission\(request\.headers, "ter
 assert.doesNotMatch(`${attemptsProxy}\n${actionProxy}`, /bearerToken === serviceRoleKey/);
 assert.match(actionProxy, /validateCanonicalErpActionScope/);
 assert.match(actionProxy, /validatePendingDeviceRequest/);
-assert.match(actionProxy, /Array\.isArray\(erpPayload\)/, 'takeover validation must accept a root-array ERP response');
-assert.match(actionProxy, /responseRecord\.items/, 'takeover validation must accept the canonical ERP items collection');
+assert.match(actionProxy, /\.from\("terminal_auth_attempts"\)/, 'takeover preflight must read the persisted canonical ERP request');
+assert.match(actionProxy, /\.eq\("tenant_id", erpTenantId\)/, 'takeover preflight must scope the request with the ERP tenant resolved server-side');
+assert.match(actionProxy, /\.eq\("terminal_id", terminalId\)/, 'takeover preflight must scope the request to the canonical terminal');
+assert.doesNotMatch(
+    actionProxy.match(/async function validatePendingDeviceRequest[\s\S]*?function getTextCandidate/)?.[0] || '',
+    /fetch\(/,
+    'takeover preflight must not reinterpret an unstable auth-attempts HTTP envelope',
+);
 assert.match(actionProxy, /attempts\.find\(isMatchingPendingAttempt\)/, 'retry churn must resolve the newest equivalent pending request for the same device');
 assert.match(actionProxy, /request_id: validatedRequestId/, 'takeover must forward the canonical request id selected during validation');
+assert.match(actionProxy, /expected_authorized_device_id: canonicalExpectedAuthorizedDeviceId/, 'takeover CAS must use the authorized device read from canonical ERP state');
 assert.match(actionProxy, /DEVICE_REQUEST_NOT_PENDING/);
 assert.match(actionProxy, /DEVICE_REQUEST_NOT_FOUND/);
 assert.match(rejectionProxy, /Array\.isArray\(payload\)/, 'request rejection must accept a root-array ERP response');
