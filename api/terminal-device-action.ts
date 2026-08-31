@@ -134,6 +134,30 @@ function asRecord(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function reconcileCanonicalTakeoverOperationId(
+    payload: Record<string, unknown> | null,
+    body: DeviceActionPayload,
+    validatedRequestId: string | null,
+    idempotencyKey: string | null,
+) {
+    if (!payload || body.action !== "TAKEOVER" || !idempotencyKey || stringValue(payload.operation_id)) return payload;
+    const terminalId = stringValue(body.terminal_id);
+    const deviceId = stringValue(body.device_id);
+    const requestMatches = !validatedRequestId
+        || (stringValue(payload.request_id) === validatedRequestId
+            && stringValue(payload.request_status)?.toUpperCase() === "APPROVED");
+    const confirmationComplete = stringValue(payload.terminal_id) === terminalId
+        && stringValue(payload.authorized_device_id) === deviceId
+        && stringValue(payload.new_device_id) === deviceId
+        && Object.prototype.hasOwnProperty.call(payload, "previous_device_id")
+        && payload.takeover_confirmed === true
+        && payload.previous_device_revoked === true
+        && payload.rotate_device_token === true
+        && requestMatches;
+    if (!confirmationComplete) return payload;
+    return { ...payload, operation_id: idempotencyKey, operation_id_reconciled: true };
+}
+
 function getRecordChild(record: Record<string, unknown>, key: string): Record<string, unknown> {
     return asRecord(record[key]);
 }
@@ -1018,6 +1042,8 @@ export default async function handler(request: ApiRequest, response: ServerRespo
             actor_user_id: actor.authUserId,
         };
 
+        const idempotencyKey = stringValue(getHeader(request.headers, "idempotency-key"))
+            || stringValue(body.idempotency_key);
         const edgeResponse = await fetch(`${supabaseUrl}/functions/v1/request-terminal-device-authorization`, {
             method: "POST",
             headers: {
@@ -1026,19 +1052,26 @@ export default async function handler(request: ApiRequest, response: ServerRespo
                 "X-Actor-Source": "cloud-admin-api",
                 "X-Actor-Email": actor.email,
                 "X-Actor-User-Id": actor.authUserId,
-                "Idempotency-Key": getHeader(request.headers, "idempotency-key")
-                    || stringValue(body.idempotency_key)
-                    || "",
+                "Idempotency-Key": idempotencyKey || "",
             },
             body: JSON.stringify(verifiedBody),
         });
 
-        const payloadText = await edgeResponse.text();
+        let payloadText = await edgeResponse.text();
         let edgePayload: Record<string, unknown> | null = null;
         try {
             edgePayload = payloadText ? JSON.parse(payloadText) as Record<string, unknown> : null;
         } catch {
             edgePayload = null;
+        }
+        if (edgeResponse.ok) {
+            edgePayload = reconcileCanonicalTakeoverOperationId(
+                edgePayload,
+                body,
+                validatedRequestId,
+                idempotencyKey,
+            );
+            if (edgePayload) payloadText = JSON.stringify(edgePayload);
         }
 
         if (
