@@ -44,6 +44,10 @@ for (const confirmation of [
 
 assert.match(edge, /fetchCanonicalTerminalState\(/);
 assert.match(edge, /TAKEOVER_RESPONSE_AMBIGUOUS/);
+assert.match(proxy, /reconcileCanonicalTakeoverOperationId/);
+assert.match(proxy, /operation_id:\s*idempotencyKey/);
+assert.match(proxy, /payload\.takeover_confirmed === true[\s\S]*payload\.previous_device_revoked === true[\s\S]*payload\.rotate_device_token === true/);
+assert.match(proxy, /stringValue\(payload\.request_status\)\?\.toUpperCase\(\) === "APPROVED"/);
 assert.match(edge, /BOUND_AUTH_MISMATCH/);
 assert.match(page, /ERP_CANONICAL_STATE_MISMATCH/);
 assert.match(page, /Auditoría de reautorización/);
