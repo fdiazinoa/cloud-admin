@@ -9,6 +9,10 @@ const migration = readFileSync(
     'supabase/migrations/20260830123111_persist_initial_tenant_license_limits.sql',
     'utf8',
 );
+const repairMigration = readFileSync(
+    'supabase/migrations/20260901182647_repair_tenant_provisioning_rpc_signature.sql',
+    'utf8',
+);
 
 assert.match(
     tenantsPage,
@@ -39,5 +43,17 @@ assert.match(migration, /if not found then[\s\S]*raise exception/);
 assert.match(migration, /revoke all on function landlord\.create_new_tenant\([\s\S]*from public, anon, authenticated/);
 assert.match(migration, /grant execute on function landlord\.create_new_tenant\([\s\S]*to service_role/);
 assert.match(migration, /commit;\s*$/);
+
+assert.match(repairMigration, /to_regprocedure\([\s\S]*create_new_tenant_without_license_limits/);
+assert.match(repairMigration, /raise exception 'No se encontró la función base/);
+assert.match(repairMigration, /p_max_pos_terminals integer default 1/);
+assert.match(repairMigration, /p_max_erp_users integer default 1/);
+assert.match(
+    repairMigration,
+    /update landlord\.tenants[\s\S]*max_pos_terminals = v_max_pos_terminals[\s\S]*max_erp_users = v_max_erp_users/,
+);
+assert.match(repairMigration, /revoke all on function landlord\.create_new_tenant\([\s\S]*from public, anon, authenticated/);
+assert.match(repairMigration, /grant execute on function landlord\.create_new_tenant\([\s\S]*to service_role/);
+assert.match(repairMigration, /commit;\s*$/);
 
 console.log('tenant initial license provisioning regression: ok');
