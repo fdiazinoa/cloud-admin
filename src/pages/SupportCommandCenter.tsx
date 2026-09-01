@@ -40,7 +40,7 @@ import {
     WifiOff,
     X,
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { authorizeAdminRealtime, supabaseAdmin } from '../lib/supabase';
 import {
     addPrivateHelpdeskNote,
     addPublicHelpdeskReply,
@@ -920,6 +920,8 @@ const SupportCommandCenter: React.FC = () => {
     useEffect(() => {
         const refreshTimers = new Map<string, number>();
         let searchRefreshTimer: number | undefined;
+        let mounted = true;
+        let channel: ReturnType<typeof supabaseAdmin.channel> | null = null;
 
         const removeTicket = (ticketId: string) => {
             setTickets((current) => current.filter((ticket) => ticket.id !== ticketId));
@@ -935,6 +937,7 @@ const SupportCommandCenter: React.FC = () => {
         const refreshTicket = async (ticketId: string) => {
             try {
                 const response = await fetchHelpdeskTicketSnapshot(ticketId);
+                if (!mounted) return;
                 if (!response.ticket) {
                     removeTicket(ticketId);
                     return;
@@ -964,36 +967,78 @@ const SupportCommandCenter: React.FC = () => {
             }
         };
 
-        const channel = supabase.channel('support_tickets_incremental_secure')
-            .on('postgres_changes', { event: '*', schema: 'landlord', table: 'support_tickets' }, (payload) => {
-                const oldRecord = payload.old as Record<string, unknown>;
-                const newRecord = payload.new as Record<string, unknown>;
-                const ticketId = String(newRecord?.id || oldRecord?.id || '');
-                if (!ticketId) return;
+        const scheduleFullRefresh = () => {
+            window.clearTimeout(searchRefreshTimer);
+            searchRefreshTimer = window.setTimeout(() => {
+                if (mounted) setRefreshVersion((value) => value + 1);
+            }, 800);
+        };
 
-                if (payload.eventType === 'DELETE') {
-                    removeTicket(ticketId);
-                    return;
-                }
+        const handleHelpdeskChange = (broadcast: { payload?: unknown }) => {
+            if (!mounted) return;
 
-                if (searchQueryRef.current) {
-                    window.clearTimeout(searchRefreshTimer);
-                    searchRefreshTimer = window.setTimeout(() => setRefreshVersion((value) => value + 1), 800);
-                    return;
-                }
+            const change = broadcast.payload && typeof broadcast.payload === 'object'
+                ? broadcast.payload as Record<string, unknown>
+                : {};
+            const oldRecord = change.old_record && typeof change.old_record === 'object'
+                ? change.old_record as Record<string, unknown>
+                : {};
+            const newRecord = change.record && typeof change.record === 'object'
+                ? change.record as Record<string, unknown>
+                : {};
+            const table = String(change.table || '');
+            const ticketId = String(
+                change.ticket_id
+                || newRecord.ticket_id
+                || oldRecord.ticket_id
+                || (table === 'support_tickets' ? newRecord.id || oldRecord.id : '')
+                || '',
+            );
 
-                window.clearTimeout(refreshTimers.get(ticketId));
-                refreshTimers.set(ticketId, window.setTimeout(() => {
-                    refreshTimers.delete(ticketId);
-                    void refreshTicket(ticketId);
-                }, 250));
-            })
-            .subscribe();
+            if (!ticketId || searchQueryRef.current) {
+                scheduleFullRefresh();
+                return;
+            }
+
+            if (table === 'support_tickets' && change.operation === 'DELETE') {
+                removeTicket(ticketId);
+                return;
+            }
+
+            window.clearTimeout(refreshTimers.get(ticketId));
+            refreshTimers.set(ticketId, window.setTimeout(() => {
+                refreshTimers.delete(ticketId);
+                void refreshTicket(ticketId);
+            }, 250));
+        };
+
+        const subscribe = async () => {
+            await authorizeAdminRealtime();
+            if (!mounted) return;
+
+            channel = supabaseAdmin
+                .channel('cloud-admin:helpdesk', {
+                    config: { private: true },
+                })
+                .on('broadcast', { event: 'helpdesk_changed' }, handleHelpdeskChange)
+                .subscribe((status, error) => {
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.error(`Admin: Helpdesk Broadcast subscription ${status}`, error);
+                    }
+                });
+        };
+
+        void subscribe().catch((error: unknown) => {
+            console.error('Admin: error authorizing Helpdesk Broadcast', error);
+        });
 
         return () => {
+            mounted = false;
             refreshTimers.forEach((timer) => window.clearTimeout(timer));
             window.clearTimeout(searchRefreshTimer);
-            void supabase.removeChannel(channel);
+            if (channel) {
+                void supabaseAdmin.removeChannel(channel);
+            }
         };
     }, []);
 
@@ -1013,6 +1058,7 @@ const SupportCommandCenter: React.FC = () => {
 
         let mounted = true;
         let messageRefreshTimer: number | undefined;
+        let msgChannel: ReturnType<typeof supabaseAdmin.channel> | null = null;
 
         const fetchMessages = async () => {
             try {
@@ -1042,23 +1088,36 @@ const SupportCommandCenter: React.FC = () => {
 
         void fetchMessages();
 
-        const msgChannel = supabase.channel(`support_messages_secure_${selectedTicketId}`)
-            .on('postgres_changes', {
-                event: '*',
-                schema: 'landlord',
-                table: 'ticket_messages',
-                filter: `ticket_id=eq.${selectedTicketId}`,
-            }, () => {
-                if (document.visibilityState !== 'visible') return;
-                window.clearTimeout(messageRefreshTimer);
-                messageRefreshTimer = window.setTimeout(() => void fetchMessages(), 250);
-            })
-            .subscribe();
+        const subscribe = async () => {
+            await authorizeAdminRealtime();
+            if (!mounted) return;
+
+            msgChannel = supabaseAdmin
+                .channel(`cloud-admin:helpdesk:ticket:${selectedTicketId}`, {
+                    config: { private: true },
+                })
+                .on('broadcast', { event: 'helpdesk_changed' }, () => {
+                    if (!mounted || document.visibilityState !== 'visible') return;
+                    window.clearTimeout(messageRefreshTimer);
+                    messageRefreshTimer = window.setTimeout(() => void fetchMessages(), 250);
+                })
+                .subscribe((status, error) => {
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.error(`Admin: ticket Broadcast subscription ${status}`, error);
+                    }
+                });
+        };
+
+        void subscribe().catch((error: unknown) => {
+            console.error('Admin: error authorizing ticket Broadcast', error);
+        });
 
         return () => {
             mounted = false;
             window.clearTimeout(messageRefreshTimer);
-            void supabase.removeChannel(msgChannel);
+            if (msgChannel) {
+                void supabaseAdmin.removeChannel(msgChannel);
+            }
         };
     }, [selectedTicketId]);
 
