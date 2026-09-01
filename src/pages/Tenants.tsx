@@ -37,6 +37,7 @@ import {
 import { buildTerminalReconciliationPreview } from '../lib/terminalReconciliation';
 
 type TerminalTabKey = 'summary' | 'devices' | 'erp' | 'sync' | 'fiscal' | 'attempts';
+type TerminalRequestFilter = 'ALL' | 'PENDING';
 
 type ReconciliationDraft = {
     erpTerminalUuid: string;
@@ -73,6 +74,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     const [tenantTerminals, setTenantTerminals] = useState<TenantTerminalSnapshot[]>([]);
     const [terminalSearchTerm, setTerminalSearchTerm] = useState('');
     const [terminalStoreFilter, setTerminalStoreFilter] = useState('ALL');
+    const [terminalRequestFilter, setTerminalRequestFilter] = useState<TerminalRequestFilter>('ALL');
     const [terminalTabs, setTerminalTabs] = useState<Record<string, TerminalTabKey>>({});
     const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkRelease | null>(null);
     const [terminalAdvancedOpen, setTerminalAdvancedOpen] = useState<Record<string, boolean>>({});
@@ -411,6 +413,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         setTenantTerminals([]);
         setTerminalSearchTerm('');
         setTerminalStoreFilter('ALL');
+        setTerminalRequestFilter('ALL');
         setAuthAttemptsByTerminal({});
         setAuthAttemptsErrorByTerminal({});
         setDeviceAuditByTerminal({});
@@ -455,6 +458,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         setTenantTerminals([]);
         setTerminalSearchTerm('');
         setTerminalStoreFilter('ALL');
+        setTerminalRequestFilter('ALL');
         setAuthAttemptsByTerminal({});
         setAuthAttemptsErrorByTerminal({});
         setDeviceAuditByTerminal({});
@@ -2106,10 +2110,20 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         }),
     ).entries()).sort((a, b) => a[1].localeCompare(b[1], 'es'));
     const normalizedTerminalSearch = terminalSearchTerm.trim().toLocaleLowerCase('es');
+    const hasPendingDeviceRequest = (terminal: TenantTerminalSnapshot) => {
+        const authorizedDeviceId = getTerminalAuthorizedDeviceId(terminal);
+        return (authAttemptsByTerminal[getTerminalKey(terminal)] || []).some((attempt) => {
+            const requestedDeviceId = getAttemptDeviceId(attempt);
+            return isPendingDeviceUnauthorizedAttempt(attempt)
+                && requestedDeviceId !== authorizedDeviceId;
+        });
+    };
+    const pendingDeviceRequestTerminalCount = tenantTerminals.filter(hasPendingDeviceRequest).length;
     const visibleTenantTerminals = tenantTerminals
         .filter((terminal) => {
             const storeKey = terminal.erp_store_id || 'UNASSIGNED';
             if (terminalStoreFilter !== 'ALL' && terminalStoreFilter !== storeKey) return false;
+            if (terminalRequestFilter === 'PENDING' && !hasPendingDeviceRequest(terminal)) return false;
             if (!normalizedTerminalSearch) return true;
 
             return [
@@ -2639,6 +2653,17 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                                 </option>
                                             ))}
                                         </select>
+                                        {canReauthorizeTerminals ? (
+                                            <select
+                                                value={terminalRequestFilter}
+                                                onChange={(event) => setTerminalRequestFilter(event.target.value as TerminalRequestFilter)}
+                                                aria-label="Filtrar terminales por solicitudes de dispositivo"
+                                                className="min-w-64 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-700 outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100"
+                                            >
+                                                <option value="ALL">Todas las solicitudes</option>
+                                                <option value="PENDING">Con solicitudes pendientes ({pendingDeviceRequestTerminalCount})</option>
+                                            </select>
+                                        ) : null}
                                     </div>
                                     <p className="mt-2 text-xs font-semibold text-slate-500">
                                         Mostrando {visibleTenantTerminals.length} de {tenantTerminals.length} terminal(es), ordenadas por sucursal.
@@ -2657,7 +2682,9 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                 </div>
                             ) : visibleTenantTerminals.length === 0 ? (
                                 <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-12 text-center text-slate-500">
-                                    No hay terminales que coincidan con la búsqueda o sucursal seleccionada.
+                                    {terminalRequestFilter === 'PENDING'
+                                        ? 'No hay terminales con solicitudes pendientes que coincidan con los filtros seleccionados.'
+                                        : 'No hay terminales que coincidan con la búsqueda o sucursal seleccionada.'}
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 gap-6">
