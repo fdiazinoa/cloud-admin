@@ -90,6 +90,11 @@ assert.match(page, /deviceActionSubmittingKey !== null/);
 assert.match(page, /requestId: request\?\.id \|\| null/);
 assert.match(page, /attempt\.authorized_device_id \|\| getTerminalAuthorizedDeviceId\(terminal\)/, 'takeover must use the previous authorized device captured by the selected ERP request');
 assert.match(page, /getTenantTerminalOverview/);
+assert.match(page, /type TerminalRequestFilter = 'ALL' \| 'PENDING'/);
+assert.match(page, /pendingDeviceRequestTerminalCount = tenantTerminals\.filter\(hasPendingDeviceRequest\)\.length/);
+assert.match(page, /terminalRequestFilter === 'PENDING' && !hasPendingDeviceRequest\(terminal\)/);
+assert.match(page, /Con solicitudes pendientes \(\{pendingDeviceRequestTerminalCount\}\)/);
+assert.match(page, /No hay terminales con solicitudes pendientes que coincidan con los filtros seleccionados\./);
 
 assert.match(permissionMigration, /'terminal_reauthorization', code in \('owner', 'admin'\)/);
 assert.match(permissionMigration, /'DEVICE_REQUEST_REJECTED'/);
