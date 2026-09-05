@@ -48,6 +48,8 @@ function normalizeRelation<T>(value: T | T[] | null | undefined): T | null {
 const legacyPermissionFallback: Record<string, string> = {
     support_view: 'support',
     support_manage: 'support',
+    internal_requests_view: 'improvements',
+    internal_requests_manage: 'improvements',
 };
 
 export function hasHelpdeskPermission(permissions: Record<string, boolean>, permission: string) {

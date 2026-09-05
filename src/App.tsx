@@ -17,7 +17,6 @@ const Plans = lazy(() => import('./pages/Plans').then((module) => ({ default: mo
 const Configuration = lazy(() => import('./pages/Configuration').then((module) => ({ default: module.Configuration })));
 const PosApkReleases = lazy(() => import('./pages/PosApkReleases').then((module) => ({ default: module.PosApkReleases })));
 const SupportCommandCenter = lazy(() => import('./pages/SupportCommandCenter'));
-const CustomerImprovements = lazy(() => import('./pages/CustomerImprovements').then((module) => ({ default: module.CustomerImprovements })));
 const AccessManagement = lazy(() => import('./pages/AccessManagement').then((module) => ({ default: module.AccessManagement })));
 const OperationalObservability = lazy(() => import('./pages/OperationalObservability').then((module) => ({ default: module.OperationalObservability })));
 const InternalRequests = lazy(() => import('./pages/InternalRequests').then((module) => ({ default: module.InternalRequests })));
@@ -251,8 +250,9 @@ function App() {
                     <Route path="support" element={<PermissionGate allowed={allowed('support_view')}><SupportCommandCenter /></PermissionGate>} />
                     <Route path="conocimiento" element={<PermissionGate allowed={allowed('knowledge_view')}><KnowledgeCenter /></PermissionGate>} />
                     <Route path="calendario" element={<PermissionGate allowed={allowed('calendar_view')}><ImplementationCalendar /></PermissionGate>} />
-                    <Route path="mejoras" element={<PermissionGate allowed={allowed('improvements_view')}><CustomerImprovements /></PermissionGate>} />
-                    <Route path="solicitudes-internas" element={<PermissionGate allowed={allowed('internal_requests_view')}><InternalRequests /></PermissionGate>} />
+                    <Route path="solicitudes" element={<PermissionGate allowed={allowed('internal_requests_view')}><InternalRequests canManage={allowed('internal_requests_manage')} /></PermissionGate>} />
+                    <Route path="mejoras" element={<Navigate to="/solicitudes" replace />} />
+                    <Route path="solicitudes-internas" element={<Navigate to="/solicitudes" replace />} />
                     <Route path="configuracion" element={<PermissionGate allowed={allowed('settings_view')}><Configuration /></PermissionGate>} />
                     <Route path="observabilidad" element={<PermissionGate allowed={allowed('observability_view')}><OperationalObservability /></PermissionGate>} />
                     <Route path="accesos" element={<PermissionGate allowed={allowed('users_view')}><AccessManagement /></PermissionGate>} />

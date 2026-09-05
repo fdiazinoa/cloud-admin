@@ -986,7 +986,7 @@ Deno.serve(async (request) => {
             if (ticketError) throw ticketError;
 
             const { data: existing, error: existingError } = await supabase
-                .from('customer_improvement_requests')
+                .from('internal_work_requests')
                 .select('id')
                 .eq('ticket_id', ticketId)
                 .eq('duplicate_group_key', duplicateGroupKey)
@@ -995,20 +995,32 @@ Deno.serve(async (request) => {
 
             let improvementId = existing?.id as string | undefined;
             if (!improvementId) {
+                const affectedModule = cleanString(fields.affected_module, 160) || ticket.category;
+                const normalizedModule = affectedModule.toLowerCase();
+                const product = /(pos|terminal|hardware|venta)/.test(normalizedModule)
+                    ? 'clicpos'
+                    : /(cloud|admin)/.test(normalizedModule)
+                        ? 'cloud-admin'
+                        : affectedModule
+                            ? 'erp'
+                            : 'general';
                 const { data: inserted, error: insertError } = await supabase
-                    .from('customer_improvement_requests')
+                    .from('internal_work_requests')
                     .insert({
+                        request_type: 'improvement',
+                        product,
                         ticket_id: ticketId,
                         tenant_id: ticket.tenant_id,
                         contact_id: ticket.contact_id,
-                        source: 'HelpDesk manual',
-                        status: 'Nueva',
+                        origin: 'helpdesk_manual',
+                        source_page: '/support',
+                        status: 'new',
                         priority: cleanString(fields.priority, 40) || 'Media',
                         title,
-                        request_text: requestedCapability,
+                        description: requestedCapability,
                         ai_summary: null,
                         requested_capability: requestedCapability,
-                        affected_module: cleanString(fields.affected_module, 160) || ticket.category,
+                        affected_module: affectedModule,
                         customer_impact: cleanString(fields.customer_impact, 2000) || 'Registrada manualmente desde HelpDesk para evaluación de producto.',
                         duplicate_group_key: duplicateGroupKey,
                         ai_confidence: null,

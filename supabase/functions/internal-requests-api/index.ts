@@ -15,6 +15,7 @@ interface InternalRequestPayload {
     description?: string;
     source_page?: string;
     assigned_to?: string | null;
+    decision_notes?: string;
 }
 
 const corsHeaders = {
@@ -25,7 +26,7 @@ const corsHeaders = {
 const requestTypes = new Set(['problem', 'improvement']);
 const products = new Set(['msmall', 'clicpos', 'erp', 'cloud-admin', 'general']);
 const priorities = new Set(['Baja', 'Media', 'Alta', 'Critica']);
-const statuses = new Set(['new', 'under_review', 'in_progress', 'completed', 'rejected']);
+const statuses = new Set(['new', 'under_review', 'approved', 'in_progress', 'completed', 'rejected']);
 
 function json(body: unknown, status = 200) {
     return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -49,9 +50,12 @@ Deno.serve(async (request) => {
     if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
     try {
-        const actor = await requireHelpdeskActor(request, 'improvements');
         const payload = await request.json() as InternalRequestPayload;
         const action = cleanString(payload.action, 40);
+        const actor = await requireHelpdeskActor(
+            request,
+            action === 'list' ? 'internal_requests_view' : 'internal_requests_manage',
+        );
         const supabase = createHelpdeskAdminClient();
 
         if (action === 'list') {
@@ -59,7 +63,10 @@ Deno.serve(async (request) => {
                 supabase.from('internal_work_requests').select(`
                     *,
                     reporter:cloud_admin_users!internal_work_requests_reported_by_fkey(id, full_name, email),
-                    assignee:cloud_admin_users!internal_work_requests_assigned_to_fkey(id, full_name, email)
+                    assignee:cloud_admin_users!internal_work_requests_assigned_to_fkey(id, full_name, email),
+                    tenant:tenants!internal_work_requests_tenant_id_fkey(id, name),
+                    ticket:support_tickets!internal_work_requests_ticket_id_fkey(id, ticket_number, subject, status),
+                    contact:support_contacts!internal_work_requests_contact_id_fkey(id, name, email, company_name)
                 `).order('updated_at', { ascending: false }).limit(500),
                 supabase.from('cloud_admin_users').select('id, full_name, email').eq('status', 'active').order('full_name'),
             ]);
@@ -84,6 +91,7 @@ Deno.serve(async (request) => {
                 title,
                 description,
                 source_page: cleanString(payload.source_page, 300) || null,
+                origin: 'internal',
                 reported_by: actor.id,
             }).select('*').single();
             if (error) throw error;
@@ -96,12 +104,14 @@ Deno.serve(async (request) => {
             const fields: Record<string, unknown> = {};
             const status = cleanString(payload.status, 30);
             const priority = cleanString(payload.priority, 20);
+            const decisionNotes = cleanString(payload.decision_notes, 5000);
             const assignedTo = cleanString(payload.assigned_to, 64);
             if (status && statuses.has(status)) {
                 fields.status = status;
                 fields.completed_at = status === 'completed' ? new Date().toISOString() : null;
             }
             if (priority && priorities.has(priority)) fields.priority = priority;
+            if (typeof payload.decision_notes === 'string') fields.decision_notes = decisionNotes || null;
             if (payload.assigned_to === null || payload.assigned_to === '') fields.assigned_to = null;
             else if (/^[0-9a-f-]{36}$/i.test(assignedTo)) fields.assigned_to = assignedTo;
             if (!Object.keys(fields).length) return json({ error: 'No valid fields to update' }, 400);
