@@ -652,20 +652,37 @@ async function createCustomerImprovementRequest(
     const title = params.triage.improvement_title || truncateText(params.subject || requestedCapability, 90);
     const duplicateGroupKey = buildImprovementKey(`${params.triage.affected_module ?? 'general'}-${title}`);
 
+    const affectedModule = params.triage.affected_module;
+    const normalizedModule = (affectedModule ?? '').toLowerCase();
+    const product = params.source.toLowerCase() === 'erp'
+        ? 'erp'
+        : /(pos|terminal|hardware|venta)/.test(normalizedModule)
+            ? 'clicpos'
+            : /(cloud|admin)/.test(normalizedModule)
+                ? 'cloud-admin'
+                : affectedModule
+                    ? 'erp'
+                    : 'general';
+    const normalizedSource = params.source.toLowerCase();
+    const origin = normalizedSource === 'email' ? 'email' : normalizedSource === 'erp' ? 'erp' : 'helpdesk_automatic';
+
     const { error } = await supabase
-        .from('customer_improvement_requests')
+        .from('internal_work_requests')
         .upsert({
+            request_type: 'improvement',
+            product,
             ticket_id: params.ticketId,
             tenant_id: params.tenantId,
             contact_id: params.contactId,
-            source: params.source,
-            status: 'Nueva',
+            origin,
+            source_page: '/support',
+            status: 'new',
             priority: params.triage.priority,
             title,
-            request_text: truncateText(params.body || params.subject, 2000),
+            description: truncateText(params.body || params.subject, 2000),
             ai_summary: params.triage.improvement_summary || params.triage.summary,
             requested_capability: requestedCapability,
-            affected_module: params.triage.affected_module,
+            affected_module: affectedModule,
             customer_impact: params.triage.customer_impact,
             duplicate_group_key: duplicateGroupKey,
             ai_confidence: params.triage.improvement_confidence,
@@ -673,7 +690,7 @@ async function createCustomerImprovementRequest(
         }, { onConflict: 'ticket_id,duplicate_group_key', ignoreDuplicates: true });
 
     if (error) {
-        console.error('Could not create customer improvement request', error);
+        console.error('Could not create unified improvement request', error);
     }
 }
 
