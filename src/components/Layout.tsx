@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Activity, BookOpen, Building2, CalendarDays, ClipboardList, KeyRound, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Menu, Settings, Smartphone, Lightbulb, UserCog, X } from 'lucide-react';
+import { Activity, BookOpen, Building2, CalendarDays, ClipboardList, KeyRound, LayoutDashboard, Users, ShieldPlus, BadgeDollarSign, Headset, LogOut, Menu, Settings, Smartphone, UserCog, X } from 'lucide-react';
 import type { CloudAdminPermissionKey, CloudAdminPermissions } from '../types';
 import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
@@ -23,8 +23,7 @@ const navItems: Array<{ path: string; label: string; icon: React.ComponentType<{
     { path: '/support', label: 'Helpdesk & Soporte', icon: Headset, permission: 'support_view' },
     { path: '/conocimiento', label: 'Manuales y videos', icon: BookOpen, permission: 'knowledge_view' },
     { path: '/calendario', label: 'Implementaciones', icon: CalendarDays, permission: 'calendar_view' },
-    { path: '/mejoras', label: 'Mejoras solicitadas', icon: Lightbulb, permission: 'improvements_view' },
-    { path: '/solicitudes-internas', label: 'Solicitudes internas', icon: ClipboardList, permission: 'internal_requests_view' },
+    { path: '/solicitudes', label: 'Solicitudes', icon: ClipboardList, permission: 'internal_requests_view' },
     { path: '/configuracion', label: 'Configuración', icon: Settings, permission: 'settings_view' },
     { path: '/observabilidad', label: 'Observabilidad', icon: Activity, permission: 'observability_view' },
     { path: '/accesos', label: 'Usuarios y perfiles', icon: UserCog, permission: 'users_view' },

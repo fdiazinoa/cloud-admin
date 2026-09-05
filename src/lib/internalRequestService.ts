@@ -3,7 +3,12 @@ import { supabase } from './supabase';
 export type InternalRequestType = 'problem' | 'improvement';
 export type InternalRequestProduct = 'msmall' | 'clicpos' | 'erp' | 'cloud-admin' | 'general';
 export type InternalRequestPriority = 'Baja' | 'Media' | 'Alta' | 'Critica';
-export type InternalRequestStatus = 'new' | 'under_review' | 'in_progress' | 'completed' | 'rejected';
+export type InternalRequestStatus = 'new' | 'under_review' | 'approved' | 'in_progress' | 'completed' | 'rejected';
+export type InternalRequestOrigin = 'internal' | 'email' | 'erp' | 'helpdesk_manual' | 'helpdesk_automatic';
+
+export interface InternalRequestTenant { id: string; name: string; }
+export interface InternalRequestTicket { id: string; ticket_number?: number | null; subject?: string | null; status?: string | null; }
+export interface InternalRequestContact { id: string; name?: string | null; email?: string | null; company_name?: string | null; }
 
 export interface InternalRequestUser {
     id: string;
@@ -21,10 +26,25 @@ export interface InternalWorkRequest {
     title: string;
     description: string;
     source_page?: string | null;
+    origin: InternalRequestOrigin;
+    ticket_id?: string | null;
+    tenant_id?: string | null;
+    contact_id?: string | null;
+    affected_module?: string | null;
+    ai_summary?: string | null;
+    requested_capability?: string | null;
+    customer_impact?: string | null;
+    duplicate_group_key?: string | null;
+    ai_confidence?: number | null;
+    detected_by_ai: boolean;
+    decision_notes?: string | null;
     created_at: string;
     updated_at: string;
     reporter?: InternalRequestUser | InternalRequestUser[] | null;
     assignee?: InternalRequestUser | InternalRequestUser[] | null;
+    tenant?: InternalRequestTenant | InternalRequestTenant[] | null;
+    ticket?: InternalRequestTicket | InternalRequestTicket[] | null;
+    contact?: InternalRequestContact | InternalRequestContact[] | null;
 }
 
 async function invokeInternalRequests<T>(action: string, payload: Record<string, unknown> = {}) {
@@ -67,11 +87,13 @@ export function updateInternalRequest(requestId: string, fields: {
     status?: InternalRequestStatus;
     priority?: InternalRequestPriority;
     assignedTo?: string | null;
+    decisionNotes?: string;
 }) {
     return invokeInternalRequests<{ request: InternalWorkRequest }>('update', {
         request_id: requestId,
         status: fields.status,
         priority: fields.priority,
         assigned_to: fields.assignedTo,
+        decision_notes: fields.decisionNotes,
     });
 }
