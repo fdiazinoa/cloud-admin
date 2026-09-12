@@ -75,6 +75,9 @@ jobs:
       - name: Deploy internal requests API
         run: supabase functions deploy internal-requests-api --project-ref "$SUPABASE_PROJECT_REF"
 
+      - name: Deploy POS APK releases API
+        run: supabase functions deploy pos-apk-releases-api --project-ref "$SUPABASE_PROJECT_REF"
+
       - name: Deploy internal knowledge API
         run: supabase functions deploy knowledge-api --project-ref "$SUPABASE_PROJECT_REF"
 

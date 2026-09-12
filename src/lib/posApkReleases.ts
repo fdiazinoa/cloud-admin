@@ -1,4 +1,17 @@
-import { supabaseAdmin } from './supabase';
+import { supabase } from './supabase';
+
+export type PosApkReleaseStatus = 'draft' | 'internal_testing' | 'beta' | 'available' | 'retired';
+
+export interface PosApkReleaseActor {
+    id: string;
+    full_name: string;
+    email: string;
+}
+
+export interface PosApkReleaseReference {
+    version_name: string;
+    version_code: number;
+}
 
 export interface PosApkRelease {
     id: string;
@@ -9,7 +22,7 @@ export interface PosApkRelease {
     checksum_sha256: string | null;
     changelog: string | null;
     release_type: string | null;
-    release_status: string | null;
+    release_status: PosApkReleaseStatus;
     summary: string | null;
     bugs_fixed: string[] | null;
     new_features: string[] | null;
@@ -21,6 +34,10 @@ export interface PosApkRelease {
     published_at: string;
     created_at: string;
     updated_at: string;
+    status_changed_at: string | null;
+    status_changed_by: string | null;
+    status_change_notes: string | null;
+    status_actor?: PosApkReleaseActor | PosApkReleaseActor[] | null;
 }
 
 export interface CreatePosApkReleaseInput {
@@ -30,7 +47,7 @@ export interface CreatePosApkReleaseInput {
     checksumSha256?: string;
     changelog?: string;
     releaseType?: string;
-    releaseStatus?: string;
+    releaseStatus?: PosApkReleaseStatus;
     summary?: string;
     bugsFixed?: string[];
     newFeatures?: string[];
@@ -38,7 +55,6 @@ export interface CreatePosApkReleaseInput {
     validationChecklist?: string[];
     installNotes?: string;
     rolloutScope?: string;
-    isLatest: boolean;
 }
 
 export function extractGoogleDriveFileId(value: string): string | null {
@@ -65,54 +81,56 @@ function normalizeList(values?: string[]): string[] {
     return (values ?? []).map((value) => value.trim()).filter(Boolean);
 }
 
-export async function getPosApkReleases(): Promise<PosApkRelease[]> {
-    const { data, error } = await supabaseAdmin
-        .from('pos_apk_releases')
-        .select('*')
-        .order('is_latest', { ascending: false })
-        .order('published_at', { ascending: false })
-        .order('version_code', { ascending: false });
-
+async function invokePosApkReleases<T>(action: string, payload: Record<string, unknown> = {}) {
+    const { data, error } = await supabase.functions.invoke('pos-apk-releases-api', {
+        body: { action, ...payload },
+    });
     if (error) throw error;
-    return (data as PosApkRelease[]) || [];
+    if (data?.error) throw new Error(data.detail || data.error);
+    return data as T;
+}
+
+export async function getPosApkReleases(): Promise<PosApkRelease[]> {
+    const response = await invokePosApkReleases<{ releases: PosApkRelease[] }>('list');
+    return response.releases;
+}
+
+export async function getLatestAvailablePosApkRelease(): Promise<PosApkReleaseReference | null> {
+    const response = await invokePosApkReleases<{ release: PosApkReleaseReference | null }>('latest');
+    return response.release;
 }
 
 export async function createPosApkRelease(input: CreatePosApkReleaseInput): Promise<PosApkRelease> {
     const apkUrl = input.apkUrl.trim();
-    const directDownloadUrl = buildDirectDownloadUrl(apkUrl);
 
-    if (input.isLatest) {
-        const { error: unsetError } = await supabaseAdmin
-            .from('pos_apk_releases')
-            .update({ is_latest: false })
-            .eq('is_latest', true);
+    const response = await invokePosApkReleases<{ release: PosApkRelease }>('create', {
+        version_name: input.versionName.trim(),
+        version_code: input.versionCode,
+        apk_url: apkUrl,
+        checksum_sha256: input.checksumSha256?.trim() || null,
+        changelog: input.changelog?.trim() || null,
+        release_type: input.releaseType?.trim() || null,
+        release_status: input.releaseStatus || 'internal_testing',
+        summary: input.summary?.trim() || null,
+        bugs_fixed: normalizeList(input.bugsFixed),
+        new_features: normalizeList(input.newFeatures),
+        internal_changes: normalizeList(input.internalChanges),
+        validation_checklist: normalizeList(input.validationChecklist),
+        install_notes: input.installNotes?.trim() || null,
+        rollout_scope: input.rolloutScope?.trim() || null,
+    });
+    return response.release;
+}
 
-        if (unsetError) throw unsetError;
-    }
-
-    const { data, error } = await supabaseAdmin
-        .from('pos_apk_releases')
-        .insert({
-            version_name: input.versionName.trim(),
-            version_code: input.versionCode,
-            apk_url: apkUrl,
-            direct_download_url: directDownloadUrl,
-            checksum_sha256: input.checksumSha256?.trim() || null,
-            changelog: input.changelog?.trim() || null,
-            release_type: input.releaseType?.trim() || null,
-            release_status: input.releaseStatus?.trim() || 'available',
-            summary: input.summary?.trim() || null,
-            bugs_fixed: normalizeList(input.bugsFixed),
-            new_features: normalizeList(input.newFeatures),
-            internal_changes: normalizeList(input.internalChanges),
-            validation_checklist: normalizeList(input.validationChecklist),
-            install_notes: input.installNotes?.trim() || null,
-            rollout_scope: input.rolloutScope?.trim() || null,
-            is_latest: input.isLatest,
-        })
-        .select('*')
-        .single();
-
-    if (error) throw error;
-    return data as PosApkRelease;
+export async function updatePosApkReleaseStatus(
+    releaseId: string,
+    releaseStatus: PosApkReleaseStatus,
+    statusNotes?: string,
+): Promise<PosApkRelease> {
+    const response = await invokePosApkReleases<{ release: PosApkRelease }>('update_status', {
+        release_id: releaseId,
+        release_status: releaseStatus,
+        status_notes: statusNotes?.trim() || null,
+    });
+    return response.release;
 }

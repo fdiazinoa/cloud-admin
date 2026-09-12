@@ -64,7 +64,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { data, error } = await supabase
     .from('pos_apk_releases')
     .select('version_name, version_code, apk_url, direct_download_url, checksum_sha256, changelog, release_type, release_status, summary, bugs_fixed, new_features, internal_changes, validation_checklist, install_notes, rollout_scope, published_at')
-    .eq('is_latest', true)
     .eq('release_status', 'available')
     .order('version_code', { ascending: false })
     .limit(1)
