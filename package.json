@@ -40,6 +40,7 @@
     "test:helpdesk-spam-delete": "node scripts/test-helpdesk-spam-delete.mjs",
     "test:helpdesk-copilot-assignment": "node scripts/test-helpdesk-copilot-assignment.mjs",
     "test:internal-requests": "node scripts/test-internal-requests.mjs",
+    "test:pos-apk-release-status": "node scripts/test-pos-apk-release-status.mjs",
     "test:knowledge-center": "node scripts/test-knowledge-center.mjs",
     "test:calendar-meetings": "node scripts/test-calendar-meetings.mjs",
     "test:erp-module-licensing": "node --experimental-strip-types scripts/test-erp-module-licensing.mjs",

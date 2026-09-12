@@ -21,7 +21,9 @@ import {
     buildDirectDownloadUrl,
     createPosApkRelease,
     getPosApkReleases,
+    updatePosApkReleaseStatus,
     type PosApkRelease,
+    type PosApkReleaseStatus,
 } from '../lib/posApkReleases';
 
 const defaultForm = {
@@ -31,7 +33,7 @@ const defaultForm = {
     checksumSha256: '',
     changelog: '',
     releaseType: 'bugfix',
-    releaseStatus: 'available',
+    releaseStatus: 'internal_testing' as PosApkReleaseStatus,
     summary: '',
     bugsFixed: '',
     newFeatures: '',
@@ -39,7 +41,6 @@ const defaultForm = {
     validationChecklist: '',
     installNotes: '',
     rolloutScope: 'Todos los tenants',
-    isLatest: true,
 };
 
 const releaseTypeLabels: Record<string, string> = {
@@ -56,6 +57,14 @@ const releaseStatusLabels: Record<string, string> = {
     beta: 'Beta',
     available: 'Disponible',
     retired: 'Retirado',
+};
+
+const releaseStatusStyles: Record<PosApkReleaseStatus, string> = {
+    draft: 'bg-slate-100 text-slate-600',
+    internal_testing: 'bg-amber-100 text-amber-800',
+    beta: 'bg-violet-100 text-violet-700',
+    available: 'bg-emerald-100 text-emerald-700',
+    retired: 'bg-rose-100 text-rose-700',
 };
 
 function formatDateTime(value?: string | null) {
@@ -92,6 +101,10 @@ function listItems(values?: string[] | null, empty = 'No registrado') {
 function buildCloudAdminApkUrl(path: string) {
     if (typeof window === 'undefined') return path;
     return `${window.location.origin}${path}`;
+}
+
+function normalizeRelation<T>(value: T | T[] | null | undefined) {
+    return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
 
 const ReleaseList: React.FC<{
@@ -190,25 +203,29 @@ const ReleaseDetails: React.FC<{ release: PosApkRelease }> = ({ release }) => (
     </div>
 );
 
-export const PosApkReleases: React.FC = () => {
+export const PosApkReleases: React.FC<{ canManage: boolean }> = ({ canManage }) => {
     const [releases, setReleases] = useState<PosApkRelease[]>([]);
     const [selectedReleaseId, setSelectedReleaseId] = useState<string | null>(null);
     const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
     const [form, setForm] = useState(defaultForm);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [updatingStatus, setUpdatingStatus] = useState(false);
+    const [statusDraft, setStatusDraft] = useState<PosApkReleaseStatus>('internal_testing');
+    const [statusNotes, setStatusNotes] = useState('');
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
 
-    const latestRelease = releases.find((release) => release.is_latest) || releases[0] || null;
-    const selectedRelease = releases.find((release) => release.id === selectedReleaseId) || latestRelease;
+    const latestRelease = releases.find((release) => release.is_latest && release.release_status === 'available')
+        || releases.find((release) => release.release_status === 'available')
+        || null;
+    const selectedRelease = releases.find((release) => release.id === selectedReleaseId) || latestRelease || releases[0] || null;
+    const selectedStatusActor = normalizeRelation(selectedRelease?.status_actor);
     const previewDownloadUrl = useMemo(() => buildDirectDownloadUrl(form.apkUrl), [form.apkUrl]);
     const availableCount = releases.filter((release) => release.release_status === 'available').length;
     const latestApkDownloadUrl = useMemo(() => buildCloudAdminApkUrl('/api/pos-apk/latest?download=1'), []);
     const latestApkJsonUrl = useMemo(() => buildCloudAdminApkUrl('/api/pos-apk/latest'), []);
-    const selectedDownloadUrl = selectedRelease?.is_latest
-        ? latestApkDownloadUrl
-        : selectedRelease?.direct_download_url || selectedRelease?.apk_url || '';
+    const selectedDownloadUrl = selectedRelease?.direct_download_url || selectedRelease?.apk_url || '';
 
     const loadReleases = async () => {
         setLoading(true);
@@ -227,6 +244,12 @@ export const PosApkReleases: React.FC = () => {
     useEffect(() => {
         void loadReleases();
     }, []);
+
+    useEffect(() => {
+        if (!selectedRelease) return;
+        setStatusDraft(selectedRelease.release_status);
+        setStatusNotes('');
+    }, [selectedRelease]);
 
     const openRegisterModal = () => {
         setForm(defaultForm);
@@ -275,7 +298,6 @@ export const PosApkReleases: React.FC = () => {
                 validationChecklist: linesToList(form.validationChecklist),
                 installNotes: form.installNotes,
                 rolloutScope: form.rolloutScope,
-                isLatest: form.isLatest,
             });
 
             setForm(defaultForm);
@@ -287,6 +309,29 @@ export const PosApkReleases: React.FC = () => {
             setErrorMessage(`No se pudo registrar el APK: ${getErrorMessage(error)}`);
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleStatusUpdate = async () => {
+        if (!selectedRelease || !canManage || statusDraft === selectedRelease.release_status) return;
+        setUpdatingStatus(true);
+        setMessage('');
+        setErrorMessage('');
+        try {
+            const updated = await updatePosApkReleaseStatus(selectedRelease.id, statusDraft, statusNotes);
+            setMessage(
+                updated.release_status === 'available'
+                    ? updated.is_latest
+                        ? `APK POS ${updated.version_name} promovido a la actualización automática.`
+                        : `APK POS ${updated.version_name} marcado como Disponible; la versión automática sigue siendo la de mayor version code.`
+                    : `APK POS ${updated.version_name} actualizado a ${releaseStatusLabels[updated.release_status]}.`,
+            );
+            await loadReleases();
+            setSelectedReleaseId(updated.id);
+        } catch (error) {
+            setErrorMessage(`No se pudo actualizar el estado: ${getErrorMessage(error)}`);
+        } finally {
+            setUpdatingStatus(false);
         }
     };
 
@@ -307,14 +352,16 @@ export const PosApkReleases: React.FC = () => {
                             Cargando
                         </div>
                     ) : null}
-                    <button
-                        type="button"
-                        onClick={openRegisterModal}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
-                    >
-                        <Plus size={16} />
-                        Nuevo
-                    </button>
+                    {canManage ? (
+                        <button
+                            type="button"
+                            onClick={openRegisterModal}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
+                        >
+                            <Plus size={16} />
+                            Nuevo
+                        </button>
+                    ) : null}
                 </div>
             </div>
 
@@ -332,12 +379,12 @@ export const PosApkReleases: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
                 <div className="rounded-xl border border-blue-100 bg-blue-50/40 px-3 py-2.5 shadow-sm">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-blue-600">Versión actual</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-blue-600">Versión automática</p>
                     <p className="mt-1 text-xl font-black leading-none text-blue-900">
                         {latestRelease ? `v${latestRelease.version_name}` : 'N/D'}
                     </p>
                     <p className="mt-1 text-[11px] font-medium text-blue-700">
-                        {latestRelease ? `Build ${latestRelease.version_code}` : 'Sin release activo'}
+                        {latestRelease ? `Build ${latestRelease.version_code}` : 'Sin APK disponible'}
                     </p>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 shadow-sm">
@@ -348,7 +395,7 @@ export const PosApkReleases: React.FC = () => {
                 <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 px-3 py-2.5 shadow-sm">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Disponibles</p>
                     <p className="mt-1 text-xl font-black leading-none text-emerald-800">{availableCount}</p>
-                    <p className="mt-1 text-[11px] font-medium text-emerald-700">Listas para descarga</p>
+                    <p className="mt-1 text-[11px] font-medium text-emerald-700">Elegibles para actualización</p>
                 </div>
                 <div className="rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2.5 shadow-sm">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-violet-600">Última publicación</p>
@@ -368,14 +415,14 @@ export const PosApkReleases: React.FC = () => {
                             <Download size={17} />
                         </div>
                         <div>
-                            <p className="text-[10px] font-black uppercase tracking-wider text-blue-600">Instalacion inicial</p>
+                            <p className="text-[10px] font-black uppercase tracking-wider text-blue-600">Canal automático estable</p>
                             <h3 className="mt-0.5 text-base font-black text-slate-900">
-                                {latestRelease ? `APK actual POS ${latestRelease.version_name}` : 'APK actual no disponible'}
+                                {latestRelease ? `APK disponible POS ${latestRelease.version_name}` : 'No hay APK disponible'}
                             </h3>
                             <p className="mt-0.5 text-xs font-medium text-slate-500">
                                 {latestRelease
-                                    ? `Build ${latestRelease.version_code} - enlace estable para clientes nuevos y reinstalaciones.`
-                                    : 'Registra un APK disponible y marcalo como ultimo para habilitar la descarga desde Cloud-Admin.'}
+                                    ? `Build ${latestRelease.version_code} - único APK entregado a terminales y al enlace automático.`
+                                    : 'Promueve una versión a Disponible para habilitar las actualizaciones automáticas.'}
                             </p>
                             <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1.5">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Link Cloud-Admin</p>
@@ -393,10 +440,10 @@ export const PosApkReleases: React.FC = () => {
                             className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black text-white shadow-sm transition-colors ${latestRelease ? 'bg-blue-600 hover:bg-blue-700' : 'pointer-events-none bg-slate-300'}`}
                         >
                             <Download size={18} />
-                            Descargar ultimo APK
+                            Descargar APK disponible
                         </a>
-                        <CopyButton value={latestApkDownloadUrl} label="Copiar link APK" />
-                        <CopyButton value={latestApkJsonUrl} label="Copiar endpoint" />
+                        {latestRelease ? <CopyButton value={latestApkDownloadUrl} label="Copiar link automático" /> : null}
+                        {latestRelease ? <CopyButton value={latestApkJsonUrl} label="Copiar endpoint" /> : null}
                     </div>
                 </div>
             </section>
@@ -422,8 +469,8 @@ export const PosApkReleases: React.FC = () => {
                                             <p className="text-sm font-black text-slate-800">POS {release.version_name}</p>
                                             <p className="mt-0.5 font-mono text-[11px] text-slate-400">Build {release.version_code}</p>
                                         </div>
-                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${release.is_latest ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                                            {release.is_latest ? 'Actual' : 'Historico'}
+                                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${releaseStatusStyles[release.release_status]}`}>
+                                            {release.is_latest ? 'Automático' : releaseStatusLabels[release.release_status]}
                                         </span>
                                     </div>
                                     <p className="mt-1 text-[10px] font-black uppercase text-slate-600">
@@ -439,13 +486,15 @@ export const PosApkReleases: React.FC = () => {
                         {releases.length === 0 && !loading ? (
                             <div className="px-5 py-12 text-center text-sm font-medium text-slate-500">
                                 No hay releases registrados.
-                                <button
-                                    type="button"
-                                    onClick={openRegisterModal}
-                                    className="mt-3 block w-full text-blue-600 font-bold hover:underline"
-                                >
-                                    Registrar el primer APK
-                                </button>
+                                {canManage ? (
+                                    <button
+                                        type="button"
+                                        onClick={openRegisterModal}
+                                        className="mt-3 block w-full text-blue-600 font-bold hover:underline"
+                                    >
+                                        Registrar el primer APK
+                                    </button>
+                                ) : null}
                             </div>
                         ) : null}
                     </div>
@@ -462,7 +511,7 @@ export const PosApkReleases: React.FC = () => {
                                         </div>
                                         <div>
                                             <p className="text-xs font-black uppercase tracking-widest text-slate-400">
-                                                {selectedRelease.is_latest ? 'Ultimo release' : 'Release historico'}
+                                                {selectedRelease.is_latest ? 'Actualización automática' : 'Descarga técnica'}
                                             </p>
                                             <h3 className="mt-0.5 text-lg font-black text-slate-900">
                                                 POS {selectedRelease.version_name}
@@ -473,16 +522,55 @@ export const PosApkReleases: React.FC = () => {
                                         </div>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
-                                        <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase ${selectedRelease.is_latest ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                                            {selectedRelease.is_latest ? 'Actual' : 'Historico'}
-                                        </span>
-                                        <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-[10px] font-black uppercase text-blue-700">
-                                            {releaseStatusLabels[selectedRelease.release_status || ''] || selectedRelease.release_status || 'Sin estado'}
+                                        <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase ${releaseStatusStyles[selectedRelease.release_status]}`}>
+                                            {releaseStatusLabels[selectedRelease.release_status]}
                                         </span>
                                     </div>
                                 </div>
                             </div>
                             <div className="space-y-3 px-4 py-3">
+                                {canManage ? (
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                        <div className="grid gap-2 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
+                                            <label className="block">
+                                                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Cambiar estado</span>
+                                                <select
+                                                    value={statusDraft}
+                                                    onChange={(event) => setStatusDraft(event.target.value as PosApkReleaseStatus)}
+                                                    disabled={updatingStatus}
+                                                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-800"
+                                                >
+                                                    {Object.entries(releaseStatusLabels).map(([value, label]) => (
+                                                        <option key={value} value={value}>{label}</option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                            <label className="block">
+                                                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-500">Nota de QA opcional</span>
+                                                <input
+                                                    value={statusNotes}
+                                                    onChange={(event) => setStatusNotes(event.target.value)}
+                                                    disabled={updatingStatus}
+                                                    maxLength={2000}
+                                                    placeholder="Resultado de pruebas o motivo del cambio"
+                                                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-800"
+                                                />
+                                            </label>
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleStatusUpdate()}
+                                                disabled={updatingStatus || statusDraft === selectedRelease.release_status}
+                                                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                                {updatingStatus ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                                                Actualizar
+                                            </button>
+                                        </div>
+                                        {statusDraft === 'available' && selectedRelease.release_status !== 'available' ? (
+                                            <p className="mt-2 text-[11px] font-bold text-emerald-700">Disponible habilita esta versión para el canal automático si tiene el mayor version code.</p>
+                                        ) : null}
+                                    </div>
+                                ) : null}
                                 <div className="flex flex-wrap gap-2">
                                     <a
                                         href={selectedDownloadUrl}
@@ -491,7 +579,7 @@ export const PosApkReleases: React.FC = () => {
                                         className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-black text-white shadow-sm transition-colors hover:bg-blue-700"
                                     >
                                         <Download size={18} />
-                                        Descargar APK
+                                        Descarga técnica
                                     </a>
                                     <a
                                         href={selectedRelease.apk_url}
@@ -502,11 +590,7 @@ export const PosApkReleases: React.FC = () => {
                                         <ExternalLink size={18} />
                                         Abrir fuente
                                     </a>
-                                    {selectedRelease.is_latest ? (
-                                        <CopyButton value={latestApkDownloadUrl} label="Copiar enlace" />
-                                    ) : (
-                                        <CopyButton value={selectedDownloadUrl} label="Copiar enlace" />
-                                    )}
+                                    <CopyButton value={selectedDownloadUrl} label="Copiar enlace técnico" />
                                     {selectedRelease.is_latest ? (
                                         <a
                                             href={latestApkJsonUrl}
@@ -519,6 +603,13 @@ export const PosApkReleases: React.FC = () => {
                                         </a>
                                     ) : null}
                                 </div>
+                                {selectedRelease.status_changed_at ? (
+                                    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                                        Estado actualizado {formatDateTime(selectedRelease.status_changed_at)}
+                                        {selectedStatusActor ? ` por ${selectedStatusActor.full_name}` : ''}
+                                        {selectedRelease.status_change_notes ? ` · ${selectedRelease.status_change_notes}` : ''}
+                                    </div>
+                                ) : null}
                                 <ReleaseDetails release={selectedRelease} />
                             </div>
                         </>
@@ -532,7 +623,7 @@ export const PosApkReleases: React.FC = () => {
                 </div>
             </section>
 
-            {isRegisterModalOpen && (
+            {canManage && isRegisterModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/50 p-2 backdrop-blur-sm">
                     <div className="my-3 w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-200">
                         <div className="flex items-start justify-between border-b border-slate-100 bg-slate-50 px-4 py-3">
@@ -622,7 +713,7 @@ export const PosApkReleases: React.FC = () => {
                                     <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Estado</span>
                                     <select
                                         value={form.releaseStatus}
-                                        onChange={(event) => updateForm('releaseStatus', event.target.value)}
+                                        onChange={(event) => updateForm('releaseStatus', event.target.value as PosApkReleaseStatus)}
                                         className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                                     >
                                         {Object.entries(releaseStatusLabels).map(([value, label]) => (
@@ -721,15 +812,9 @@ export const PosApkReleases: React.FC = () => {
                                 </label>
                             </div>
 
-                            <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                                <span className="text-xs font-bold text-slate-700">Marcar como ultimo APK</span>
-                                <input
-                                    type="checkbox"
-                                    checked={form.isLatest}
-                                    onChange={(event) => updateForm('isLatest', event.target.checked)}
-                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                />
-                            </label>
+                            <div className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800">
+                                Solo el estado Disponible habilita la actualización automática. Prueba interna y Beta permanecen accesibles mediante el enlace técnico.
+                            </div>
 
                             <div className="flex flex-col-reverse justify-end gap-2 border-t border-slate-100 pt-3 sm:flex-row">
                                 <button
