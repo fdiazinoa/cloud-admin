@@ -32,6 +32,11 @@ assert.ok(page.includes('Descarga técnica'), 'Non-automatic releases need a tec
 assert.ok(page.includes('Copiar enlace técnico'), 'Technical personnel need a direct copyable link');
 assert.ok(page.includes("releaseStatus: 'internal_testing'"), 'New APKs must default to internal testing');
 assert.ok(page.includes('Solo el estado Disponible habilita la actualización automática'), 'Upload UI must explain the automatic gate');
+assert.ok(page.includes('Filtrar APK por estado'), 'APK history must provide a status filter');
+assert.ok(page.includes('Todos los estados'), 'APK status filter must support the complete history');
+assert.ok(page.includes('Ordenar APK por version code'), 'APK history must provide version-code sorting');
+assert.ok(page.includes('Mayor a menor') && page.includes('Menor a mayor'), 'APK sorting must support both directions');
+assert.match(page, /right\.version_code - left\.version_code[\s\S]*left\.version_code - right\.version_code/, 'APK history must sort numerically by version code');
 assert.match(latestEndpoint, /\.eq\('release_status', 'available'\)/, 'Automatic endpoint must only select available APKs');
 assert.doesNotMatch(latestEndpoint, /\.eq\('is_latest', true\)/, 'Automatic endpoint must fall back to the highest available APK');
 assert.ok(tenants.includes('getLatestAvailablePosApkRelease()'), 'Terminal comparisons must use the public available-only endpoint');

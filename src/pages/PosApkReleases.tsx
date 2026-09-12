@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle,
+    ArrowUpDown,
     Bug,
     CheckCircle2,
     Clipboard,
@@ -25,6 +26,9 @@ import {
     type PosApkRelease,
     type PosApkReleaseStatus,
 } from '../lib/posApkReleases';
+
+type ReleaseStatusFilter = 'all' | PosApkReleaseStatus;
+type VersionSortDirection = 'desc' | 'asc';
 
 const defaultForm = {
     versionName: '',
@@ -213,13 +217,22 @@ export const PosApkReleases: React.FC<{ canManage: boolean }> = ({ canManage }) 
     const [updatingStatus, setUpdatingStatus] = useState(false);
     const [statusDraft, setStatusDraft] = useState<PosApkReleaseStatus>('internal_testing');
     const [statusNotes, setStatusNotes] = useState('');
+    const [statusFilter, setStatusFilter] = useState<ReleaseStatusFilter>('all');
+    const [versionSortDirection, setVersionSortDirection] = useState<VersionSortDirection>('desc');
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
 
     const latestRelease = releases.find((release) => release.is_latest && release.release_status === 'available')
         || releases.find((release) => release.release_status === 'available')
         || null;
-    const selectedRelease = releases.find((release) => release.id === selectedReleaseId) || latestRelease || releases[0] || null;
+    const visibleReleases = useMemo(() => releases
+        .filter((release) => statusFilter === 'all' || release.release_status === statusFilter)
+        .sort((left, right) => versionSortDirection === 'desc'
+            ? right.version_code - left.version_code
+            : left.version_code - right.version_code), [releases, statusFilter, versionSortDirection]);
+    const selectedRelease = visibleReleases.find((release) => release.id === selectedReleaseId)
+        || visibleReleases[0]
+        || null;
     const selectedStatusActor = normalizeRelation(selectedRelease?.status_actor);
     const previewDownloadUrl = useMemo(() => buildDirectDownloadUrl(form.apkUrl), [form.apkUrl]);
     const availableCount = releases.filter((release) => release.release_status === 'available').length;
@@ -453,9 +466,42 @@ export const PosApkReleases: React.FC<{ canManage: boolean }> = ({ canManage }) 
                     <div className="border-b border-slate-100 px-4 py-3">
                         <h3 className="font-black text-slate-900">Historial de APK</h3>
                         <p className="mt-1 text-xs font-medium text-slate-500">Selecciona una version para ver detalle y descargar.</p>
+                        <div className="mt-3 grid gap-2">
+                            <label className="block">
+                                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-slate-400">Estado</span>
+                                <select
+                                    aria-label="Filtrar APK por estado"
+                                    value={statusFilter}
+                                    onChange={(event) => {
+                                        setStatusFilter(event.target.value as ReleaseStatusFilter);
+                                        setSelectedReleaseId(null);
+                                    }}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                >
+                                    <option value="all">Todos los estados</option>
+                                    {Object.entries(releaseStatusLabels).map(([value, label]) => (
+                                        <option key={value} value={value}>{label}</option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className="block">
+                                <span className="mb-1 flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                                    <ArrowUpDown size={11} /> Orden por número de APK
+                                </span>
+                                <select
+                                    aria-label="Ordenar APK por version code"
+                                    value={versionSortDirection}
+                                    onChange={(event) => setVersionSortDirection(event.target.value as VersionSortDirection)}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                                >
+                                    <option value="desc">Mayor a menor</option>
+                                    <option value="asc">Menor a mayor</option>
+                                </select>
+                            </label>
+                        </div>
                     </div>
                     <div className="max-h-[540px] flex-1 divide-y divide-slate-100 overflow-y-auto">
-                        {releases.map((release) => {
+                        {visibleReleases.map((release) => {
                             const isSelected = selectedRelease?.id === release.id;
                             return (
                                 <button
@@ -483,10 +529,10 @@ export const PosApkReleases: React.FC<{ canManage: boolean }> = ({ canManage }) 
                                 </button>
                             );
                         })}
-                        {releases.length === 0 && !loading ? (
+                        {visibleReleases.length === 0 && !loading ? (
                             <div className="px-5 py-12 text-center text-sm font-medium text-slate-500">
-                                No hay releases registrados.
-                                {canManage ? (
+                                {releases.length === 0 ? 'No hay releases registrados.' : 'No hay APK con el estado seleccionado.'}
+                                {canManage && releases.length === 0 ? (
                                     <button
                                         type="button"
                                         onClick={openRegisterModal}
