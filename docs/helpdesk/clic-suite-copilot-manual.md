@@ -290,16 +290,17 @@ Copilot nunca debe ejecutarlas automáticamente. Debe explicar el impacto, compr
 
 Fuente verificada: `Cloud-Admin/src/pages/Tenants.tsx`.
 
-### 5.4 Registrar y marcar el APK actual
+### 5.4 Registrar, probar y publicar un APK
 
-El historial de APK ordena primero `is_latest` y luego `version_code`. Al registrar un nuevo release como actual, los anteriores dejan de tener `is_latest=true`. La versión visible como **Actual** depende de esa marca, no solo de que el número sea mayor.
+Los APK nuevos se registran en **Prueba interna**. Borrador, Prueba interna y Beta se descargan únicamente mediante su enlace técnico directo. Solo el estado **Disponible** participa en `/api/pos-apk/latest` y en las comparaciones de versión de terminales; entre los disponibles se elige el mayor `version_code`.
 
 Antes de publicar:
 
 1. Confirmar `versionName` y `versionCode` creciente.
 2. Registrar checksum SHA-256, resumen, correcciones, validación y notas de instalación.
-3. Usar estado disponible y marcar **APK actual** cuando corresponda.
-4. Verificar que el enlace estable `/api/pos-apk/latest` devuelva la versión esperada.
+3. Validar mediante el enlace técnico y avanzar por Prueba interna o Beta según corresponda.
+4. Cambiar a **Disponible** únicamente después de aprobar QA; el sistema actualizará automáticamente la versión vigente.
+5. Verificar que el enlace estable `/api/pos-apk/latest` devuelva la versión esperada.
 
 Fuentes verificadas:
 
@@ -325,4 +326,3 @@ Debe crear borrador o escalar cuando haya pagos, documentos fiscales rechazados,
 - Mantener fragmentos pequeños: un síntoma/procedimiento por entrada.
 - Ejecutar el smoke test `npm run test:helpdesk-clic-suite-manual`.
 - Evaluar periódicamente tickets reales: recuperación correcta, respuesta segura, escalamiento correcto y ausencia de pasos inventados.
-

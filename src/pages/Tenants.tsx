@@ -6,7 +6,7 @@ import { tenantService, type TerminalDeviceAuditEntry, type TenantPosLicenseSeat
 import { TenantProductsModal } from '../components/TenantProductsModal';
 import { ErpModuleStoreModal } from '../components/ErpModuleStoreModal';
 import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
-import { getPosApkReleases, type PosApkRelease } from '../lib/posApkReleases';
+import { getLatestAvailablePosApkRelease, type PosApkReleaseReference } from '../lib/posApkReleases';
 import {
     deriveProductsFromTenant,
     deriveTenantConfigFromProducts,
@@ -76,7 +76,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
     const [terminalStoreFilter, setTerminalStoreFilter] = useState('ALL');
     const [terminalRequestFilter, setTerminalRequestFilter] = useState<TerminalRequestFilter>('ALL');
     const [terminalTabs, setTerminalTabs] = useState<Record<string, TerminalTabKey>>({});
-    const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkRelease | null>(null);
+    const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkReleaseReference | null>(null);
     const [terminalAdvancedOpen, setTerminalAdvancedOpen] = useState<Record<string, boolean>>({});
     const [isTerminalModalOpen, setIsTerminalModalOpen] = useState(false);
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
@@ -431,14 +431,14 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                 console.warn('POS license enforcement skipped or failed:', enforceErr);
             }
 
-            const [data, releases, seats] = await Promise.all([
+            const [data, availableRelease, seats] = await Promise.all([
                 tenantService.getTenantTerminalOverview(tenant.id),
-                getPosApkReleases(),
+                getLatestAvailablePosApkRelease(),
                 tenantService.getTenantPosLicenseSeats(tenant.id).catch(() => null),
             ]);
             setTenantTerminals(data);
             setPosLicenseSeats(seats);
-            setLatestPosApkRelease(releases.find((release) => release.is_latest) || releases[0] || null);
+            setLatestPosApkRelease(availableRelease);
             if (canReauthorizeTerminals) {
                 await Promise.all(data
                     .filter((terminal) => hasCanonicalErpBinding(terminal))

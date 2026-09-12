@@ -246,7 +246,7 @@ function App() {
                     <Route path="tenants" element={<PermissionGate allowed={allowed('tenants_view')}><Tenants permissions={permissions} /></PermissionGate>} />
                     <Route path="clientes" element={<PermissionGate allowed={allowed('tenants_view')}><Customers /></PermissionGate>} />
                     <Route path="plans" element={<PermissionGate allowed={allowed('plans_view')}><Plans /></PermissionGate>} />
-                    <Route path="pos-apk" element={<PermissionGate allowed={allowed('apk_view')}><PosApkReleases /></PermissionGate>} />
+                    <Route path="pos-apk" element={<PermissionGate allowed={allowed('apk_view')}><PosApkReleases canManage={allowed('apk_manage')} /></PermissionGate>} />
                     <Route path="support" element={<PermissionGate allowed={allowed('support_view')}><SupportCommandCenter /></PermissionGate>} />
                     <Route path="conocimiento" element={<PermissionGate allowed={allowed('knowledge_view')}><KnowledgeCenter /></PermissionGate>} />
                     <Route path="calendario" element={<PermissionGate allowed={allowed('calendar_view')}><ImplementationCalendar /></PermissionGate>} />
