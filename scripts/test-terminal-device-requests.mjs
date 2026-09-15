@@ -86,6 +86,11 @@ assert.match(page, /Autorizar y reemplazar/);
 assert.match(page, /Rechazar/);
 assert.match(page, /UUID ERP:/);
 assert.match(page, /canReauthorizeTerminals/);
+assert.match(
+    page,
+    /const canonicalErpTerminalId = getErpTerminalUuid\(terminal\);[\s\S]*if \(canonicalErpTerminalId\) return canonicalErpTerminalId;[\s\S]*if \(terminalRequiresCanonicalErp\(\)\) return '';/,
+    'Initial request loading must prefer the canonical ERP UUID before tenant state finishes updating',
+);
 assert.match(page, /deviceActionSubmittingKey !== null/);
 assert.match(page, /requestId: request\?\.id \|\| null/);
 assert.match(page, /attempt\.authorized_device_id \|\| getTerminalAuthorizedDeviceId\(terminal\)/, 'takeover must use the previous authorized device captured by the selected ERP request');

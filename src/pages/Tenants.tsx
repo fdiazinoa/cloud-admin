@@ -25,6 +25,7 @@ import {
     getAttemptDeviceId,
     getDeviceRoleClasses,
     getDeviceRoleLabel,
+    getErpTerminalUuid,
     getRegistryEndpointRole,
     getTerminalAuthStatus,
     getTerminalAuthorizedDeviceId,
@@ -525,7 +526,9 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         terminalRequiresCanonicalErp() && !hasCanonicalErpBinding(terminal)
     );
     const getTerminalTakeoverId = (terminal: TenantTerminalSnapshot) => {
-        if (terminalRequiresCanonicalErp()) return hasCanonicalErpBinding(terminal) ? terminal.erp_terminal_uuid!.trim() : '';
+        const canonicalErpTerminalId = getErpTerminalUuid(terminal);
+        if (canonicalErpTerminalId) return canonicalErpTerminalId;
+        if (terminalRequiresCanonicalErp()) return '';
         return terminal.registry?.terminal_id?.trim()
             || terminal.terminal_id?.trim()
             || terminal.catalog_terminal_id?.trim()
