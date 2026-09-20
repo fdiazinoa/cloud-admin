@@ -1790,7 +1790,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
         }
     };
 
-    const renderProductSummary = (products: TenantProductSelection) => {
+    const renderProductSummary = (products: TenantProductSelection, compact = false) => {
         const normalizedProducts = normalizeTenantProductSelection(products);
         const labels = getActiveProductLabels(normalizedProducts);
         const semantics = deriveTenantSemanticsFromProducts(normalizedProducts);
@@ -1800,6 +1800,36 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
             solutionLabel = getTenantTypeLabel(deriveTenantConfigFromProducts(products).type);
         } catch {
             solutionLabel = 'Selecciona al menos un producto principal';
+        }
+
+        if (compact) {
+            return (
+                <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1.5">
+                        {labels.map((label) => (
+                            <span key={label} className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-blue-700">
+                                {label}
+                            </span>
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+                        <span>Solución: <strong className="text-slate-700">{solutionLabel}</strong></span>
+                        <span>Contrato: <strong className="text-slate-700">{semantics.contractedProduct}</strong></span>
+                        <span>Canal: <strong className="text-slate-700">{semantics.cloudChannel}</strong></span>
+                        <span>Datos: <strong className="text-slate-700">{semantics.dataMaster}</strong></span>
+                    </div>
+                    {semantics.contractedProduct === 'POS_ONLY' && semantics.cloudChannel === 'POS_CLOUD_STAGING' ? (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800">
+                            POS_ONLY SaaS incluye respaldo, recuperación y core interno; el cliente no ve ERP.
+                        </div>
+                    ) : null}
+                    {semantics.posVariant === 'POS_ONLY_OFFLINE' ? (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800">
+                            POS Offline no incluye respaldo cloud, recuperación SaaS ni preparación automática para ERP.
+                        </div>
+                    ) : null}
+                </div>
+            );
         }
 
         return (
@@ -2322,17 +2352,22 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
             </div>
 
             {isModalOpen && (
-                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                            <h3 className="font-black text-lg text-slate-800">Aprovisionar Nueva Empresa</h3>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-2 backdrop-blur-sm sm:p-4">
+                    <div className="flex max-h-[calc(100vh-1rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-200 sm:max-h-[calc(100vh-2rem)]">
+                        <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-5 py-3">
+                            <div>
+                                <h3 className="font-black text-base text-slate-800 sm:text-lg">Aprovisionar Nueva Empresa</h3>
+                                <p className="mt-0.5 text-[11px] text-slate-500">Datos de acceso, contacto y productos iniciales.</p>
+                            </div>
                             <button onClick={closeCreateModal} className="text-slate-400 hover:text-slate-700 transition-colors">
                                 <X size={20} />
                             </button>
                         </div>
-                        <form onSubmit={handleCreateTenant} className="p-6 space-y-5">
-                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-1">Nombre Comercial <span className="text-red-500">*</span></label>
+                        <form onSubmit={handleCreateTenant} className="flex min-h-0 flex-1 flex-col">
+                            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                <div>
+                                <label className="mb-1 block text-xs font-bold text-slate-700">Nombre Comercial <span className="text-red-500">*</span></label>
                                 <input
                                     required
                                     type="text"
@@ -2345,14 +2380,14 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                             slug: isSlugManuallyEdited ? formData.slug : buildTenantSlug(name),
                                         });
                                     }}
-                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                     placeholder="Ej. Supermercado El Sol"
                                 />
-                                <p className="text-xs text-slate-500 mt-1">El nombre comercial puede repetirse; el identificador tecnico debe ser unico.</p>
-                            </div>
+                                <p className="mt-1 text-[10px] leading-tight text-slate-500">Puede repetirse; el identificador técnico debe ser único.</p>
+                                </div>
 
-                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-1">Identificador técnico <span className="text-red-500">*</span></label>
+                                <div>
+                                <label className="mb-1 block text-xs font-bold text-slate-700">Identificador técnico <span className="text-red-500">*</span></label>
                                 <input
                                     required
                                     type="text"
@@ -2361,82 +2396,83 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                         setIsSlugManuallyEdited(true);
                                         setFormData({ ...formData, slug: buildTenantSlug(e.target.value) });
                                     }}
-                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800 font-mono"
+                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 font-mono text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                     placeholder="mercasend_srl_prod"
                                 />
-                                <p className="text-xs text-slate-500 mt-1">Usa letras, numeros y guion bajo. Ej.: mercasend_srl_prod.</p>
+                                <p className="mt-1 text-[10px] leading-tight text-slate-500">Letras, números y guion bajo. Ej.: mercasend_srl_prod.</p>
+                                </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">RNC / Cédula</label>
+                                    <label className="mb-1 block text-xs font-bold text-slate-700">RNC / Cédula</label>
                                     <input
                                         type="text"
                                         value={formData.taxId}
                                         onChange={e => setFormData({ ...formData, taxId: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                         placeholder="Opcional"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Email de Acceso <span className="text-red-500">*</span></label>
+                                    <label className="mb-1 block text-xs font-bold text-slate-700">Email de Acceso <span className="text-red-500">*</span></label>
                                     <input
                                         required
                                         type="email"
                                         value={formData.email}
                                         onChange={e => setFormData({ ...formData, email: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                         placeholder="admin@empresa.com"
                                     />
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-4">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Persona de Contacto <span className="text-red-500">*</span></label>
+                                    <label className="mb-1 block text-xs font-bold text-slate-700">Persona de Contacto <span className="text-red-500">*</span></label>
                                     <input
                                         required
                                         type="text"
                                         value={formData.contactName}
                                         onChange={e => setFormData({ ...formData, contactName: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                         placeholder="Nombre y apellido"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Mail de Contacto <span className="text-red-500">*</span></label>
+                                    <label className="mb-1 block text-xs font-bold text-slate-700">Mail de Contacto <span className="text-red-500">*</span></label>
                                     <input
                                         required
                                         type="email"
                                         value={formData.contactEmail}
                                         onChange={e => setFormData({ ...formData, contactEmail: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                         placeholder="contacto@empresa.com"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">Ciudad <span className="text-red-500">*</span></label>
+                                    <label className="mb-1 block text-xs font-bold text-slate-700">Ciudad <span className="text-red-500">*</span></label>
                                     <input
                                         required
                                         type="text"
                                         value={formData.city}
                                         onChange={e => setFormData({ ...formData, city: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                         placeholder="Santo Domingo"
                                     />
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">
+                                    <label className="mb-1 block text-xs font-bold text-slate-700">
                                         Distribuidor que Captó
                                         {distributorsLoading ? ' (cargando...)' : ''}
                                     </label>
                                     <select
                                         value={formData.capturedByDistributorId}
                                         onChange={e => setFormData({ ...formData, capturedByDistributorId: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                     >
                                         <option value="">Sin asignar</option>
                                         {distributors.map((distributor) => (
@@ -2447,14 +2483,14 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-bold text-slate-700 mb-1">
+                                    <label className="mb-1 block text-xs font-bold text-slate-700">
                                         Distribuidor que da Servicio
                                         {distributorsLoading ? ' (cargando...)' : ''}
                                     </label>
                                     <select
                                         value={formData.servicedByDistributorId}
                                         onChange={e => setFormData({ ...formData, servicedByDistributorId: e.target.value })}
-                                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
+                                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-500"
                                     >
                                         <option value="">Sin asignar</option>
                                         {distributors.map((distributor) => (
@@ -2467,43 +2503,44 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                             </div>
 
                             {distributors.length === 0 && !distributorsLoading && (
-                                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
                                     No hay distribuidores activos. Puedes crear tenants sin asignación y completar este dato después.
                                 </p>
                             )}
 
-                            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                <div className="flex items-start justify-between gap-4">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <div className="flex items-center justify-between gap-3">
                                     <div>
-                                        <p className="text-sm font-black text-slate-800">Productos Activos</p>
-                                        <p className="text-xs text-slate-500 mt-1">Define la combinación inicial de productos y addons para este tenant.</p>
+                                        <p className="text-xs font-black text-slate-800">Productos Activos</p>
+                                        <p className="mt-0.5 text-[10px] text-slate-500">Combinación inicial de productos y addons.</p>
                                     </div>
                                     <button
                                         type="button"
                                         onClick={openCreateProductsModal}
-                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-700 hover:border-blue-200 hover:text-blue-700 transition-colors"
+                                        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition-colors hover:border-blue-200 hover:text-blue-700"
                                     >
-                                        <Boxes size={16} />
-                                        Gestionar Productos
+                                        <Boxes size={14} />
+                                        Gestionar
                                     </button>
                                 </div>
-                                <div className="mt-4">
-                                    {renderProductSummary(formData.products)}
+                                <div className="mt-2.5">
+                                    {renderProductSummary(formData.products, true)}
                                 </div>
                             </div>
+                            </div>
 
-                            <div className="pt-4 flex gap-3">
+                            <div className="flex gap-3 border-t border-slate-100 bg-white px-5 py-3">
                                 <button
                                     type="button"
                                     onClick={closeCreateModal}
-                                    className="flex-1 px-4 py-3 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl font-bold transition-colors"
+                                    className="flex-1 rounded-lg bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-600 transition-colors hover:bg-slate-200"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={isSubmitting}
-                                    className="flex-1 px-4 py-3 text-white bg-blue-600 hover:bg-blue-700 rounded-xl font-bold shadow-sm transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
+                                    className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-70"
                                 >
                                     {isSubmitting ? <><Loader2 size={18} className="animate-spin" /> Creando Esquema...</> : 'Confirmar Registro'}
                                 </button>
