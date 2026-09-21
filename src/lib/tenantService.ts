@@ -30,6 +30,8 @@ import {
     type TenantSemanticConfig,
 } from "./tenantProducts";
 import { buildTenantAuthMetadataPayload } from "./tenantAuthMetadata";
+import { selectTenantAuthUser } from "./tenantAuthLookup";
+import type { User } from "@supabase/supabase-js";
 
 export interface DashboardStats {
     totalTenants: number;
@@ -1179,32 +1181,24 @@ export async function updateTenant(
     }
 }
 
-async function findTenantAuthUserId(tenant: Tenant): Promise<string | null> {
-    const tenantEmail = tenant.email.trim().toLowerCase();
+async function findTenantAuthUser(tenant: Pick<Tenant, "id" | "email">): Promise<User | null> {
     let page = 1;
     const perPage = 1000;
+    const allUsers: User[] = [];
 
     while (true) {
         const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
         if (error) throw error;
 
         const users = data.users || [];
-        const match = users.find((user) => {
-            const userEmail = user.email?.trim().toLowerCase();
-            const metadataTenantId = typeof user.user_metadata?.tenant_id === "string"
-                ? user.user_metadata.tenant_id
-                : null;
-            return userEmail === tenantEmail || metadataTenantId === tenant.id;
-        });
-
-        if (match) return match.id;
-        if (users.length < perPage) return null;
+        allUsers.push(...users);
+        if (users.length < perPage) return selectTenantAuthUser(allUsers, tenant);
         page += 1;
     }
 }
 
 export async function deleteTenant(tenant: Tenant): Promise<void> {
-    const authUserId = await findTenantAuthUserId(tenant);
+    const authUserId = (await findTenantAuthUser(tenant))?.id;
 
     const { error } = await supabaseAdmin.rpc("delete_tenant", {
         p_tenant_id: tenant.id,
@@ -2597,11 +2591,9 @@ export async function updateTenantCredentials(
 
     if (fetchErr) throw fetchErr;
 
-    // 2. Find the user in Auth by current email or tenant_id
-    const { data: { users }, error: listErr } = await supabaseAdmin.auth.admin.listUsers();
-    if (listErr) throw listErr;
-
-    const authUser = users.find((u) => u.email === (tenant as { email: string }).email || u.user_metadata?.tenant_id === tenantId);
+    // 2. Search every Auth page and prefer the Cloud Admin tenant linkage.
+    // user_metadata.tenant_id may identify the ERP tenant, not this landlord tenant.
+    const authUser = await findTenantAuthUser({ id: tenantId, email: (tenant as { email: string }).email });
     if (!authUser) throw new Error("Usuario de autenticación no encontrado para este tenant");
 
     // 3. Update Auth
