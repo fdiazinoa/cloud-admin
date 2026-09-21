@@ -4227,7 +4227,7 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
                                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-800"
                                         placeholder="Dejar vacío para no cambiar"
                                     />
-                                    <p className="text-[10px] text-slate-500 mt-1">Fuerza el cambio en el próximo acceso.</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Reemplaza la contraseña actual del usuario de acceso.</p>
                                 </div>
                             </div>
 
