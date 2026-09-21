@@ -17,4 +17,20 @@ assert.match(migration, /RAISE EXCEPTION 'Unexpected definition for %'/);
 assert.match(migration, /RAISE EXCEPTION 'Unexpected landlord\.delete_tenant definition'/);
 assert.doesNotMatch(migration, /DISABLE TRIGGER|session_replication_role/i);
 
+const posAssignments = migration.indexOf('DELETE FROM public.erp_pos_role_assignments');
+const posRoles = migration.indexOf('DELETE FROM public.erp_pos_roles');
+assert.ok(posAssignments >= 0 && posAssignments < posRoles);
+for (const table of [
+    'erp_roles',
+    'erp_property_layout_items',
+    'erp_property_documents',
+    'erp_property_operations',
+    'erp_property_owners',
+    'erp_property_layouts',
+]) {
+    assert.match(migration, new RegExp(`DELETE FROM public\\.${table} WHERE tenant_id = ANY\\(v_erp_tenant_ids\\)`));
+}
+assert.match(migration, /IF strpos\(v_definition, v_replacement\) > 0 THEN/);
+assert.match(migration, /DELETE FROM public\.erp_property_layouts WHERE tenant_id = ANY\(v_erp_tenant_ids\);[\s\S]*\|\| v_anchor/);
+
 console.log('tenant delete POS close checks passed');

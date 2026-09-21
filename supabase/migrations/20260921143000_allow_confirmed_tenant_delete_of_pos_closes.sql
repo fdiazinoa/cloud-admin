@@ -127,6 +127,9 @@ BEGIN
   if tg_op='DELETE' and private.tenant_delete_allows(tenant) then continue; end if;$replacement$
     LOOP
         v_definition := pg_get_functiondef(v_function);
+        IF strpos(v_definition, v_replacement) > 0 THEN
+            CONTINUE;
+        END IF;
         IF length(v_definition) - length(replace(v_definition, v_anchor, ''))
            <> length(v_anchor) THEN
             RAISE EXCEPTION 'Unexpected definition for %', v_function;
@@ -136,13 +139,37 @@ BEGIN
 
     v_definition := pg_get_functiondef('landlord.delete_tenant(uuid,text)'::REGPROCEDURE);
     v_anchor := E'        DELETE FROM public.erp_tenants\n        WHERE id = ANY(v_erp_tenant_ids);';
+    IF strpos(v_definition, 'PERFORM private.purge_deleted_pos_tenants(v_erp_tenant_ids);') = 0 THEN
+        IF length(v_definition) - length(replace(v_definition, v_anchor, ''))
+           <> length(v_anchor) THEN
+            RAISE EXCEPTION 'Unexpected landlord.delete_tenant definition';
+        END IF;
+        v_definition := replace(
+            v_definition, v_anchor,
+            E'        PERFORM private.purge_deleted_pos_tenants(v_erp_tenant_ids);\n\n' || v_anchor
+        );
+    END IF;
+
+    -- These direct FKs to erp_tenants are NO ACTION/RESTRICT, so cascades
+    -- cannot remove them. Delete children before erp_tenants and its cascades.
+    IF strpos(v_definition, 'DELETE FROM public.erp_pos_role_assignments') > 0 THEN
+        RAISE EXCEPTION 'Unexpected duplicate tenant role cleanup';
+    END IF;
     IF length(v_definition) - length(replace(v_definition, v_anchor, ''))
        <> length(v_anchor) THEN
         RAISE EXCEPTION 'Unexpected landlord.delete_tenant definition';
     END IF;
     EXECUTE replace(
         v_definition, v_anchor,
-        E'        PERFORM private.purge_deleted_pos_tenants(v_erp_tenant_ids);\n\n' || v_anchor
+        E'        DELETE FROM public.erp_pos_role_assignments WHERE tenant_id = ANY(v_erp_tenant_ids);\n'
+        || E'        DELETE FROM public.erp_pos_roles WHERE tenant_id = ANY(v_erp_tenant_ids);\n'
+        || E'        DELETE FROM public.erp_roles WHERE tenant_id = ANY(v_erp_tenant_ids);\n'
+        || E'        DELETE FROM public.erp_property_layout_items WHERE tenant_id = ANY(v_erp_tenant_ids);\n'
+        || E'        DELETE FROM public.erp_property_documents WHERE tenant_id = ANY(v_erp_tenant_ids);\n'
+        || E'        DELETE FROM public.erp_property_operations WHERE tenant_id = ANY(v_erp_tenant_ids);\n'
+        || E'        DELETE FROM public.erp_property_owners WHERE tenant_id = ANY(v_erp_tenant_ids);\n'
+        || E'        DELETE FROM public.erp_property_layouts WHERE tenant_id = ANY(v_erp_tenant_ids);\n\n'
+        || v_anchor
     );
 END;
 $$;
