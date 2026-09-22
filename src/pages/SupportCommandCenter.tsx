@@ -1830,9 +1830,74 @@ const SupportCommandCenter: React.FC = () => {
 
     return (
         <div className="relative flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
-            <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white shadow-sm">
+            <aside className={`hidden w-[208px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white md:flex ${isFocusMode ? '!hidden' : ''}`}>
+                <div className="p-3">
+                    <p className="px-1 pb-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Bandejas</p>
+                    <div className="space-y-1">
+                        <button
+                            type="button"
+                            onClick={() => { setMailboxFilter('active'); setSelectedTicketIds([]); setSelectedTicket(null); setQuickFilter('none'); }}
+                            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${mailboxFilter === 'active' && quickFilter === 'none' ? 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200' : 'text-slate-600 hover:bg-slate-50'}`}
+                        >
+                            <Mail size={15} className={mailboxFilter === 'active' && quickFilter === 'none' ? 'text-indigo-600' : 'text-slate-400'} />
+                            <span className="flex-1 truncate text-[13px] font-bold">Bandeja activa</span>
+                            <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{ticketStats.active}</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { setQuickFilter('unassigned'); setMailboxFilter('active'); setFilterStatus('Todos'); setFilterSource('Todos'); setSelectedTicketIds([]); setSelectedTicket(null); }}
+                            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${mailboxFilter === 'active' && quickFilter === 'unassigned' ? 'bg-amber-50 text-amber-900 ring-1 ring-amber-200' : 'text-slate-600 hover:bg-slate-50'}`}
+                        >
+                            <UserPlus size={15} className={mailboxFilter === 'active' && quickFilter === 'unassigned' ? 'text-amber-600' : 'text-slate-400'} />
+                            <span className="flex-1 truncate text-[13px] font-bold">Sin asignar</span>
+                            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{ticketStats.unassigned}</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { setMailboxFilter('spam'); setSelectedTicketIds([]); setSelectedTicket(null); setFilterStatus('Todos'); setQuickFilter('none'); }}
+                            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${mailboxFilter === 'spam' ? 'bg-red-50 text-red-900 ring-1 ring-red-200' : 'text-slate-600 hover:bg-slate-50'}`}
+                        >
+                            <AlertTriangle size={15} className={mailboxFilter === 'spam' ? 'text-red-500' : 'text-slate-400'} />
+                            <span className="flex-1 truncate text-[13px] font-bold">Spam</span>
+                            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{ticketStats.spam}</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div className="border-t border-slate-100 p-3">
+                    <p className="px-1 pb-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Departamentos</p>
+                    <div className="space-y-0.5">
+                        {teams.filter((team) => actorDepartmentAccess.all || actorDepartmentAccess.ids.includes(team.id)).map((team) => (
+                            <button
+                                key={team.id}
+                                type="button"
+                                onClick={() => setFilterTeam((current) => current === team.id ? 'Todos' : team.id)}
+                                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left transition-colors ${filterTeam === team.id ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}
+                            >
+                                <Bell size={13} className={filterTeam === team.id ? 'text-indigo-600' : 'text-slate-400'} />
+                                <span className="flex-1 truncate text-[13px] font-semibold">{team.name}</span>
+                                {departmentUnreadCounts[team.id] ? <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{departmentUnreadCounts[team.id]}</span> : null}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="border-t border-slate-100 p-3">
+                    <p className="px-1 pb-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Agentes</p>
+                    <div className="space-y-0.5">
+                        {agents.map((agent) => (
+                            <div key={agent.id} className="flex items-center gap-2.5 rounded-lg px-3 py-1.5">
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[9px] font-black text-slate-600">{agent.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase()}</span>
+                                <span className="flex-1 truncate text-[13px] font-semibold text-slate-600">{agent.full_name}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </aside>
+
+            <section className={`${selectedTicket ? 'hidden md:flex' : 'flex'} h-full w-full md:w-[360px] shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white shadow-sm ${isFocusMode ? '!hidden' : ''}`}>
                 <div className="shrink-0 border-b border-slate-100 px-3 pb-3 pt-2">
-                    <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/90 p-3">
+                    <div className="space-y-2.5">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
                             <input
@@ -1853,84 +1918,27 @@ const SupportCommandCenter: React.FC = () => {
                             <span className="inline-flex items-center gap-2"><BarChart3 size={15} />Operación de agentes</span>
                             <span>{ticketStats.unassigned} pendientes</span>
                         </button>
-                        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4" aria-label="Filtros rápidos de tickets">
-                            <button
-                                type="button"
-                                onClick={() => { setQuickFilter('none'); setFilterSource('Todos'); setFilterStatus('Abierto'); }}
-                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${filterStatus === 'Abierto' && quickFilter === 'none' ? 'border-emerald-400 bg-emerald-50 text-emerald-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60'}`}
-                                aria-pressed={filterStatus === 'Abierto' && quickFilter === 'none'}
-                            >
-                                <CheckCircle2 className="shrink-0 text-emerald-600" size={18} />
-                                <span className="min-w-0"><span className="block text-xs font-bold">Abiertos</span><span className="text-lg font-black leading-none">{ticketStats.open}</span></span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('critical'); }}
-                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${quickFilter === 'critical' ? 'border-red-400 bg-red-50 text-red-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-red-300 hover:bg-red-50/60'}`}
-                                aria-pressed={quickFilter === 'critical'}
-                            >
-                                <AlertTriangle className="shrink-0 text-red-600" size={18} />
-                                <span className="min-w-0"><span className="block text-xs font-bold">Críticos</span><span className="text-lg font-black leading-none">{ticketStats.critical}</span></span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => { setQuickFilter('none'); setFilterStatus('Todos'); setFilterSource('Email'); }}
-                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${filterSource === 'Email' && quickFilter === 'none' ? 'border-violet-400 bg-violet-50 text-violet-800 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-violet-300 hover:bg-violet-50/60'}`}
-                                aria-pressed={filterSource === 'Email' && quickFilter === 'none'}
-                            >
-                                <Mail className="shrink-0 text-violet-600" size={18} />
-                                <span className="min-w-0"><span className="block text-xs font-bold">Email</span><span className="text-lg font-black leading-none">{ticketStats.email}</span></span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('unassigned'); }}
-                                className={`flex min-h-14 items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${quickFilter === 'unassigned' ? 'border-amber-400 bg-amber-50 text-amber-900 shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-amber-300 hover:bg-amber-50/60'}`}
-                                aria-pressed={quickFilter === 'unassigned'}
-                            >
-                                <UserPlus className="shrink-0 text-amber-600" size={18} />
-                                <span className="min-w-0"><span className="block text-xs font-bold">Sin asignar</span><span className="text-lg font-black leading-none">{ticketStats.unassigned}</span></span>
-                            </button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2" aria-label="Bandeja del HelpDesk">
-                            <button
-                                type="button"
-                                onClick={() => { setMailboxFilter('active'); setSelectedTicketIds([]); setSelectedTicket(null); }}
-                                className={`rounded-lg border px-3 py-2 text-xs font-bold ${mailboxFilter === 'active' ? 'border-indigo-400 bg-indigo-50 text-indigo-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-                            >
-                                Bandeja activa <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5">{ticketStats.active}</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => { setMailboxFilter('spam'); setSelectedTicketIds([]); setSelectedTicket(null); setFilterStatus('Todos'); setQuickFilter('none'); }}
-                                className={`rounded-lg border px-3 py-2 text-xs font-bold ${mailboxFilter === 'spam' ? 'border-red-400 bg-red-50 text-red-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-red-50'}`}
-                            >
-                                Spam <span className="ml-1 rounded-full bg-white/80 px-1.5 py-0.5">{ticketStats.spam}</span>
-                            </button>
-                        </div>
                         <div className="flex flex-wrap gap-1.5">
-                            {teams
-                                .filter((team) => actorDepartmentAccess.all || actorDepartmentAccess.ids.includes(team.id))
-                                .map((team) => (
-                                    <button
-                                        key={team.id}
-                                        type="button"
-                                        onClick={() => setFilterTeam((current) => current === team.id ? 'Todos' : team.id)}
-                                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold ${filterTeam === team.id ? 'border-indigo-400 bg-indigo-100 text-indigo-800' : 'border-slate-200 bg-white text-slate-600'}`}
-                                    >
-                                        <Bell size={10} />
-                                        {team.name}
-                                        {departmentUnreadCounts[team.id] ? <span className="rounded-full bg-indigo-600 px-1.5 text-white">{departmentUnreadCounts[team.id]}</span> : null}
-                                    </button>
-                                ))}
+                            <button type="button" onClick={() => { setQuickFilter('none'); setFilterStatus('Todos'); setFilterSource('Todos'); }} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${quickFilter === 'none' && filterStatus === 'Todos' && filterSource === 'Todos' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>Todos · {ticketStats.active}</button>
+                            <button type="button" onClick={() => { setQuickFilter('none'); setFilterSource('Todos'); setFilterStatus('Abierto'); }} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${filterStatus === 'Abierto' && quickFilter === 'none' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-emerald-50'}`}>Abiertos · {ticketStats.open}</button>
+                            <button type="button" onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('critical'); }} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${quickFilter === 'critical' ? 'border-red-600 bg-red-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-red-50'}`}>Críticos · {ticketStats.critical}</button>
+                            <button type="button" onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('unassigned'); }} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${quickFilter === 'unassigned' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-amber-50'}`}>Sin asignar · {ticketStats.unassigned}</button>
                         </div>
-                        <div className="flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                            <span className="flex items-center gap-2"><Filter size={12} />Filtros</span>
-                            <button type="button" onClick={() => setShowAdvancedFilters((current) => !current)} className="rounded px-1.5 py-1 text-indigo-600 hover:bg-indigo-50">
-                                {showAdvancedFilters ? 'Menos' : 'Más filtros'}
+                        <div className="flex items-center justify-between gap-2">
+                            <button type="button" onClick={() => setShowAdvancedFilters((current) => !current)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
+                                <Filter size={13} />
+                                Filtros
+                                <ChevronDown size={13} className={showAdvancedFilters ? 'rotate-180 transition-transform' : 'transition-transform'} />
                             </button>
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                                <span>Ordenar</span>
+                                <select value={ticketSort} onChange={(event) => setTicketSort(event.target.value as HelpdeskTicketSortKey)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 outline-none focus:border-indigo-400">
+                                    {ticketSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                </select>
+                            </div>
                         </div>
-
-                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                        {showAdvancedFilters ? (
+                        <div className="grid gap-2 sm:grid-cols-2">
                             <div>
                                 <label className="mb-1.5 block text-[11px] font-semibold text-slate-600" htmlFor="estado-ticket">
                                     Estado
@@ -1989,20 +1997,8 @@ const SupportCommandCenter: React.FC = () => {
                                 </select>
                             </div>
 
-                            <div>
-                                <label className="mb-1.5 block text-[11px] font-semibold text-slate-600" htmlFor="orden-ticket">
-                                    Ordenar por
-                                </label>
-                                <select
-                                    id="orden-ticket"
-                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                                    value={ticketSort}
-                                    onChange={(event) => setTicketSort(event.target.value as HelpdeskTicketSortKey)}
-                                >
-                                    {ticketSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                                </select>
-                            </div>
                         </div>
+                        ) : null}
 
                         {showAdvancedFilters ? (
                             <div className="grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-2">
@@ -2088,22 +2084,13 @@ const SupportCommandCenter: React.FC = () => {
                     </div>
                 )}
 
-                <div className="min-h-0 flex-1 overflow-auto bg-slate-50/60 p-3 md:p-4">
+                <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 p-2.5">
                     {filteredTickets.length === 0 ? (
                         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                             No hay tickets con los filtros seleccionados.
                         </div>
                     ) : null}
-                    {filteredTickets.length > 0 ? (
-                        <div className="mb-1 hidden min-w-[980px] grid-cols-[minmax(360px,2fr)_minmax(180px,1fr)_110px_130px_150px] gap-4 rounded-t-xl border border-slate-200 bg-slate-100 px-12 py-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 md:grid">
-                            <span>Empresa / ticket / conversación</span>
-                            <span>Asignación</span>
-                            <span>Prioridad</span>
-                            <span>Estado / canal</span>
-                            <span className="text-right">Última actividad</span>
-                        </div>
-                    ) : null}
-                    <div className="min-w-0 space-y-1 md:min-w-[980px]">
+                    <div className="min-w-0 space-y-1.5">
                     {organizedTickets.map((ticket) => {
                         const preview = lastMessageByTicketId[ticket.id];
                         const previewText = preview?.message
@@ -2115,43 +2102,41 @@ const SupportCommandCenter: React.FC = () => {
                         const isSelected = selectedTicket?.id === ticket.id;
 
                         return (
-                            <div key={ticket.id} className={`group flex min-w-0 items-stretch overflow-hidden rounded-lg border transition-all ${getTicketListCardClass(ticket, isSelected, emphasizeClosed)}`}>
-                                <label className="flex w-10 shrink-0 cursor-pointer items-center justify-center border-r border-inherit bg-white/40" title={`Seleccionar ${getTicketNumberLabel(ticket)}`}>
+                            <div key={ticket.id} className={`group flex min-w-0 items-stretch overflow-hidden rounded-xl border transition-all ${getTicketListCardClass(ticket, isSelected, emphasizeClosed)}`}>
+                                <label className="flex w-9 shrink-0 cursor-pointer items-center justify-center border-r border-slate-200/70 bg-white/40" title={`Seleccionar ${getTicketNumberLabel(ticket)}`}>
                                     <input
                                         type="checkbox"
                                         checked={selectedTicketIds.includes(ticket.id)}
                                         onChange={(event) => setSelectedTicketIds((current) => event.target.checked ? [...current, ticket.id] : current.filter((id) => id !== ticket.id))}
                                         aria-label={`Seleccionar ${getTicketNumberLabel(ticket)}`}
-                                        className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                                        className="h-4 w-4 rounded border-slate-300 text-indigo-600"
                                     />
                                 </label>
-                                <button type="button" onClick={() => setSelectedTicket(ticket)} className="grid min-w-0 flex-1 grid-cols-1 gap-3 px-3 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 md:grid-cols-[minmax(320px,2fr)_minmax(180px,1fr)_110px_130px_150px] md:items-center md:gap-4">
-                                    <div className="min-w-0">
-                                        <div className="flex min-w-0 items-center gap-2">
-                                            {ticket.is_unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-indigo-600 ring-4 ring-indigo-100" aria-label="Ticket nuevo" /> : null}
-                                            <span className="shrink-0 text-xs font-black text-slate-500">{getTicketNumberLabel(ticket)}</span>
-                                            {ticket.is_unread ? <span className="shrink-0 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-indigo-700">Nuevo</span> : null}
-                                            <span className="inline-flex min-w-0 max-w-[45%] shrink items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-black text-indigo-800" title={`Empresa: ${getHelpdeskCompanyName(ticket)}`}>
-                                                <Building2 size={11} className="shrink-0" />
-                                                <span className="truncate">{getHelpdeskCompanyName(ticket)}</span>
-                                            </span>
-                                            <h3 className={`truncate text-sm ${ticket.is_unread ? 'font-black text-slate-950' : 'font-bold text-slate-800'}`}>{ticket.subject}</h3>
-                                        </div>
-                                        <p className="mt-1 truncate text-xs font-semibold text-slate-600">Contacto: {getContactLabel(ticket)}</p>
-                                        <p className={`mt-1 truncate text-xs ${ticket.is_unread ? 'font-medium text-slate-700' : 'text-slate-500'}`}>
-                                            {preview ? <><span className="font-semibold">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}{previewText}</> : previewText}
-                                        </p>
+                                <button type="button" onClick={() => setSelectedTicket(ticket)} className="min-w-0 flex-1 px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500">
+                                    <div className="flex min-w-0 items-center gap-1.5">
+                                        {ticket.is_unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-indigo-600" aria-label="Ticket nuevo" /> : <span className="h-2 w-2 shrink-0 rounded-full bg-slate-300" />}
+                                        <span className="shrink-0 text-[11px] font-black text-slate-400">{getTicketNumberLabel(ticket)}</span>
+                                        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${getPriorityBadgeClass(ticket.priority)}`}>{urgent ? <AlertTriangle size={10} /> : null}{ticket.priority}</span>
+                                        <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-400"><Clock3 size={11} />{formatTime(getHelpdeskLastActivityAt(ticket, preview?.created_at))}</span>
                                     </div>
-                                    <div className="min-w-0 text-xs">
-                                        <p className="truncate font-bold text-indigo-700">{ticket.support_team?.name || 'Sin departamento'}</p>
-                                        <p className="mt-1 truncate text-slate-500">{ticket.assignee?.full_name || 'Sin persona asignada'}</p>
+                                    <h3 className={`mt-1 truncate text-sm ${ticket.is_unread ? 'font-black text-slate-950' : 'font-bold text-slate-800'}`}>{ticket.subject}</h3>
+                                    <p className="mt-0.5 flex min-w-0 items-center gap-1 truncate text-xs font-semibold text-slate-500">
+                                        <Building2 size={11} className="shrink-0 text-indigo-500" />
+                                        <span className="truncate">{getHelpdeskCompanyName(ticket)}</span>
+                                        <span className="shrink-0 text-slate-300">·</span>
+                                        <span className="truncate">{getContactLabel(ticket)}</span>
+                                    </p>
+                                    <p className={`mt-1 truncate text-xs ${ticket.is_unread ? 'font-medium text-slate-700' : 'text-slate-500'}`}>
+                                        {preview ? <><span className="font-semibold">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}{previewText}</> : previewText}
+                                    </p>
+                                    <div className="mt-2 flex items-center gap-1.5">
+                                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${closed ? 'border-slate-300 bg-slate-100 text-slate-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{closed ? 'Cerrado' : formatStatusLabel(ticket.status)}</span>
+                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>{ticket.source === 'Email' ? <Mail size={10} /> : <MonitorSmartphone size={10} />}{ticket.source}</span>
+                                        <span className="ml-auto flex min-w-0 items-center gap-1.5">
+                                            <span className="truncate text-[11px] font-bold text-indigo-700">{ticket.support_team?.name || 'Sin departamento'}</span>
+                                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[9px] font-black text-indigo-700">{ticket.assignee ? ticket.assignee.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase() : '—'}</span>
+                                        </span>
                                     </div>
-                                    <div><span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold ${getPriorityBadgeClass(ticket.priority)}`}>{urgent ? <AlertTriangle size={10} /> : null}{ticket.priority}</span></div>
-                                    <div className="flex flex-wrap gap-1.5 md:block">
-                                        <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold ${closed ? 'border-slate-300 bg-slate-100 text-slate-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{closed ? 'Cerrado' : formatStatusLabel(ticket.status)}</span>
-                                        <span className={`ml-0 inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold md:ml-1 ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>{ticket.source === 'Email' ? <Mail size={10} /> : <MonitorSmartphone size={10} />}{ticket.source}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1 text-xs font-medium text-slate-500 md:justify-end"><Clock3 size={12} />{formatTime(getHelpdeskLastActivityAt(ticket, preview?.created_at))}</div>
                                 </button>
                             </div>
                         );
@@ -2161,15 +2146,8 @@ const SupportCommandCenter: React.FC = () => {
             </section>
 
             {selectedTicket ? (
-            <div
-                className="fixed inset-0 z-40 flex bg-slate-950/45 p-0 backdrop-blur-[1px] md:p-3"
-                onMouseDown={(event) => {
-                    if (event.target === event.currentTarget) setSelectedTicket(null);
-                }}
-            >
-            <div role="dialog" aria-modal="true" aria-label={`Ticket ${getTicketNumberLabel(selectedTicket)}`} className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] overflow-hidden bg-white shadow-2xl md:rounded-2xl md:border md:border-slate-200">
-            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-white">
-                {selectedTicket ? (
+            <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-50">
+                <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-slate-50">
                     <>
                         <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-4">
                             <div className="flex items-start justify-between gap-4">
@@ -2565,16 +2543,10 @@ const SupportCommandCenter: React.FC = () => {
                             </div>
                         </div>
                     </>
-                ) : (
-                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center bg-slate-50 text-slate-400">
-                        <MessageSquare className="mb-4 text-slate-300" size={56} />
-                        <p className="font-medium text-slate-600">Selecciona un ticket para comenzar</p>
-                    </div>
-                )}
-            </main>
+                </main>
 
             {selectedTicket && showContextPanel && !isFocusMode && (
-                <aside className="flex min-h-0 w-[300px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+                <aside className="flex min-h-0 w-[280px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
                     <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 p-4">
                         <div>
                             <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800">Contexto</h3>
@@ -2807,9 +2779,13 @@ const SupportCommandCenter: React.FC = () => {
                     </div>
                 </aside>
             )}
-            </div>
-            </div>
-            ) : null}
+            </section>
+            ) : (
+            <section className="hidden min-w-0 flex-1 flex-col items-center justify-center bg-slate-50 text-slate-400 md:flex">
+                <MessageSquare className="mb-4 text-slate-300" size={56} />
+                <p className="font-medium text-slate-600">Selecciona un ticket para comenzar</p>
+            </section>
+            )}
 
             {isAssignmentDashboardOpen && (
                 <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 p-3" role="dialog" aria-modal="true" aria-labelledby="assignment-dashboard-title">
