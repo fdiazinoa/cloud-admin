@@ -195,27 +195,6 @@ export const Dashboard: React.FC = () => {
                 </div>
             </section>
 
-            <section className={`rounded-2xl border p-5 shadow-sm ${stats.inactiveTenants.length ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-start gap-3">
-                        <div className={`rounded-xl p-2 ${stats.inactiveTenants.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}><AlertCircle size={22} /></div>
-                        <div><h3 className="font-black text-slate-900">Alerta de inactividad</h3><p className="mt-1 text-sm text-slate-600">Tenants con sincronización esperada y más de 3 días sin actividad.</p></div>
-                    </div>
-                    <span className={`w-max rounded-full px-3 py-1 text-xs font-black ${stats.inactiveTenants.length ? 'bg-amber-200 text-amber-800' : 'bg-emerald-200 text-emerald-800'}`}>{stats.inactiveTenants.length} requieren seguimiento</span>
-                </div>
-                {stats.inactiveTenants.length ? (
-                    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                        {stats.inactiveTenants.map((tenant) => (
-                            <Link key={tenant.tenantId} to="/tenants" className="rounded-xl border border-amber-200 bg-white p-3 transition hover:border-amber-300 hover:shadow-sm">
-                                <p className="truncate text-sm font-black text-slate-800">{tenant.tenantName}</p>
-                                <p className="mt-1 text-xs font-bold text-amber-700">{tenant.daysInactive} días sin actividad</p>
-                                <p className="mt-1 text-[10px] text-slate-400">Última señal: {tenant.lastActivityAt ? formatDateTime(tenant.lastActivityAt) : 'Nunca sincronizó'}</p>
-                            </Link>
-                        ))}
-                    </div>
-                ) : <p className="mt-4 text-sm font-semibold text-emerald-800">No hay clientes inactivos según el umbral actual.</p>}
-            </section>
-
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 glass-card rounded-2xl p-6">
                     <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-8">
