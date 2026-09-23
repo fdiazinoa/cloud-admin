@@ -37,6 +37,10 @@ export interface AdminNavigationItem {
     sensitive?: boolean;
 }
 
+export type AdminNavigationGroup = 'principal' | 'operacion' | 'administracion' | 'seguridad';
+
+export const adminNavigationGroupOrder: AdminNavigationGroup[] = ['principal', 'operacion', 'administracion', 'seguridad'];
+
 export interface AdminNavigationModule {
     id: string;
     label: string;
@@ -48,6 +52,12 @@ export interface AdminNavigationModule {
     keywords?: string[];
     sensitive?: boolean;
     items?: AdminNavigationItem[];
+    /** Agrupación visual dentro del Rail. */
+    group: AdminNavigationGroup;
+    /** Si es principal, el Rail muestra su nombre debajo del icono. */
+    primary?: boolean;
+    /** Nombre corto para el Rail (debajo del icono). */
+    shortLabel?: string;
 }
 
 export const adminNavigationModules: AdminNavigationModule[] = [
@@ -58,6 +68,9 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/',
         icon: LayoutDashboard,
         permission: 'dashboard_view',
+        group: 'principal',
+        primary: true,
+        shortLabel: 'Inicio',
         keywords: ['inicio', 'home', 'métricas', 'resumen', 'altas', 'operación'],
     },
     {
@@ -67,6 +80,9 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/tenants',
         icon: Users,
         permission: 'tenants_view',
+        group: 'principal',
+        primary: true,
+        shortLabel: 'Tenants',
         keywords: ['empresas', 'cuentas', 'suscripciones', 'alta', 'tenant'],
     },
     {
@@ -76,6 +92,9 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/clientes',
         icon: Building2,
         permission: 'tenants_view',
+        group: 'principal',
+        primary: true,
+        shortLabel: 'Clientes',
         keywords: ['contactos', 'servicios', 'sucursales', 'registro', 'cliente'],
     },
     {
@@ -85,6 +104,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/plans',
         icon: BadgeDollarSign,
         permission: 'plans_view',
+        group: 'operacion',
         keywords: ['precios', 'suscripciones', 'licencias', 'plan', 'facturación'],
     },
     {
@@ -94,6 +114,9 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/pos-apk',
         icon: Smartphone,
         permission: 'apk_view',
+        group: 'principal',
+        primary: true,
+        shortLabel: 'APK POS',
         keywords: ['android', 'versión', 'publicar', 'descargas', 'terminales', 'apk'],
     },
     {
@@ -103,6 +126,9 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/support',
         icon: Headset,
         permission: 'support_view',
+        group: 'principal',
+        primary: true,
+        shortLabel: 'Helpdesk',
         keywords: ['tickets', 'bandeja', 'soporte', 'correo', 'helpdesk', 'conversaciones'],
     },
     {
@@ -112,6 +138,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/calendario',
         icon: CalendarDays,
         permission: 'calendar_view',
+        group: 'operacion',
         keywords: ['agenda', 'calendario', 'reuniones', 'implementación', 'onboarding'],
     },
     {
@@ -121,6 +148,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/solicitudes',
         icon: ClipboardList,
         permission: 'internal_requests_view',
+        group: 'operacion',
         keywords: ['mejoras', 'internas', 'producto', 'solicitud', 'requerimientos'],
     },
     {
@@ -130,6 +158,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/configuracion',
         icon: Settings,
         permission: 'settings_view',
+        group: 'administracion',
         keywords: ['parámetros', 'ajustes', 'preferencias', 'integración', 'configurar'],
     },
     {
@@ -139,6 +168,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/observabilidad',
         icon: Activity,
         permission: 'observability_view',
+        group: 'administracion',
         keywords: ['monitoreo', 'eventos', 'logs', 'salud', 'métricas', 'operación'],
     },
     {
@@ -148,6 +178,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/accesos',
         icon: UserCog,
         permission: 'users_view',
+        group: 'administracion',
         keywords: ['usuarios', 'perfiles', 'permisos', 'accesos', 'roles'],
     },
     {
@@ -157,6 +188,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/kill-switch',
         icon: ShieldPlus,
         permission: 'kill_switch_execute',
+        group: 'seguridad',
         keywords: ['seguridad', 'bloqueo', 'crítico', 'emergencia'],
         sensitive: true,
     },
