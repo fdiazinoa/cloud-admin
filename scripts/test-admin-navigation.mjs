@@ -13,13 +13,13 @@ const [config, app, layout, rail, overlay, preferences, types] = await Promise.a
     read('src/types.ts'),
 ]);
 
-// 1. Rail ocupa ~72px y es fijo en escritorio.
-assert.ok(rail.includes('w-[72px]'), 'Rail must be 72px wide');
+// 1. Rail ocupa ~84px y es fijo en escritorio.
+assert.ok(rail.includes('w-[84px]'), 'Rail must be 84px wide');
 assert.ok(rail.includes('hidden') && rail.includes('md:flex'), 'Rail must be hidden on mobile and visible on desktop');
 
 // 2. El overlay es flotante (absolute) y NO cambia el ancho del contenido.
 assert.ok(overlay.includes('absolute'), 'Overlay must be absolutely positioned over content');
-assert.ok(overlay.includes('left-[72px]'), 'Overlay must anchor to the 72px rail');
+assert.ok(overlay.includes('left-[84px]'), 'Overlay must anchor to the 84px rail');
 assert.ok(overlay.includes('z-40'), 'Overlay must layer above content');
 assert.ok(overlay.includes('w-[300px]'), 'Overlay must use a fixed width (not stretch the content)');
 
@@ -81,11 +81,16 @@ assert.ok((rail + overlay).includes('motion-reduce'), 'Navigation must respect p
 assert.ok(rail.includes('aria-expanded'), 'Rail buttons must expose aria-expanded');
 assert.ok(rail.includes('aria-current'), 'Rail buttons must expose aria-current');
 
-// 10. Agrupación del Rail: principales con nombre bajo el icono.
-assert.ok(config.includes("group: 'principal'"), 'Navigation config must group primary modules');
-assert.ok(config.includes('primary: true'), 'Navigation config must mark primary modules');
-assert.ok(config.includes('shortLabel:'), 'Primary modules must declare a short label');
+// 10. Agrupación del Rail: secciones con leyenda y nombre bajo cada icono.
+assert.ok(config.includes("group: 'inicio'"), 'Navigation config must have the inicio group');
+assert.ok(config.includes("group: 'operacion'"), 'Navigation config must have the operacion group');
+assert.ok(config.includes("group: 'clientes'"), 'Navigation config must have the clientes group');
+assert.ok(config.includes("group: 'administracion'"), 'Navigation config must have the administracion group');
+assert.ok(config.includes("group: 'seguridad'"), 'Navigation config must have the seguridad group');
+assert.ok(config.includes('adminNavigationGroupLabels'), 'Navigation config must declare group labels');
+assert.equal((config.match(/shortLabel: '/g) || []).length, 12, 'All 12 modules must declare a short label');
 assert.ok(rail.includes('adminNavigationGroupOrder'), 'Rail must group by adminNavigationGroupOrder');
-assert.ok(rail.includes('shortLabel'), 'Rail must render the short label under primary icons');
+assert.ok(rail.includes('adminNavigationGroupLabels'), 'Rail must render section headers');
+assert.ok(rail.includes('shortLabel'), 'Rail must render the short label under every icon');
 
 console.log('Admin navigation contracts: OK');
