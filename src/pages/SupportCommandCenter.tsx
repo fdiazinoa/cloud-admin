@@ -1241,6 +1241,11 @@ const SupportCommandCenter: React.FC = () => {
         return messages.filter((message) => message.message.toLocaleLowerCase('es').includes(needle));
     }, [conversationSearch, messages]);
 
+    const originalThreadCc = useMemo(() => {
+        const inbound = [...messages].reverse().find((message) => message.sender_type === 'Client');
+        return Array.from(new Set((inbound?.cc ?? []).map((email) => email.trim().toLowerCase()).filter(Boolean)));
+    }, [messages]);
+
     const ticketTimeline = useMemo(() => {
         if (!selectedTicket) return null;
         const publicMessages = messages.filter((message) => message.visibility !== 'private');
@@ -1392,6 +1397,11 @@ const SupportCommandCenter: React.FC = () => {
 
         const recipientEmail = getTicketRecipientEmail(selectedTicket);
         const messageText = text || 'Imagen adjunta enviada por soporte.';
+        const recipientKey = recipientEmail.trim().toLowerCase();
+        const mergedCc = replyMode === 'forward'
+            ? parseEmailList(ccText)
+            : Array.from(new Set([...originalThreadCc, ...parseEmailList(ccText)].map((email) => email.trim().toLowerCase())))
+                .filter((email) => email && email !== recipientKey);
         const savedReplyText = replyText;
         const savedAttachments = pendingReplyAttachments;
 
@@ -1415,7 +1425,7 @@ const SupportCommandCenter: React.FC = () => {
                     message: messageText,
                     attachments: uploadedAttachments,
                     mode: replyMode,
-                    cc: parseEmailList(ccText),
+                    cc: mergedCc,
                     bcc: parseEmailList(bccText),
                     forwardTo,
                 });
@@ -1830,72 +1840,76 @@ const SupportCommandCenter: React.FC = () => {
 
     return (
         <div className="relative flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
-            <aside className={`hidden w-[208px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white md:flex ${isFocusMode ? '!hidden' : ''}`}>
-                <div className="p-3">
-                    <p className="px-1 pb-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Bandejas</p>
+            <aside className={`hidden w-[56px] xl:w-[200px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white md:flex ${isFocusMode ? '!hidden' : ''}`}>
+                <div className="p-2 xl:p-3">
+                    <p className="hidden pb-1.5 pl-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 xl:block">Bandejas</p>
                     <div className="space-y-1">
                         <button
                             type="button"
+                            title="Bandeja activa"
                             onClick={() => { setMailboxFilter('active'); setSelectedTicketIds([]); setSelectedTicket(null); setQuickFilter('none'); }}
-                            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${mailboxFilter === 'active' && quickFilter === 'none' ? 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200' : 'text-slate-600 hover:bg-slate-50'}`}
+                            className={`flex w-full items-center justify-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors xl:justify-start xl:px-3 ${mailboxFilter === 'active' && quickFilter === 'none' ? 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200' : 'text-slate-600 hover:bg-slate-50'}`}
                         >
-                            <Mail size={15} className={mailboxFilter === 'active' && quickFilter === 'none' ? 'text-indigo-600' : 'text-slate-400'} />
-                            <span className="flex-1 truncate text-[13px] font-bold">Bandeja activa</span>
-                            <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{ticketStats.active}</span>
+                            <Mail size={16} className={mailboxFilter === 'active' && quickFilter === 'none' ? 'text-indigo-600' : 'text-slate-400'} />
+                            <span className="hidden flex-1 truncate text-[13px] font-bold xl:inline">Bandeja activa</span>
+                            <span className="hidden rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white xl:inline-flex">{ticketStats.active}</span>
                         </button>
                         <button
                             type="button"
+                            title="Sin asignar"
                             onClick={() => { setQuickFilter('unassigned'); setMailboxFilter('active'); setFilterStatus('Todos'); setFilterSource('Todos'); setSelectedTicketIds([]); setSelectedTicket(null); }}
-                            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${mailboxFilter === 'active' && quickFilter === 'unassigned' ? 'bg-amber-50 text-amber-900 ring-1 ring-amber-200' : 'text-slate-600 hover:bg-slate-50'}`}
+                            className={`flex w-full items-center justify-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors xl:justify-start xl:px-3 ${mailboxFilter === 'active' && quickFilter === 'unassigned' ? 'bg-amber-50 text-amber-900 ring-1 ring-amber-200' : 'text-slate-600 hover:bg-slate-50'}`}
                         >
-                            <UserPlus size={15} className={mailboxFilter === 'active' && quickFilter === 'unassigned' ? 'text-amber-600' : 'text-slate-400'} />
-                            <span className="flex-1 truncate text-[13px] font-bold">Sin asignar</span>
-                            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{ticketStats.unassigned}</span>
+                            <UserPlus size={16} className={mailboxFilter === 'active' && quickFilter === 'unassigned' ? 'text-amber-600' : 'text-slate-400'} />
+                            <span className="hidden flex-1 truncate text-[13px] font-bold xl:inline">Sin asignar</span>
+                            <span className="hidden rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 xl:inline-flex">{ticketStats.unassigned}</span>
                         </button>
                         <button
                             type="button"
+                            title="Spam"
                             onClick={() => { setMailboxFilter('spam'); setSelectedTicketIds([]); setSelectedTicket(null); setFilterStatus('Todos'); setQuickFilter('none'); }}
-                            className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${mailboxFilter === 'spam' ? 'bg-red-50 text-red-900 ring-1 ring-red-200' : 'text-slate-600 hover:bg-slate-50'}`}
+                            className={`flex w-full items-center justify-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors xl:justify-start xl:px-3 ${mailboxFilter === 'spam' ? 'bg-red-50 text-red-900 ring-1 ring-red-200' : 'text-slate-600 hover:bg-slate-50'}`}
                         >
-                            <AlertTriangle size={15} className={mailboxFilter === 'spam' ? 'text-red-500' : 'text-slate-400'} />
-                            <span className="flex-1 truncate text-[13px] font-bold">Spam</span>
-                            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">{ticketStats.spam}</span>
+                            <AlertTriangle size={16} className={mailboxFilter === 'spam' ? 'text-red-500' : 'text-slate-400'} />
+                            <span className="hidden flex-1 truncate text-[13px] font-bold xl:inline">Spam</span>
+                            <span className="hidden rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 xl:inline-flex">{ticketStats.spam}</span>
                         </button>
                     </div>
                 </div>
 
-                <div className="border-t border-slate-100 p-3">
-                    <p className="px-1 pb-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Departamentos</p>
+                <div className="border-t border-slate-100 p-2 xl:p-3">
+                    <p className="hidden pb-1.5 pl-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 xl:block">Departamentos</p>
                     <div className="space-y-0.5">
                         {teams.filter((team) => actorDepartmentAccess.all || actorDepartmentAccess.ids.includes(team.id)).map((team) => (
                             <button
                                 key={team.id}
                                 type="button"
+                                title={team.name}
                                 onClick={() => setFilterTeam((current) => current === team.id ? 'Todos' : team.id)}
-                                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left transition-colors ${filterTeam === team.id ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}
+                                className={`flex w-full items-center justify-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors xl:justify-start xl:px-3 ${filterTeam === team.id ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}
                             >
-                                <Bell size={13} className={filterTeam === team.id ? 'text-indigo-600' : 'text-slate-400'} />
-                                <span className="flex-1 truncate text-[13px] font-semibold">{team.name}</span>
-                                {departmentUnreadCounts[team.id] ? <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{departmentUnreadCounts[team.id]}</span> : null}
+                                <Bell size={14} className={filterTeam === team.id ? 'text-indigo-600' : 'text-slate-400'} />
+                                <span className="hidden flex-1 truncate text-[13px] font-semibold xl:inline">{team.name}</span>
+                                {departmentUnreadCounts[team.id] ? <span className="hidden rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white xl:inline-flex">{departmentUnreadCounts[team.id]}</span> : null}
                             </button>
                         ))}
                     </div>
                 </div>
 
-                <div className="border-t border-slate-100 p-3">
-                    <p className="px-1 pb-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Agentes</p>
+                <div className="border-t border-slate-100 p-2 xl:p-3">
+                    <p className="hidden pb-1.5 pl-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 xl:block">Agentes</p>
                     <div className="space-y-0.5">
                         {agents.map((agent) => (
-                            <div key={agent.id} className="flex items-center gap-2.5 rounded-lg px-3 py-1.5">
-                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[9px] font-black text-slate-600">{agent.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase()}</span>
-                                <span className="flex-1 truncate text-[13px] font-semibold text-slate-600">{agent.full_name}</span>
+                            <div key={agent.id} title={agent.full_name} className="flex items-center justify-center gap-2.5 rounded-lg px-2 py-1.5 xl:justify-start xl:px-3">
+                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[9px] font-black text-slate-600">{agent.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase()}</span>
+                                <span className="hidden flex-1 truncate text-[13px] font-semibold text-slate-600 xl:inline">{agent.full_name}</span>
                             </div>
                         ))}
                     </div>
                 </div>
             </aside>
 
-            <section className={`${selectedTicket ? 'hidden md:flex' : 'flex'} h-full w-full md:w-[360px] shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white shadow-sm ${isFocusMode ? '!hidden' : ''}`}>
+            <section className={`${selectedTicket ? 'hidden md:flex' : 'flex'} h-full w-full md:w-[340px] 2xl:w-[360px] shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white shadow-sm ${isFocusMode ? '!hidden' : ''}`}>
                 <div className="shrink-0 border-b border-slate-100 px-3 pb-3 pt-2">
                     <div className="space-y-2.5">
                         <div className="relative">
@@ -2146,7 +2160,7 @@ const SupportCommandCenter: React.FC = () => {
             </section>
 
             {selectedTicket ? (
-            <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-50">
+            <section className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-slate-50">
                 <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-slate-50">
                     <>
                         <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-4">
@@ -2415,7 +2429,7 @@ const SupportCommandCenter: React.FC = () => {
                                 )}
                                 <div className="mb-3 flex flex-wrap items-center gap-2">
                                     <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(false); setReplyMode('reply'); setShowReplyOptions(false); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && !isPrivateNote && replyMode === 'reply' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Send size={12} /> Responder</button>
-                                    <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(false); setReplyMode('reply_all'); setShowReplyOptions(true); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && !isPrivateNote && replyMode === 'reply_all' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><ReplyAll size={12} /> Responder a todos</button>
+                                    <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(false); setReplyMode('reply_all'); setShowReplyOptions(true); setCcText(originalThreadCc.join(', ')); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && !isPrivateNote && replyMode === 'reply_all' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><ReplyAll size={12} /> Responder a todos</button>
                                     <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(false); setReplyMode('forward'); setShowReplyOptions(true); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && replyMode === 'forward' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600'}`}><Forward size={12} /> Reenviar</button>
                                     <button type="button" onClick={() => { setIsComposerOpen(true); setIsPrivateNote(true); setReplyMode('reply'); setShowReplyOptions(false); }} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${isComposerOpen && isPrivateNote ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-slate-200 text-slate-600'}`}><StickyNote size={12} /> Nota interna</button>
                                     <FileText className="ml-auto text-slate-400" size={14} />
@@ -2546,7 +2560,9 @@ const SupportCommandCenter: React.FC = () => {
                 </main>
 
             {selectedTicket && showContextPanel && !isFocusMode && (
-                <aside className="flex min-h-0 w-[280px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white">
+                <>
+                <div className="absolute inset-0 z-10 bg-slate-950/30 2xl:hidden" onClick={() => setShowContextPanel(false)} aria-hidden="true" />
+                <aside className="absolute inset-y-0 right-0 z-20 flex w-[300px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl 2xl:static 2xl:z-auto 2xl:w-[260px] 2xl:shadow-none">
                     <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 p-4">
                         <div>
                             <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800">Contexto</h3>
@@ -2778,6 +2794,7 @@ const SupportCommandCenter: React.FC = () => {
                         </section>
                     </div>
                 </aside>
+                </>
             )}
             </section>
             ) : (
