@@ -47,6 +47,7 @@
     "test:knowledge-center": "node scripts/test-knowledge-center.mjs",
     "test:calendar-meetings": "node scripts/test-calendar-meetings.mjs",
     "test:erp-module-licensing": "node --experimental-strip-types scripts/test-erp-module-licensing.mjs",
+    "test:admin-navigation": "node scripts/test-admin-navigation.mjs",
     "check:supabase-keys": "node scripts/check-supabase-keys.mjs",
     "verify:supabase-security": "node scripts/verify-supabase-security.mjs"
   },
