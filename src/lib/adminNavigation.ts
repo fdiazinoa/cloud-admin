@@ -37,9 +37,17 @@ export interface AdminNavigationItem {
     sensitive?: boolean;
 }
 
-export type AdminNavigationGroup = 'principal' | 'operacion' | 'administracion' | 'seguridad';
+export type AdminNavigationGroup = 'inicio' | 'operacion' | 'clientes' | 'administracion' | 'seguridad';
 
-export const adminNavigationGroupOrder: AdminNavigationGroup[] = ['principal', 'operacion', 'administracion', 'seguridad'];
+export const adminNavigationGroupOrder: AdminNavigationGroup[] = ['inicio', 'operacion', 'clientes', 'administracion', 'seguridad'];
+
+export const adminNavigationGroupLabels: Record<AdminNavigationGroup, string> = {
+    inicio: '',
+    operacion: 'Operación',
+    clientes: 'Clientes',
+    administracion: 'Admin.',
+    seguridad: 'Seguridad',
+};
 
 export interface AdminNavigationModule {
     id: string;
@@ -54,10 +62,8 @@ export interface AdminNavigationModule {
     items?: AdminNavigationItem[];
     /** Agrupación visual dentro del Rail. */
     group: AdminNavigationGroup;
-    /** Si es principal, el Rail muestra su nombre debajo del icono. */
-    primary?: boolean;
-    /** Nombre corto para el Rail (debajo del icono). */
-    shortLabel?: string;
+    /** Nombre corto que se muestra debajo del icono en el Rail. */
+    shortLabel: string;
 }
 
 export const adminNavigationModules: AdminNavigationModule[] = [
@@ -68,10 +74,53 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/',
         icon: LayoutDashboard,
         permission: 'dashboard_view',
-        group: 'principal',
-        primary: true,
+        group: 'inicio',
         shortLabel: 'Inicio',
         keywords: ['inicio', 'home', 'métricas', 'resumen', 'altas', 'operación'],
+    },
+    {
+        id: 'support',
+        label: 'Helpdesk & Soporte',
+        description: 'Bandeja de tickets y conversaciones de soporte.',
+        path: '/support',
+        icon: Headset,
+        permission: 'support_view',
+        group: 'operacion',
+        shortLabel: 'Helpdesk',
+        keywords: ['tickets', 'bandeja', 'soporte', 'correo', 'helpdesk', 'conversaciones'],
+    },
+    {
+        id: 'solicitudes',
+        label: 'Solicitudes',
+        description: 'Solicitudes internas y mejoras de producto.',
+        path: '/solicitudes',
+        icon: ClipboardList,
+        permission: 'internal_requests_view',
+        group: 'operacion',
+        shortLabel: 'Solicitudes',
+        keywords: ['mejoras', 'internas', 'producto', 'solicitud', 'requerimientos'],
+    },
+    {
+        id: 'calendario',
+        label: 'Implementaciones',
+        description: 'Calendario y agenda de implementaciones.',
+        path: '/calendario',
+        icon: CalendarDays,
+        permission: 'calendar_view',
+        group: 'operacion',
+        shortLabel: 'Agenda',
+        keywords: ['agenda', 'calendario', 'reuniones', 'implementación', 'onboarding'],
+    },
+    {
+        id: 'pos-apk',
+        label: 'APK POS',
+        description: 'Versiones, publicación y distribución del APK POS.',
+        path: '/pos-apk',
+        icon: Smartphone,
+        permission: 'apk_view',
+        group: 'operacion',
+        shortLabel: 'APK POS',
+        keywords: ['android', 'versión', 'publicar', 'descargas', 'terminales', 'apk'],
     },
     {
         id: 'tenants',
@@ -80,8 +129,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/tenants',
         icon: Users,
         permission: 'tenants_view',
-        group: 'principal',
-        primary: true,
+        group: 'clientes',
         shortLabel: 'Tenants',
         keywords: ['empresas', 'cuentas', 'suscripciones', 'alta', 'tenant'],
     },
@@ -92,8 +140,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/clientes',
         icon: Building2,
         permission: 'tenants_view',
-        group: 'principal',
-        primary: true,
+        group: 'clientes',
         shortLabel: 'Clientes',
         keywords: ['contactos', 'servicios', 'sucursales', 'registro', 'cliente'],
     },
@@ -104,52 +151,20 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         path: '/plans',
         icon: BadgeDollarSign,
         permission: 'plans_view',
-        group: 'operacion',
+        group: 'clientes',
+        shortLabel: 'Planes',
         keywords: ['precios', 'suscripciones', 'licencias', 'plan', 'facturación'],
     },
     {
-        id: 'pos-apk',
-        label: 'APK POS',
-        description: 'Versiones, publicación y distribución del APK POS.',
-        path: '/pos-apk',
-        icon: Smartphone,
-        permission: 'apk_view',
-        group: 'principal',
-        primary: true,
-        shortLabel: 'APK POS',
-        keywords: ['android', 'versión', 'publicar', 'descargas', 'terminales', 'apk'],
-    },
-    {
-        id: 'support',
-        label: 'Helpdesk & Soporte',
-        description: 'Bandeja de tickets y conversaciones de soporte.',
-        path: '/support',
-        icon: Headset,
-        permission: 'support_view',
-        group: 'principal',
-        primary: true,
-        shortLabel: 'Helpdesk',
-        keywords: ['tickets', 'bandeja', 'soporte', 'correo', 'helpdesk', 'conversaciones'],
-    },
-    {
-        id: 'calendario',
-        label: 'Implementaciones',
-        description: 'Calendario y agenda de implementaciones.',
-        path: '/calendario',
-        icon: CalendarDays,
-        permission: 'calendar_view',
-        group: 'operacion',
-        keywords: ['agenda', 'calendario', 'reuniones', 'implementación', 'onboarding'],
-    },
-    {
-        id: 'solicitudes',
-        label: 'Solicitudes',
-        description: 'Solicitudes internas y mejoras de producto.',
-        path: '/solicitudes',
-        icon: ClipboardList,
-        permission: 'internal_requests_view',
-        group: 'operacion',
-        keywords: ['mejoras', 'internas', 'producto', 'solicitud', 'requerimientos'],
+        id: 'accesos',
+        label: 'Usuarios y perfiles',
+        description: 'Usuarios administradores, perfiles y permisos.',
+        path: '/accesos',
+        icon: UserCog,
+        permission: 'users_view',
+        group: 'administracion',
+        shortLabel: 'Usuarios',
+        keywords: ['usuarios', 'perfiles', 'permisos', 'accesos', 'roles'],
     },
     {
         id: 'configuracion',
@@ -159,6 +174,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         icon: Settings,
         permission: 'settings_view',
         group: 'administracion',
+        shortLabel: 'Config',
         keywords: ['parámetros', 'ajustes', 'preferencias', 'integración', 'configurar'],
     },
     {
@@ -169,17 +185,8 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         icon: Activity,
         permission: 'observability_view',
         group: 'administracion',
+        shortLabel: 'Monitoreo',
         keywords: ['monitoreo', 'eventos', 'logs', 'salud', 'métricas', 'operación'],
-    },
-    {
-        id: 'accesos',
-        label: 'Usuarios y perfiles',
-        description: 'Usuarios administradores, perfiles y permisos.',
-        path: '/accesos',
-        icon: UserCog,
-        permission: 'users_view',
-        group: 'administracion',
-        keywords: ['usuarios', 'perfiles', 'permisos', 'accesos', 'roles'],
     },
     {
         id: 'kill-switch',
@@ -189,6 +196,7 @@ export const adminNavigationModules: AdminNavigationModule[] = [
         icon: ShieldPlus,
         permission: 'kill_switch_execute',
         group: 'seguridad',
+        shortLabel: 'Kill Switch',
         keywords: ['seguridad', 'bloqueo', 'crítico', 'emergencia'],
         sensitive: true,
     },

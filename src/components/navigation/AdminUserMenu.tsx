@@ -29,7 +29,7 @@ export function AdminUserMenu({
             <div
                 role="menu"
                 aria-label="Cuenta de usuario"
-                className="absolute bottom-3 left-[72px] z-40 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
+                className="absolute bottom-3 left-[84px] z-40 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl"
             >
                 <div className="border-b border-slate-100 px-4 py-3">
                     <p className="truncate text-sm font-black text-slate-900">{userName || 'Cloud Admin'}</p>

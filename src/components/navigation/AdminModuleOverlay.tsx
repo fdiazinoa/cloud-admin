@@ -70,7 +70,7 @@ export function AdminModuleOverlay({
             id="admin-module-overlay"
             role="dialog"
             aria-label={`Menú de ${module.label}`}
-            className={`absolute bottom-0 left-[72px] top-0 z-40 hidden w-[300px] shrink-0 flex-col border-r border-slate-200 bg-[#F8FAFC] shadow-xl shadow-slate-900/5 animate-[admin-overlay-in_200ms_ease-out] motion-reduce:animate-none md:flex ${
+            className={`absolute bottom-0 left-[84px] top-0 z-40 hidden w-[300px] shrink-0 flex-col border-r border-slate-200 bg-[#F8FAFC] shadow-xl shadow-slate-900/5 animate-[admin-overlay-in_200ms_ease-out] motion-reduce:animate-none md:flex ${
                 pinned ? 'min-[1440px]:static min-[1440px]:top-auto min-[1440px]:bottom-auto' : ''
             }`}
         >
