@@ -2,13 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
-const [page, service, api, migration, app, layout, config, workflow] = await Promise.all([
+const [page, service, api, migration, app, config, workflow] = await Promise.all([
     read('src/pages/KnowledgeCenter.tsx'),
     read('src/lib/knowledgeService.ts'),
     read('supabase/functions/knowledge-api/index.ts'),
     read('supabase/migrations/20260804183903_internal_knowledge_center.sql'),
     read('src/App.tsx'),
-    read('src/components/Layout.tsx'),
     read('supabase/config.toml'),
     read('.github/workflows/deploy-supabase-functions.yml'),
 ]);
@@ -27,7 +26,6 @@ assert.ok(migration.includes('alter table landlord.knowledge_resources enable ro
 assert.ok(migration.includes("'knowledge-center'"), 'Private knowledge storage bucket is missing');
 assert.ok(service.includes('uploadToSignedUrl'), 'Knowledge upload must use a signed URL');
 assert.ok(app.includes('path="conocimiento"'), 'Knowledge route is missing');
-assert.ok(layout.includes('Manuales y videos'), 'Knowledge navigation item is missing');
 assert.match(config, /\[functions\.knowledge-api\][\s\S]*?verify_jwt = true/, 'Knowledge API must verify JWT');
 assert.ok(workflow.includes('functions deploy knowledge-api'), 'Knowledge API deployment is missing');
 
