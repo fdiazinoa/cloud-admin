@@ -1,5 +1,5 @@
 import { Search, Settings } from 'lucide-react';
-import type { AdminNavigationModule } from '../../lib/adminNavigation';
+import { adminNavigationGroupOrder, type AdminNavigationModule } from '../../lib/adminNavigation';
 
 function getInitials(name: string | null | undefined, email: string | null | undefined): string {
     const source = name?.trim() || email?.split('@')[0] || 'AD';
@@ -58,33 +58,63 @@ export function AdminNavigationRail({
                 </button>
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto px-2 py-2">
-                {modules.map((module) => {
-                    const isActive = activeModuleId === module.id;
-                    const isOpen = overlayModuleId === module.id;
-                    return (
-                        <button
-                            key={module.id}
-                            type="button"
-                            onClick={() => onToggleModule(module.id)}
-                            className={`relative flex h-11 w-11 items-center justify-center rounded-xl transition-colors motion-reduce:transition-none ${
-                                isActive
-                                    ? 'bg-blue-600 text-white shadow-sm'
-                                    : 'text-slate-400 hover:bg-white/10 hover:text-white'
-                            }`}
-                            title={module.label}
-                            aria-label={module.label}
-                            aria-current={isActive ? 'page' : undefined}
-                            aria-expanded={isOpen}
-                            aria-controls="admin-module-overlay"
-                        >
-                            {isActive && (
-                                <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-blue-400" aria-hidden="true" />
-                            )}
-                            <module.icon size={20} aria-hidden="true" />
-                        </button>
-                    );
-                })}
+            <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-2 py-2">
+                {adminNavigationGroupOrder
+                    .map((group) => ({ group, groupModules: modules.filter((module) => module.group === group) }))
+                    .filter(({ groupModules }) => groupModules.length > 0)
+                    .map(({ group, groupModules }, index) => (
+                        <div key={group} className="flex w-full flex-col items-center">
+                            {index > 0 && <div className="my-2 h-px w-8 bg-slate-700/70" aria-hidden="true" />}
+                            <div className="flex w-full flex-col items-center gap-1">
+                                {groupModules.map((module) => {
+                                    const isActive = activeModuleId === module.id;
+                                    const isOpen = overlayModuleId === module.id;
+                                    const baseClass = `relative rounded-xl transition-colors motion-reduce:transition-none ${
+                                        isActive ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:bg-white/10 hover:text-white'
+                                    }`;
+                                    const activeAccent = isActive ? (
+                                        <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-blue-400" aria-hidden="true" />
+                                    ) : null;
+                                    const commonProps = {
+                                        type: 'button' as const,
+                                        onClick: () => onToggleModule(module.id),
+                                        title: module.label,
+                                        'aria-label': module.label,
+                                        'aria-current': isActive ? ('page' as const) : undefined,
+                                        'aria-expanded': isOpen,
+                                        'aria-controls': 'admin-module-overlay',
+                                    };
+
+                                    if (module.primary) {
+                                        return (
+                                            <button
+                                                key={module.id}
+                                                {...commonProps}
+                                                className={`${baseClass} flex w-14 flex-col items-center justify-center gap-1 px-1 py-1.5`}
+                                            >
+                                                {activeAccent}
+                                                <module.icon size={20} aria-hidden="true" />
+                                                <span className="w-full truncate text-center text-[9px] font-semibold leading-none">
+                                                    {module.shortLabel ?? module.label}
+                                                </span>
+                                            </button>
+                                        );
+                                    }
+
+                                    return (
+                                        <button
+                                            key={module.id}
+                                            {...commonProps}
+                                            className={`${baseClass} flex h-11 w-11 items-center justify-center`}
+                                        >
+                                            {activeAccent}
+                                            <module.icon size={20} aria-hidden="true" />
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ))}
             </div>
 
             <div className="flex flex-col items-center gap-1 px-2 py-3">

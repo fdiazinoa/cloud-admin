@@ -81,4 +81,11 @@ assert.ok((rail + overlay).includes('motion-reduce'), 'Navigation must respect p
 assert.ok(rail.includes('aria-expanded'), 'Rail buttons must expose aria-expanded');
 assert.ok(rail.includes('aria-current'), 'Rail buttons must expose aria-current');
 
+// 10. Agrupación del Rail: principales con nombre bajo el icono.
+assert.ok(config.includes("group: 'principal'"), 'Navigation config must group primary modules');
+assert.ok(config.includes('primary: true'), 'Navigation config must mark primary modules');
+assert.ok(config.includes('shortLabel:'), 'Primary modules must declare a short label');
+assert.ok(rail.includes('adminNavigationGroupOrder'), 'Rail must group by adminNavigationGroupOrder');
+assert.ok(rail.includes('shortLabel'), 'Rail must render the short label under primary icons');
+
 console.log('Admin navigation contracts: OK');
