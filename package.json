@@ -13,6 +13,7 @@
     "test:tenant-license-provisioning": "node scripts/test-tenant-license-provisioning.mjs",
     "test:activation-tenant-resolution": "node scripts/test-activation-tenant-resolution.mjs",
     "test:auth-password-change": "node scripts/test-auth-password-change.mjs",
+    "test:authenticated-edge-functions": "node --experimental-strip-types scripts/test-authenticated-edge-functions.mjs",
     "test:terminal-device-auth": "node scripts/test-terminal-device-auth.mjs",
     "test:terminal-reauthorization": "node scripts/test-terminal-reauthorization.mjs",
     "test:terminal-device-requests": "node scripts/test-terminal-device-requests.mjs",

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { invokeAuthenticatedEdgeFunction } from './authenticatedEdgeFunction';
 
 export type PosApkReleaseStatus = 'draft' | 'internal_testing' | 'beta' | 'available' | 'retired';
 
@@ -82,7 +83,7 @@ function normalizeList(values?: string[]): string[] {
 }
 
 async function invokePosApkReleases<T>(action: string, payload: Record<string, unknown> = {}) {
-    const { data, error } = await supabase.functions.invoke('pos-apk-releases-api', {
+    const { data, error } = await invokeAuthenticatedEdgeFunction(supabase, 'pos-apk-releases-api', {
         body: { action, ...payload },
     });
     if (error) throw error;
