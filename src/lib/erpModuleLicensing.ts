@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { invokeAuthenticatedEdgeFunction } from './authenticatedEdgeFunction';
 
 export type ErpModuleLicenseMetric =
     | 'boolean'
@@ -66,7 +67,7 @@ export interface ErpModuleSelection {
 }
 
 async function invoke<T>(action: string, payload: Record<string, unknown>) {
-    const { data, error } = await supabase.functions.invoke('module-licensing-api', {
+    const { data, error } = await invokeAuthenticatedEdgeFunction(supabase, 'module-licensing-api', {
         body: { action, ...payload },
     });
     if (error) {

@@ -434,7 +434,10 @@ export const Tenants: React.FC<{ permissions?: Partial<CloudAdminPermissions> | 
 
             const [data, availableRelease, seats] = await Promise.all([
                 tenantService.getTenantTerminalOverview(tenant.id),
-                getLatestAvailablePosApkRelease(),
+                getLatestAvailablePosApkRelease().catch((releaseError) => {
+                    console.warn('Latest POS APK release unavailable while loading terminals:', releaseError);
+                    return null;
+                }),
                 tenantService.getTenantPosLicenseSeats(tenant.id).catch(() => null),
             ]);
             setTenantTerminals(data);
