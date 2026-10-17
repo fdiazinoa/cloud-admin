@@ -31,6 +31,7 @@ import {
     Search,
     Send,
     Sparkles,
+    Star,
     StickyNote,
     Tag,
     Trash2,
@@ -84,6 +85,13 @@ import {
     UNKNOWN_HELPDESK_COMPANY,
     type HelpdeskTicketSortKey,
 } from '../lib/helpdeskTicketOrganization';
+import {
+    loadSavedViews,
+    predefinedViews,
+    saveSavedViews,
+    type SavedTicketView,
+    type TicketViewFilters,
+} from '../lib/helpdeskViews';
 
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
 const MAX_REPLY_ATTACHMENTS = 4;
@@ -775,6 +783,9 @@ const SupportCommandCenter: React.FC = () => {
     const [conversationMatchIndex, setConversationMatchIndex] = useState(0);
     const [messageExpansion, setMessageExpansion] = useState<Record<string, boolean>>({});
     const [quickFilter, setQuickFilter] = useState<'none' | 'critical' | 'unassigned'>('none');
+    const [savedViews, setSavedViews] = useState<SavedTicketView[]>(() => loadSavedViews());
+    const [viewsOpen, setViewsOpen] = useState(false);
+    const [newViewName, setNewViewName] = useState('');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
     const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -1212,6 +1223,20 @@ const SupportCommandCenter: React.FC = () => {
         };
     }, [tickets]);
 
+    const currentViewLabel = useMemo(() => {
+        const hasAdvancedFilters = filterTeam !== 'Todos' || filterAssignee !== 'Todos' || filterCompany !== 'Todos'
+            || filterContact !== 'Todos' || filterDateFrom !== '' || filterDateTo !== '';
+        if (hasAdvancedFilters) return 'Vista personalizada';
+        const match = predefinedViews.find((view) => {
+            const filters = view.filters;
+            return (filters.mailboxFilter === undefined || filters.mailboxFilter === mailboxFilter)
+                && (filters.filterStatus === undefined || filters.filterStatus === filterStatus)
+                && (filters.filterSource === undefined || filters.filterSource === filterSource)
+                && (filters.quickFilter === undefined || filters.quickFilter === quickFilter);
+        });
+        return match?.name ?? 'Vista personalizada';
+    }, [mailboxFilter, filterStatus, filterSource, quickFilter, filterTeam, filterAssignee, filterCompany, filterContact, filterDateFrom, filterDateTo]);
+
     const companyOptions = useMemo(() => Array.from(new Set(
         tickets
             .map(getHelpdeskCompanyName)
@@ -1631,6 +1656,58 @@ const SupportCommandCenter: React.FC = () => {
 
     const refreshTickets = () => setRefreshVersion((value) => value + 1);
 
+    const snapshotTicketFilters = (): TicketViewFilters => ({
+        mailboxFilter,
+        filterStatus,
+        filterSource,
+        filterTeam,
+        filterAssignee,
+        filterCompany,
+        filterContact,
+        filterDateFrom,
+        filterDateTo,
+        quickFilter,
+        ticketSort,
+    });
+
+    const applyTicketViewFilters = (filters: Partial<TicketViewFilters>) => {
+        setSelectedTicketIds([]);
+        setSelectedTicket(null);
+        if (filters.mailboxFilter !== undefined) setMailboxFilter(filters.mailboxFilter);
+        if (filters.filterStatus !== undefined) setFilterStatus(filters.filterStatus);
+        if (filters.filterSource !== undefined) setFilterSource(filters.filterSource);
+        if (filters.filterTeam !== undefined) setFilterTeam(filters.filterTeam);
+        if (filters.filterAssignee !== undefined) setFilterAssignee(filters.filterAssignee);
+        if (filters.filterCompany !== undefined) setFilterCompany(filters.filterCompany);
+        if (filters.filterContact !== undefined) setFilterContact(filters.filterContact);
+        if (filters.filterDateFrom !== undefined) setFilterDateFrom(filters.filterDateFrom);
+        if (filters.filterDateTo !== undefined) setFilterDateTo(filters.filterDateTo);
+        if (filters.quickFilter !== undefined) setQuickFilter(filters.quickFilter);
+        if (filters.ticketSort !== undefined) setTicketSort(filters.ticketSort);
+        setViewsOpen(false);
+    };
+
+    const saveCurrentTicketView = () => {
+        const name = newViewName.trim();
+        if (!name) return;
+        const next: SavedTicketView[] = [...savedViews, { id: crypto.randomUUID(), name, favorite: false, filters: snapshotTicketFilters() }];
+        setSavedViews(next);
+        saveSavedViews(next);
+        setNewViewName('');
+    };
+
+    const deleteSavedTicketView = (id: string) => {
+        const next = savedViews.filter((view) => view.id !== id);
+        setSavedViews(next);
+        saveSavedViews(next);
+    };
+
+    const toggleSavedTicketViewFavorite = (id: string) => {
+        const next = savedViews.map((view) => (view.id === id ? { ...view, favorite: !view.favorite } : view));
+        setSavedViews(next);
+        saveSavedViews(next);
+    };
+
     const loadAssignmentDashboard = async () => {
         setIsLoadingAssignmentDashboard(true);
         setAssignmentDashboardError(null);
@@ -1932,25 +2009,58 @@ const SupportCommandCenter: React.FC = () => {
                             <span className="inline-flex items-center gap-2"><BarChart3 size={15} />Operación de agentes</span>
                             <span>{ticketStats.unassigned} pendientes</span>
                         </button>
-                        <div className="flex flex-wrap gap-1.5">
-                            <button type="button" onClick={() => { setQuickFilter('none'); setFilterStatus('Todos'); setFilterSource('Todos'); }} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${quickFilter === 'none' && filterStatus === 'Todos' && filterSource === 'Todos' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>Todos · {ticketStats.active}</button>
-                            <button type="button" onClick={() => { setQuickFilter('none'); setFilterSource('Todos'); setFilterStatus('Abierto'); }} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${filterStatus === 'Abierto' && quickFilter === 'none' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-emerald-50'}`}>Abiertos · {ticketStats.open}</button>
-                            <button type="button" onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('critical'); }} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${quickFilter === 'critical' ? 'border-red-600 bg-red-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-red-50'}`}>Críticos · {ticketStats.critical}</button>
-                            <button type="button" onClick={() => { setFilterStatus('Todos'); setFilterSource('Todos'); setQuickFilter('unassigned'); }} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${quickFilter === 'unassigned' ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-amber-50'}`}>Sin asignar · {ticketStats.unassigned}</button>
-                        </div>
                         <div className="flex items-center justify-between gap-2">
-                            <button type="button" onClick={() => setShowAdvancedFilters((current) => !current)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
-                                <Filter size={13} />
-                                Filtros
-                                <ChevronDown size={13} className={showAdvancedFilters ? 'rotate-180 transition-transform' : 'transition-transform'} />
-                            </button>
-                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
-                                <span>Ordenar</span>
-                                <select value={ticketSort} onChange={(event) => setTicketSort(event.target.value as HelpdeskTicketSortKey)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 outline-none focus:border-indigo-400">
-                                    {ticketSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                                </select>
+                            <div className="flex min-w-0 items-center gap-2">
+                                <h3 className="truncate text-[13px] font-black text-slate-800">{currentViewLabel}</h3>
+                                <span className="shrink-0 text-[11px] font-semibold text-slate-400">Recuento total: {filteredTickets.length}</span>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                                <button type="button" onClick={() => setViewsOpen((current) => !current)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50" aria-haspopup="listbox" aria-expanded={viewsOpen}>
+                                    Vistas
+                                    <ChevronDown size={13} className={viewsOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                                </button>
+                                <button type="button" onClick={() => setShowAdvancedFilters((current) => !current)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-50">
+                                    <Filter size={13} />
+                                    Filtros
+                                    <ChevronDown size={13} className={showAdvancedFilters ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                                </button>
+                                <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">
+                                    <span>Ordenar</span>
+                                    <select value={ticketSort} onChange={(event) => setTicketSort(event.target.value as HelpdeskTicketSortKey)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-700 outline-none focus:border-indigo-400">
+                                        {ticketSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                    </select>
+                                </div>
                             </div>
                         </div>
+                        {viewsOpen ? (
+                            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-2">
+                                <div className="flex flex-wrap gap-1.5">
+                                    {predefinedViews.map((view) => (
+                                        <button key={view.id} type="button" onClick={() => applyTicketViewFilters(view.filters)} className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${currentViewLabel === view.name ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+                                            {view.name}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="mb-1 mt-3 text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">Mis filtros guardados</p>
+                                {savedViews.length ? (
+                                    <ul className="space-y-1">
+                                        {[...savedViews].sort((left, right) => Number(right.favorite) - Number(left.favorite)).map((view) => (
+                                            <li key={view.id} className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                                                <button type="button" onClick={() => applyTicketViewFilters(view.filters)} className="min-w-0 flex-1 truncate text-left text-[12px] font-semibold text-slate-700 hover:text-blue-700">{view.name}</button>
+                                                <button type="button" onClick={() => toggleSavedTicketViewFavorite(view.id)} title={view.favorite ? 'Quitar de favoritos' : 'Marcar como favorita'} className={`rounded p-1 ${view.favorite ? 'text-amber-500' : 'text-slate-300 hover:text-slate-500'}`}><Star size={13} fill={view.favorite ? 'currentColor' : 'none'} /></button>
+                                                <button type="button" onClick={() => deleteSavedTicketView(view.id)} title="Eliminar vista" className="rounded p-1 text-slate-300 hover:text-red-500"><X size={13} /></button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <p className="text-[11px] text-slate-400">Sin vistas guardadas.</p>
+                                )}
+                                <div className="mt-2 flex gap-1.5">
+                                    <input value={newViewName} onChange={(event) => setNewViewName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); saveCurrentTicketView(); } }} placeholder="Nombre de la vista…" className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-blue-400" />
+                                    <button type="button" onClick={saveCurrentTicketView} disabled={!newViewName.trim()} className="rounded-lg bg-blue-600 px-2.5 text-xs font-bold text-white disabled:opacity-50">Guardar vista actual</button>
+                                </div>
+                            </div>
+                        ) : null}
                         {showAdvancedFilters ? (
                         <div className="grid gap-2 sm:grid-cols-2">
                             <div>
@@ -2565,16 +2675,27 @@ const SupportCommandCenter: React.FC = () => {
                 <aside className="absolute inset-y-0 right-0 z-20 flex w-[300px] shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl 2xl:static 2xl:z-auto 2xl:w-[260px] 2xl:shadow-none">
                     <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 p-4">
                         <div>
-                            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800">Contexto</h3>
-                            <p className="mt-1 text-xs text-slate-500">Tenant, contacto y señales técnicas</p>
+                            <h3 className="text-sm font-bold uppercase tracking-wide text-slate-800">Propiedades de Ticket</h3>
+                            <p className="mt-1 text-xs text-slate-500">Estado, asignación, contacto y contexto</p>
                         </div>
                         <button type="button" onClick={() => setShowContextPanel(false)} className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:text-indigo-700" title="Ocultar contexto"><PanelRightClose size={15} /></button>
                     </div>
 
                     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
                         <section>
-                            <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-500"><Users size={13} /> Asignación</h4>
+                            <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-500"><Users size={13} /> Información clave</h4>
                             <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Estado</p>
+                                <select
+                                    value={selectedTicket.status}
+                                    onChange={(event) => void updateStatus(event.target.value)}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-blue-400"
+                                >
+                                    <option value="Abierto">Abierto</option>
+                                    <option value="En_Proceso">En proceso</option>
+                                    <option value="Resuelto">Resuelto</option>
+                                    <option value="Cerrado">Cerrado</option>
+                                </select>
                                 <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Departamento / transferir a</p>
                                 <select
                                     value={selectedTicket.team_id ?? ''}
@@ -2672,7 +2793,7 @@ const SupportCommandCenter: React.FC = () => {
                         )}
 
                         <section>
-                            <h4 className="mb-2 text-xs font-semibold text-slate-500">Contacto</h4>
+                            <h4 className="mb-2 text-xs font-semibold text-slate-500">Información de Contacto</h4>
                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
                                 <p className="font-bold text-slate-800">{getContactLabel(selectedTicket)}</p>
                                 <p className="mt-1 text-xs text-slate-500">{selectedTicket.contact?.company_name || selectedTicket.tenant_name}</p>
