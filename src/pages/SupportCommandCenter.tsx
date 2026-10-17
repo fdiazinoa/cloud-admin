@@ -57,6 +57,7 @@ import {
     generateHelpdeskDraft,
     heartbeatHelpdeskTicket,
     loadHelpdeskWorkspace,
+    linkHelpdeskTicketParent,
     markHelpdeskTicketRead,
     markHelpdeskTicketsAsSpam,
     mergeHelpdeskTickets,
@@ -65,8 +66,10 @@ import {
     saveHelpdeskContact,
     saveHelpdeskDraft,
     sendHelpdeskReply,
+    splitHelpdeskTicket,
     updateHelpdeskTicket,
     updateHelpdeskAssignmentSettings,
+    unlinkHelpdeskTicketParent,
     uploadHelpdeskAttachments,
     type HelpdeskAgentOption,
     type HelpdeskAssignmentDashboard,
@@ -173,6 +176,12 @@ interface AiTicketInsight {
     auto_reply_sent_at?: string | null;
 }
 
+interface ParentTicketRef {
+    id?: string;
+    ticket_number?: number | null;
+    subject?: string | null;
+}
+
 interface Ticket {
     id: string;
     ticket_number?: number | null;
@@ -200,6 +209,8 @@ interface Ticket {
     sla_level?: string | null;
     first_response_due_at?: string | null;
     resolution_due_at?: string | null;
+    parent_ticket_id?: string | null;
+    parent_ticket?: ParentTicketRef | null;
     created_at: string;
     updated_at?: string | null;
     is_unread?: boolean;
@@ -258,12 +269,13 @@ interface ImprovementDraft {
     priority: ImprovementPriority;
 }
 
-interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight' | 'assignee' | 'support_team'> {
+interface TicketRow extends Omit<Ticket, 'tenant_name' | 'contact' | 'insight' | 'assignee' | 'support_team' | 'parent_ticket'> {
     tenants?: { name?: string | null } | { name?: string | null }[] | null;
     support_contacts?: SupportContact | SupportContact[] | null;
     ai_ticket_insights?: AiTicketInsight | AiTicketInsight[] | null;
     assignee?: HelpdeskAgentOption | HelpdeskAgentOption[] | null;
     support_team?: HelpdeskTeamOption | HelpdeskTeamOption[] | null;
+    parent_ticket?: ParentTicketRef | ParentTicketRef[] | null;
 }
 
 interface TicketMessagePreview {
@@ -340,6 +352,7 @@ function mapTicketRow(ticket: TicketRow): Ticket {
         insight: normalizeRelation(ticket.ai_ticket_insights),
         assignee: normalizeRelation(ticket.assignee),
         support_team: normalizeRelation(ticket.support_team),
+        parent_ticket: normalizeRelation(ticket.parent_ticket),
         technical_context: ticket.technical_context || {},
     };
 }
@@ -1765,6 +1778,46 @@ const SupportCommandCenter: React.FC = () => {
         saveMacros(next);
     };
 
+    const handleSplitTicket = async () => {
+        if (!selectedTicket) return;
+        const subject = window.prompt('Asunto del nuevo ticket (dividir):', `Parte de: ${selectedTicket.subject}`.slice(0, 240));
+        if (!subject?.trim()) return;
+        setBulkActionError(null);
+        try {
+            await splitHelpdeskTicket(selectedTicket.id, subject.trim());
+            setActionNotice('Ticket hijo creado desde este caso.');
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo dividir el ticket.');
+        }
+    };
+
+    const handleUnlinkParent = async () => {
+        if (!selectedTicket) return;
+        setBulkActionError(null);
+        try {
+            await unlinkHelpdeskTicketParent(selectedTicket.id);
+            setSelectedTicket({ ...selectedTicket, parent_ticket_id: null, parent_ticket: null });
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo desvincular el ticket.');
+        }
+    };
+
+    const handleLinkParent = async () => {
+        if (!selectedTicket) return;
+        const parentId = window.prompt('ID del ticket padre:');
+        if (!parentId?.trim()) return;
+        setBulkActionError(null);
+        try {
+            await linkHelpdeskTicketParent(selectedTicket.id, parentId.trim());
+            setActionNotice('Ticket vinculado como hijo.');
+            refreshTickets();
+        } catch (error) {
+            setBulkActionError(error instanceof Error ? error.message : 'No se pudo vincular el ticket.');
+        }
+    };
+
     const loadAssignmentDashboard = async () => {
         setIsLoadingAssignmentDashboard(true);
         setAssignmentDashboardError(null);
@@ -2940,6 +2993,28 @@ const SupportCommandCenter: React.FC = () => {
                         </section>
 
                         <section>
+                            <h4 className="mb-2 text-xs font-semibold text-slate-500">Cuenta</h4>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+                                <p className="font-bold text-slate-800">{selectedTicket.tenant_id ? selectedTicket.tenant_name : 'Sin cuenta vinculada'}</p>
+                                <p className="mt-1 text-xs text-slate-500">{selectedTicket.tenant_id ? 'Vinculada al tenant' : 'No vinculada'}</p>
+                            </div>
+                        </section>
+
+                        <section>
+                            <h4 className="mb-2 text-xs font-semibold text-slate-500">Relación</h4>
+                            <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs">
+                                {selectedTicket.parent_ticket ? (
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="text-slate-600">Hijo de <span className="font-bold text-slate-800">#{selectedTicket.parent_ticket.ticket_number ?? '—'}</span></span>
+                                        <button type="button" onClick={() => void handleUnlinkParent()} className="shrink-0 text-red-600 hover:underline">Desvincular</button>
+                                    </div>
+                                ) : (
+                                    <p className="text-slate-400">Sin ticket padre.</p>
+                                )}
+                            </div>
+                        </section>
+
+                        <section>
                             <h4 className="mb-2 text-xs font-semibold text-slate-500">Tenant Health</h4>
                             <div className="space-y-2 rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs">
                                 <div className="flex items-center justify-between">
@@ -2983,6 +3058,14 @@ const SupportCommandCenter: React.FC = () => {
                                 <button onClick={() => void createPreventiveTicket()} className="flex w-full items-center justify-between rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-left text-xs font-medium text-violet-700 hover:bg-violet-100">
                                     Crear ticket preventivo
                                     <Sparkles size={13} />
+                                </button>
+                                <button onClick={() => void handleSplitTicket()} className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-600 hover:bg-slate-50">
+                                    Dividir ticket
+                                    <Forward size={13} />
+                                </button>
+                                <button onClick={() => void handleLinkParent()} className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-600 hover:bg-slate-50">
+                                    Vincular a ticket padre
+                                    <GitMerge size={13} />
                                 </button>
                                 {selectedTicket.assignment_status === 'spam' ? (
                                     <button disabled={!canDeleteTickets} onClick={() => void restoreSpamTickets([selectedTicket.id])} className="flex w-full items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-left text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40">

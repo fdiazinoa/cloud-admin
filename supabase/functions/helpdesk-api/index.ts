@@ -38,6 +38,8 @@ interface HelpdeskPayload {
     date_from?: string;
     date_to?: string;
     apply?: boolean;
+    parent_ticket_id?: string;
+    description?: string;
 }
 
 const corsHeaders = {
@@ -94,6 +96,7 @@ const ticketSelect = `
     resolved_by,
     reopened_at,
     merged_into_ticket_id,
+    parent_ticket_id,
     merged_at,
     first_response_at,
     last_response_at,
@@ -132,7 +135,8 @@ const ticketSelect = `
         auto_reply_sent_at
     ),
     assignee:cloud_admin_users!support_tickets_assignee_id_fkey (id, full_name, email, status),
-    support_team:support_teams!support_tickets_team_id_fkey (id, name, code)
+    support_team:support_teams!support_tickets_team_id_fkey (id, name, code),
+    parent_ticket:support_tickets!support_tickets_parent_ticket_id_fkey (id, ticket_number, subject)
 `;
 
 function json(body: unknown, status = 200) {
@@ -532,6 +536,15 @@ Deno.serve(async (request) => {
                 cleanString(payload.target_ticket_id, 64),
                 ...cleanIds(payload.ticket_ids),
             ]);
+        }
+        if (action === 'link_parent') {
+            await assertHelpdeskTicketAccess(supabase, actor, [
+                cleanString(payload.ticket_id, 64),
+                cleanString(payload.parent_ticket_id, 64),
+            ]);
+        }
+        if (action === 'unlink_parent' || action === 'split_ticket') {
+            await assertHelpdeskTicketAccess(supabase, actor, [cleanString(payload.ticket_id, 64)]);
         }
 
         if (action === 'bootstrap') {
@@ -1225,6 +1238,101 @@ Deno.serve(async (request) => {
                 .single();
             if (error) throw error;
             return json({ ticket });
+        }
+
+        if (action === 'link_parent') {
+            const childId = cleanString(payload.ticket_id, 64);
+            const parentId = cleanString(payload.parent_ticket_id, 64);
+            if (!childId || !parentId) return json({ error: 'ticket_id and parent_ticket_id are required' }, 400);
+            if (childId === parentId) return json({ error: 'A ticket cannot be its own parent' }, 400);
+
+            const { data: parent, error: parentError } = await supabase
+                .from('support_tickets')
+                .select('id, ticket_number')
+                .eq('id', parentId)
+                .is('merged_into_ticket_id', null)
+                .single();
+            if (parentError || !parent) return json({ error: 'Parent ticket not found' }, 400);
+
+            const { error: linkError } = await supabase
+                .from('support_tickets')
+                .update({ parent_ticket_id: parentId })
+                .eq('id', childId)
+                .is('merged_into_ticket_id', null);
+            if (linkError) throw linkError;
+
+            await supabase.from('ticket_messages').insert({
+                ticket_id: childId,
+                sender_type: 'System',
+                sender_id: actor.authUserId,
+                created_by: actor.id,
+                message: `Ticket vinculado como hijo de #${parent.ticket_number ?? parentId.slice(0, 8)}.`,
+                visibility: 'private',
+                message_kind: 'link_parent',
+                delivery_status: 'internal',
+                delivery_channel: 'internal',
+            });
+            return json({ ok: true, parent_ticket_id: parentId });
+        }
+
+        if (action === 'unlink_parent') {
+            const ticketId = cleanString(payload.ticket_id, 64);
+            if (!ticketId) return json({ error: 'ticket_id is required' }, 400);
+            const { error } = await supabase
+                .from('support_tickets')
+                .update({ parent_ticket_id: null })
+                .eq('id', ticketId)
+                .is('merged_into_ticket_id', null);
+            if (error) throw error;
+            return json({ ok: true });
+        }
+
+        if (action === 'split_ticket') {
+            const sourceId = cleanString(payload.ticket_id, 64);
+            const subject = cleanString(payload.subject, 240);
+            const description = cleanString(payload.description, 4000);
+            if (!sourceId || !subject) return json({ error: 'ticket_id and subject are required' }, 400);
+
+            const { data: source, error: sourceError } = await supabase
+                .from('support_tickets')
+                .select('id, tenant_id, contact_id, category, priority, source, team_id, assignee_id')
+                .eq('id', sourceId)
+                .is('merged_into_ticket_id', null)
+                .single();
+            if (sourceError || !source) return json({ error: 'Source ticket not found' }, 400);
+
+            const { data: child, error: insertError } = await supabase
+                .from('support_tickets')
+                .insert({
+                    tenant_id: source.tenant_id,
+                    contact_id: source.contact_id,
+                    category: source.category,
+                    priority: source.priority,
+                    status: 'Abierto',
+                    subject,
+                    source: source.source,
+                    team_id: source.team_id,
+                    assignee_id: source.assignee_id,
+                    parent_ticket_id: sourceId,
+                    assignment_status: 'needs_assignment',
+                    technical_context: { split_from: sourceId, description, created_by: actor.fullName },
+                })
+                .select('*')
+                .single();
+            if (insertError) throw insertError;
+
+            await supabase.from('ticket_messages').insert({
+                ticket_id: sourceId,
+                sender_type: 'System',
+                sender_id: actor.authUserId,
+                created_by: actor.id,
+                message: `Se dividió este caso: se creó el ticket hijo #${child.ticket_number ?? child.id.slice(0, 8)}.`,
+                visibility: 'private',
+                message_kind: 'split',
+                delivery_status: 'internal',
+                delivery_channel: 'internal',
+            });
+            return json({ ticket: child });
         }
 
         return json({ error: 'Unknown helpdesk action' }, 400);

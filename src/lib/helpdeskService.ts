@@ -292,6 +292,25 @@ export async function createPreventiveHelpdeskTicket(input: {
     });
 }
 
+export async function linkHelpdeskTicketParent(ticketId: string, parentTicketId: string) {
+    return invokeHelpdesk<{ ok: true; parent_ticket_id: string }>('link_parent', {
+        ticket_id: ticketId,
+        parent_ticket_id: parentTicketId,
+    });
+}
+
+export async function unlinkHelpdeskTicketParent(ticketId: string) {
+    return invokeHelpdesk<{ ok: true }>('unlink_parent', { ticket_id: ticketId });
+}
+
+export async function splitHelpdeskTicket(ticketId: string, subject: string, description?: string) {
+    return invokeHelpdesk<{ ticket: Record<string, unknown> }>('split_ticket', {
+        ticket_id: ticketId,
+        subject,
+        description,
+    });
+}
+
 export interface UploadedHelpdeskAttachment {
     id: string;
     name: string;
