@@ -92,6 +92,11 @@ import {
     type SavedTicketView,
     type TicketViewFilters,
 } from '../lib/helpdeskViews';
+import {
+    loadMacros,
+    saveMacros,
+    type HelpdeskMacro,
+} from '../lib/helpdeskMacros';
 
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
 const MAX_REPLY_ATTACHMENTS = 4;
@@ -192,6 +197,9 @@ interface Ticket {
     last_delivery_status?: string | null;
     last_delivery_error?: string | null;
     merged_into_ticket_id?: string | null;
+    sla_level?: string | null;
+    first_response_due_at?: string | null;
+    resolution_due_at?: string | null;
     created_at: string;
     updated_at?: string | null;
     is_unread?: boolean;
@@ -786,6 +794,9 @@ const SupportCommandCenter: React.FC = () => {
     const [savedViews, setSavedViews] = useState<SavedTicketView[]>(() => loadSavedViews());
     const [viewsOpen, setViewsOpen] = useState(false);
     const [newViewName, setNewViewName] = useState('');
+    const [macros, setMacros] = useState<HelpdeskMacro[]>(() => loadMacros());
+    const [macroMenuOpen, setMacroMenuOpen] = useState(false);
+    const [newMacroName, setNewMacroName] = useState('');
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
     const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -1708,6 +1719,52 @@ const SupportCommandCenter: React.FC = () => {
         saveSavedViews(next);
     };
 
+    const applyMacro = (macro: HelpdeskMacro) => {
+        if (!selectedTicket) return;
+        const fields: Record<string, unknown> = {};
+        if (macro.fields.status) fields.status = macro.fields.status;
+        if (macro.fields.priority) fields.priority = macro.fields.priority;
+        if (macro.fields.category) fields.category = macro.fields.category;
+        if (macro.fields.team_id !== undefined) fields.team_id = macro.fields.team_id;
+        if (macro.fields.assignee_id !== undefined) fields.assignee_id = macro.fields.assignee_id;
+        if (macro.fields.tags) fields.tags = macro.fields.tags;
+        void updateSelectedTicketFields(fields);
+        if (macro.replyText) {
+            setReplyText(macro.replyText);
+            setIsComposerOpen(true);
+            setIsPrivateNote(false);
+            setReplyMode('reply');
+        }
+        setMacroMenuOpen(false);
+    };
+
+    const saveCurrentMacro = () => {
+        if (!selectedTicket || !newMacroName.trim()) return;
+        const macro: HelpdeskMacro = {
+            id: crypto.randomUUID(),
+            name: newMacroName.trim(),
+            fields: {
+                status: selectedTicket.status,
+                priority: selectedTicket.priority,
+                category: selectedTicket.category,
+                team_id: selectedTicket.team_id ?? null,
+                assignee_id: selectedTicket.assignee_id ?? null,
+                tags: selectedTicket.tags ?? [],
+            },
+            replyText: replyText.trim() || undefined,
+        };
+        const next = [...macros, macro];
+        setMacros(next);
+        saveMacros(next);
+        setNewMacroName('');
+    };
+
+    const deleteMacro = (id: string) => {
+        const next = macros.filter((macro) => macro.id !== id);
+        setMacros(next);
+        saveMacros(next);
+    };
+
     const loadAssignmentDashboard = async () => {
         setIsLoadingAssignmentDashboard(true);
         setAssignmentDashboardError(null);
@@ -2338,6 +2395,36 @@ const SupportCommandCenter: React.FC = () => {
                                     <button type="button" onClick={() => { if (isFocusMode) { setIsFocusMode(false); setShowContextPanel(true); } else { setShowContextPanel((current) => !current); } }} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 hover:text-indigo-700" title={showContextPanel && !isFocusMode ? 'Ocultar contexto' : 'Mostrar contexto'}>
                                         {showContextPanel && !isFocusMode ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
                                     </button>
+                                    <div className="relative">
+                                        <button type="button" onClick={() => setMacroMenuOpen((current) => !current)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50" aria-haspopup="menu" aria-expanded={macroMenuOpen} title="Aplicar macro">
+                                            <Wand2 size={13} />
+                                            Macro
+                                            <ChevronDown size={13} />
+                                        </button>
+                                        {macroMenuOpen ? (
+                                            <div className="absolute right-0 top-full z-30 mt-1 w-72 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl">
+                                                <div className="border-b border-slate-100 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-slate-400">Aplicar macro</div>
+                                                <div className="max-h-64 overflow-y-auto p-1.5">
+                                                    {macros.length ? (
+                                                        macros.map((macro) => (
+                                                            <div key={macro.id} className="flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-50">
+                                                                <button type="button" onClick={() => applyMacro(macro)} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-slate-700 hover:text-blue-700">{macro.name}</button>
+                                                                <button type="button" onClick={() => deleteMacro(macro.id)} title="Eliminar macro" className="rounded p-1 text-slate-300 hover:text-red-500"><X size={12} /></button>
+                                                            </div>
+                                                        ))
+                                                    ) : (
+                                                        <p className="px-2 py-3 text-xs text-slate-400">Sin macros guardadas.</p>
+                                                    )}
+                                                </div>
+                                                <div className="border-t border-slate-100 p-2">
+                                                    <div className="flex gap-1.5">
+                                                        <input value={newMacroName} onChange={(event) => setNewMacroName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); saveCurrentMacro(); } }} placeholder="Nombre de la macro…" className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400" />
+                                                        <button type="button" onClick={saveCurrentMacro} disabled={!newMacroName.trim()} className="rounded-lg bg-blue-600 px-2.5 text-xs font-bold text-white disabled:opacity-50">Guardar macro actual</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                    </div>
                                     <button onClick={() => updateStatus('En_Proceso')} disabled={isResolvingTicket} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
                                         En proceso
                                     </button>
@@ -2696,6 +2783,12 @@ const SupportCommandCenter: React.FC = () => {
                                     <option value="Resuelto">Resuelto</option>
                                     <option value="Cerrado">Cerrado</option>
                                 </select>
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Fecha de vencimiento</p>
+                                <p className={`text-xs font-bold ${selectedTicket.resolution_due_at && new Date(selectedTicket.resolution_due_at).getTime() < Date.now() && !['Resuelto', 'Cerrado'].includes(selectedTicket.status) ? 'text-red-600' : 'text-slate-700'}`}>
+                                    {selectedTicket.resolution_due_at ? formatTime(selectedTicket.resolution_due_at) : 'Sin fecha de vencimiento'}
+                                </p>
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">SLA</p>
+                                <p className="text-xs font-bold text-slate-700">{slaLabels[selectedTicket.sla_level ?? selectedTicket.contact?.metadata?.sla ?? 'standard'] ?? 'Estándar'}</p>
                                 <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Departamento / transferir a</p>
                                 <select
                                     value={selectedTicket.team_id ?? ''}
