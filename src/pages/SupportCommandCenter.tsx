@@ -4,6 +4,7 @@ import {
     BarChart3,
     BatteryLow,
     Bell,
+    BookOpen,
     Bot,
     Building2,
     CheckCircle2,
@@ -100,6 +101,7 @@ import {
     saveMacros,
     type HelpdeskMacro,
 } from '../lib/helpdeskMacros';
+import { listKnowledgeResources, type KnowledgeResource } from '../lib/knowledgeService';
 
 const REPLY_TEXTAREA_MAX_HEIGHT = 240;
 const MAX_REPLY_ATTACHMENTS = 4;
@@ -810,6 +812,15 @@ const SupportCommandCenter: React.FC = () => {
     const [macros, setMacros] = useState<HelpdeskMacro[]>(() => loadMacros());
     const [macroMenuOpen, setMacroMenuOpen] = useState(false);
     const [newMacroName, setNewMacroName] = useState('');
+    const [kbResources, setKbResources] = useState<KnowledgeResource[]>([]);
+
+    useEffect(() => {
+        let mounted = true;
+        listKnowledgeResources()
+            .then((response) => { if (mounted) setKbResources(response.resources ?? []); })
+            .catch(() => { /* KB no disponible; no bloquear el Helpdesk */ });
+        return () => { mounted = false; };
+    }, []);
     const [isCreatingContact, setIsCreatingContact] = useState(false);
     const [isSendingReply, setIsSendingReply] = useState(false);
     const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -1260,6 +1271,27 @@ const SupportCommandCenter: React.FC = () => {
         });
         return match?.name ?? 'Vista personalizada';
     }, [mailboxFilter, filterStatus, filterSource, quickFilter, filterTeam, filterAssignee, filterCompany, filterContact, filterDateFrom, filterDateTo]);
+
+    const kbSuggestions = useMemo(() => {
+        if (!selectedTicket || !kbResources.length) return [];
+        const keywords = [
+            selectedTicket.category,
+            selectedTicket.insight?.affected_module ?? '',
+            ...selectedTicket.subject.toLocaleLowerCase('es').split(/[^a-z0-9áéíóúñü]+/i).filter((word) => word.length > 3),
+        ]
+            .filter(Boolean)
+            .map((word) => word.toLocaleLowerCase('es'));
+        if (!keywords.length) return kbResources.slice(0, 3);
+        const scored = kbResources
+            .map((resource) => {
+                const haystack = `${resource.title} ${resource.summary ?? ''}`.toLocaleLowerCase('es');
+                const score = keywords.reduce((total, keyword) => total + (haystack.includes(keyword) ? 1 : 0), 0);
+                return { resource, score };
+            })
+            .filter((entry) => entry.score > 0)
+            .sort((left, right) => right.score - left.score);
+        return scored.slice(0, 3).map((entry) => entry.resource);
+    }, [kbResources, selectedTicket]);
 
     const companyOptions = useMemo(() => Array.from(new Set(
         tickets
@@ -1816,6 +1848,18 @@ const SupportCommandCenter: React.FC = () => {
         } catch (error) {
             setBulkActionError(error instanceof Error ? error.message : 'No se pudo vincular el ticket.');
         }
+    };
+
+    const insertKbReference = (resource: KnowledgeResource) => {
+        const kind = resource.resource_type === 'video' ? 'video' : 'manual';
+        const url = resource.external_url || resource.access_url;
+        const reference = url
+            ? `Puedes consultar el ${kind} "${resource.title}" (${resource.product}): ${url}`
+            : `Puedes consultar el ${kind} "${resource.title}" (${resource.product}).`;
+        setReplyText(reference);
+        setIsComposerOpen(true);
+        setIsPrivateNote(false);
+        setReplyMode('reply');
     };
 
     const loadAssignmentDashboard = async () => {
@@ -2937,6 +2981,25 @@ const SupportCommandCenter: React.FC = () => {
                                 </div>
                             </section>
                         )}
+
+                        <section>
+                            <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-500"><BookOpen size={13} /> Base de conocimientos</h4>
+                            {kbSuggestions.length ? (
+                                <div className="space-y-2">
+                                    {kbSuggestions.map((resource) => (
+                                        <button key={resource.id} type="button" onClick={() => insertKbReference(resource)} title="Insertar en la respuesta" className="block w-full rounded-lg border border-slate-200 bg-white p-2 text-left transition-colors hover:border-blue-300 hover:bg-blue-50/40">
+                                            <span className="block truncate text-xs font-bold text-slate-700">{resource.title}</span>
+                                            <span className="mt-0.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                                                {resource.product}
+                                                <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] text-blue-600">{resource.resource_type}</span>
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-xs text-slate-400">Sin artículos sugeridos para este ticket.</p>
+                            )}
+                        </section>
 
                         <section>
                             <h4 className="mb-2 text-xs font-semibold text-slate-500">Información de Contacto</h4>
