@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { CloudAdminAuthError, requireCloudAdminSession } from './lib/cloud-admin-session.ts';
+import { CloudAdminAuthError, requireCloudAdminSession } from './lib/cloud-admin-session.js';
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'application/json');

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { CloudAdminAuthError, requireCloudAdminSession } from './lib/cloud-admin-session.ts';
-import { authorizeGatewayRequest } from './lib/admin-gateway-policy.ts';
+import { CloudAdminAuthError, requireCloudAdminSession } from './lib/cloud-admin-session.js';
+import { authorizeGatewayRequest } from './lib/admin-gateway-policy.js';
 import type { CloudAdminPermissions } from '../src/types.ts';
 type Request = IncomingMessage & { body?: unknown };
 export default async function handler(req: Request, res: ServerResponse) {

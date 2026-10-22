@@ -1,4 +1,4 @@
-import { hasCloudAdminPermission } from '../../src/lib/cloudAdminPermissions.ts';
+import { hasCloudAdminPermission } from '../../src/lib/cloudAdminPermissions.js';
 import type { CloudAdminPermissions, CloudAdminPermissionKey } from '../../src/types.ts';
 
 type Grants = Partial<CloudAdminPermissions>;

@@ -21,7 +21,7 @@ Realtime uses the signed-in user's JWT and existing database authorization, neve
 key; subscriptions require compatible Realtime/RLS policies and must be checked before rollout.
 
 Validation:
-- npm run test:admin-gateway (session, active profile, permission boundary, SSRF and secret isolation)
+- npm run test:admin-gateway (executes compiled ESM: session, active profile, permission boundary, SSRF and secret isolation)
 - npm run test:authenticated-edge-functions
 - npm run test:terminal-device-auth
 - npm run test:terminal-device-requests
@@ -36,3 +36,5 @@ Existing limitation: test:auth-password-change reports a desktop/mobile layout a
 unchanged Layout.tsx. No installed APK, local database, pairing, tenant suspension, or fiscal
 configuration is changed by this release. Browser login, low-privilege roles, support Realtime,
 Edge integrations and owner tenant provisioning still require live validation after review.
+
+Server imports use .js specifiers so Vercel resolves emitted JavaScript. A previous .ts-specifier release was immediately reverted after the production smoke test failed to start the function. Verify /api/admin-session returns application JSON 401 on Preview before merging the replacement.

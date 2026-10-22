@@ -1,4 +1,4 @@
-import { requireCloudAdminPermission } from "./lib/cloud-admin-session.ts";
+import { requireCloudAdminPermission } from "./lib/cloud-admin-session.js";
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { createClient } from "@supabase/supabase-js";
 

@@ -1,7 +1,23 @@
 import assert from 'node:assert/strict';
-import { authorizeGatewayRequest as allowed } from '../api/lib/admin-gateway-policy.ts';
-import sessionHandler from '../api/admin-session.ts';
-import gateway from '../api/admin-gateway.ts';
+import ts from 'typescript';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+// Execute emitted ESM, matching Vercel instead of resolving .ts imports with Node's strip mode.
+const runtime = mkdtempSync(join(tmpdir(), 'cloud-admin-runtime-'));
+writeFileSync(join(runtime, 'package.json'), '{"type":"module"}');
+symlinkSync(resolve('node_modules'), join(runtime, 'node_modules'));
+for (const file of ['api/admin-gateway.ts', 'api/admin-session.ts', 'api/lib/cloud-admin-session.ts', 'api/lib/admin-gateway-policy.ts', 'src/lib/cloudAdminPermissions.ts']) {
+ const target = join(runtime, file.replace(/\.ts$/, '.js'));
+ mkdirSync(dirname(target), { recursive: true });
+ writeFileSync(target, ts.transpileModule(readFileSync(file, 'utf8'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext }, fileName: file,
+ }).outputText);
+}
+const { authorizeGatewayRequest: allowed } = await import(pathToFileURL(join(runtime, 'api/lib/admin-gateway-policy.js')));
+const { default: sessionHandler } = await import(pathToFileURL(join(runtime, 'api/admin-session.js')));
+const { default: gateway } = await import(pathToFileURL(join(runtime, 'api/admin-gateway.js')));
 assert(!allowed('/auth/v1/admin/users', 'PATCH', 'landlord', { users_manage: true, profiles_manage: true }));
 assert(allowed('/auth/v1/admin/users', 'POST', 'landlord', { users_manage: true, profiles_manage: true }, true));
 assert(allowed('/functions/v1/get-operational-telemetry', 'GET', 'landlord', { observability: true }));
