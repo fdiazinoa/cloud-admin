@@ -46,6 +46,8 @@ export type CloudAdminActor = {
 export type CloudAdminSession = {
     admin: AnySupabaseClient;
     actor: CloudAdminActor;
+    adminUser: Record<string, unknown>;
+    profile: Record<string, unknown>;
 };
 
 export class CloudAdminAuthError extends Error {
@@ -77,9 +79,8 @@ function relation<T>(value: T | T[] | null | undefined): T | null {
     return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
 
-export async function requireCloudAdminPermission(
+export async function requireCloudAdminSession(
     headers: IncomingHttpHeaders,
-    permission: string,
 ): Promise<CloudAdminSession> {
     const authorization = headerValue(headers, "authorization") || "";
     const accessToken = authorization.replace(/^Bearer\s+/i, "").trim();
@@ -100,32 +101,42 @@ export async function requireCloudAdminPermission(
 
     const { data: adminData, error: adminError } = await admin
         .from("cloud_admin_users")
-        .select("id,auth_user_id,email,status,cloud_admin_profiles(is_active,permissions)")
+        .select("*,cloud_admin_profiles(*)")
         .eq("auth_user_id", authData.user.id)
         .maybeSingle();
     if (adminError) throw adminError;
 
-    const actor = adminData as AdminRow | null;
+    const actor = adminData as unknown as AdminRow | null;
     const profile = relation(actor?.cloud_admin_profiles);
     if (
         !actor
         || actor.status !== "active"
         || profile?.is_active !== true
-        || profile.permissions?.[permission] !== true
     ) {
         throw new CloudAdminAuthError(
             403,
             "FORBIDDEN",
-            "No tienes permiso para reautorizar dispositivos de terminales.",
+            "Tu usuario no tiene acceso activo a Cloud-Admin.",
         );
     }
 
     return {
         admin,
+        adminUser: Object.fromEntries(Object.entries(adminData || {}).filter(([key]) => key !== "cloud_admin_profiles")),
+        profile: profile as Record<string, unknown>,
         actor: {
             id: actor.id,
             authUserId: actor.auth_user_id,
             email: actor.email || authData.user.email || actor.auth_user_id,
         },
     };
+}
+
+export async function requireCloudAdminPermission(headers: IncomingHttpHeaders, permission: string): Promise<CloudAdminSession> {
+    const session = await requireCloudAdminSession(headers);
+    const profile = session.profile as { permissions?: Record<string, boolean> };
+    if (profile.permissions?.[permission] !== true) {
+        throw new CloudAdminAuthError(403, "FORBIDDEN", "No tienes permiso para esta operación administrativa.");
+    }
+    return session;
 }
