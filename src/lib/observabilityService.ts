@@ -1,4 +1,4 @@
-import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from './supabase';
+import { supabaseAdmin, supabaseProjectUrl, adminFetch } from './supabase';
 import type {
     CloudChannel,
     ContractedProduct,
@@ -413,10 +413,9 @@ async function safeSelect<T>(query: PromiseLike<{ data: unknown; error: unknown 
 async function loadErpTelemetry(): Promise<ErpTelemetryPayload> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, '')}/functions/v1/get-operational-telemetry`;
     try {
-        const response = await fetch(endpoint, {
+        const response = await adminFetch(endpoint, {
             method: 'GET',
             headers: {
-                Authorization: `Bearer ${supabaseServiceRoleKey}`,
                 'X-Actor-Source': 'cloud-admin-ui',
             },
         });
