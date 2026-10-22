@@ -1,46 +1,65 @@
 import { createClient } from '@supabase/supabase-js';
 
 export const supabaseProjectUrl = import.meta.env.VITE_SUPABASE_URL;
-const publicKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-if (!supabaseProjectUrl || !publicKey) throw new Error('Missing Supabase Environment Variables');
-function isPublicKey(key: string) {
-    if (key.startsWith('sb_publishable_')) return true;
-    try { return JSON.parse(atob(key.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role === 'anon'; }
-    catch { return false; }
-}
-if (!isPublicKey(publicKey)) throw new Error('The browser requires a public Supabase key');
-export const supabase = createClient(supabaseProjectUrl, publicKey, {
-    auth: { persistSession: true }, db: { schema: 'landlord' },
-});
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+export const supabaseServiceRoleKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+const allowInsecureKeys = import.meta.env.VITE_ALLOW_INSECURE_SUPABASE_KEYS === 'true';
 
-export async function adminFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
-    const token = data.session?.access_token;
-    if (!token) throw new Error('La sesión administrativa expiró. Inicia sesión nuevamente.');
-    const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
-    const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
-    headers.delete('apikey');
-    headers.set('Authorization', `Bearer ${token}`);
-    if (url.origin === window.location.origin && url.pathname.startsWith('/api/')) {
-        return fetch(url, { ...init, headers });
+function decodeJwtRole(token: string): string | null {
+    try {
+        const [, payload] = token.split('.');
+        if (!payload) return null;
+        const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+        const decoded = JSON.parse(atob(normalized));
+        return typeof decoded.role === 'string' ? decoded.role : null;
+    } catch {
+        return null;
     }
-    if (url.origin !== new URL(supabaseProjectUrl).origin) throw new Error('Administrative destination not allowed');
-    return fetch('/api/admin-gateway', {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: url.pathname + url.search, method: init.method || 'GET',
-            headers: Object.fromEntries(headers.entries()), body: init.body ?? null }),
-        signal: init.signal,
-    });
 }
 
-// Only a public key is used to construct the SDK; privileged HTTP calls run on the server.
-export const supabaseAdmin = createClient(supabaseProjectUrl, publicKey, {
-    auth: { autoRefreshToken: false, persistSession: false, storageKey: 'cloud-admin-gateway-client' },
-    db: { schema: 'landlord' }, global: { fetch: adminFetch },
+function isPublicClientKey(token: string): boolean {
+    if (token.startsWith('sb_publishable_')) return true;
+    return decodeJwtRole(token) === 'anon';
+}
+
+function isElevatedServerKey(token: string): boolean {
+    if (token.startsWith('sb_secret_')) return true;
+    return decodeJwtRole(token) === 'service_role';
+}
+
+if (!supabaseProjectUrl || !supabaseKey) {
+    throw new Error('Missing Supabase Environment Variables');
+}
+
+if (!supabaseServiceRoleKey) {
+    throw new Error('Missing VITE_SUPABASE_SERVICE_ROLE_KEY for administrative operations');
+}
+
+if (!allowInsecureKeys) {
+    if (!isPublicClientKey(supabaseKey)) {
+        const anonRole = decodeJwtRole(supabaseKey);
+        throw new Error(`VITE_SUPABASE_ANON_KEY must be anon or sb_publishable (current role: ${anonRole || 'unknown'})`);
+    }
+    if (!isElevatedServerKey(supabaseServiceRoleKey)) {
+        const serviceRole = decodeJwtRole(supabaseServiceRoleKey);
+        throw new Error(`VITE_SUPABASE_SERVICE_ROLE_KEY must be service_role or sb_secret (current role: ${serviceRole || 'unknown'})`);
+    }
+    if (supabaseKey === supabaseServiceRoleKey) {
+        throw new Error('VITE_SUPABASE_ANON_KEY and VITE_SUPABASE_SERVICE_ROLE_KEY cannot be the same key');
+    }
+}
+
+export const supabase = createClient(supabaseProjectUrl, supabaseKey, {
+    auth: { persistSession: true },
+    db: { schema: 'landlord' }
 });
-// Realtime always uses the signed-in user and database authorization, never a service key.
-export const authorizeAdminRealtime = async () => {
-    const { data } = await supabase.auth.getSession();
-    if (data.session) await supabaseAdmin.realtime.setAuth(data.session.access_token);
-};
+
+// TODO: Move all service-role operations to a trusted backend or Edge Function.
+export const supabaseAdmin = createClient(supabaseProjectUrl, supabaseServiceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    db: { schema: 'landlord' }
+});
+
+export const authorizeAdminRealtime = () => (
+    supabaseAdmin.realtime.setAuth(supabaseServiceRoleKey)
+);

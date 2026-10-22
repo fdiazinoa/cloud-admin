@@ -52,8 +52,7 @@
     "test:helpdesk-parent-child": "node scripts/test-helpdesk-parent-child.mjs",
     "test:helpdesk-kb-suggestions": "node scripts/test-helpdesk-kb-suggestions.mjs",
     "check:supabase-keys": "node scripts/check-supabase-keys.mjs",
-    "verify:supabase-security": "node scripts/verify-supabase-security.mjs",
-    "test:admin-gateway": "node --experimental-strip-types scripts/test-admin-gateway.mjs"
+    "verify:supabase-security": "node scripts/verify-supabase-security.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.98.0",

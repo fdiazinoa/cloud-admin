@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin, supabaseProjectUrl, adminFetch } from "./supabase";
+import { supabase, supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from "./supabase";
 import type {
     Distributor,
     Tenant,
@@ -1563,9 +1563,10 @@ export async function getTenantTerminalOverview(tenantId: string): Promise<Tenan
 }
 
 export async function requestTerminalTakeover(input: RequestTerminalTakeoverInput): Promise<TerminalTakeoverResult> {
-    const response = await adminFetch("/api/terminal-takeover", {
+    const response = await fetch("/api/terminal-takeover", {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -1591,9 +1592,10 @@ export async function requestTerminalTakeover(input: RequestTerminalTakeoverInpu
 
 export async function requestTerminalLocalRebuild(input: RequestTerminalLocalRebuildInput): Promise<TerminalLocalRebuildResult> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-local-rebuild`;
-    const response = await adminFetch(endpoint, {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -1621,9 +1623,10 @@ export async function requestTerminalLocalRebuild(input: RequestTerminalLocalReb
 
 export async function requestTerminalErpReadiness(input: RequestTerminalErpReadinessInput): Promise<TerminalErpReadinessResult> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-pos-erp-readiness`;
-    const response = await adminFetch(endpoint, {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -1649,9 +1652,10 @@ export async function requestTerminalErpProfilePrepare(
     input: RequestTerminalErpProfilePrepareInput,
 ): Promise<TerminalErpReadinessResult> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-erp-profile`;
-    const response = await adminFetch(endpoint, {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -1677,9 +1681,10 @@ export async function getTerminalSyncPending(
     input: RequestTerminalSyncPendingInput,
 ): Promise<TerminalSyncPendingResult> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-sync-pending`;
-    const response = await adminFetch(endpoint, {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -1706,9 +1711,10 @@ export async function retryTerminalSyncPending(
     input: RequestTerminalSyncRetryInput,
 ): Promise<TerminalSyncRetryResult> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-sync-retry`;
-    const response = await adminFetch(endpoint, {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -2251,9 +2257,10 @@ export async function getTerminalFiscalDebug(
     input: RequestTerminalFiscalReadinessInput,
 ): Promise<TerminalFiscalReadiness> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-fiscal-debug`;
-    const response = await adminFetch(endpoint, {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -2281,9 +2288,10 @@ export async function getTerminalFiscalReadiness(
     input: RequestTerminalFiscalReadinessInput,
 ): Promise<TerminalFiscalReadiness> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-fiscal-readiness`;
-    const response = await adminFetch(endpoint, {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
@@ -2311,9 +2319,10 @@ export async function requestTerminalFiscalConfig(
     input: RequestTerminalFiscalConfigInput,
 ): Promise<TerminalFiscalConfigResult> {
     const endpoint = `${supabaseProjectUrl.replace(/\/$/, "")}/functions/v1/request-terminal-fiscal-config`;
-    const response = await adminFetch(endpoint, {
+    const response = await fetch(endpoint, {
         method: "POST",
         headers: {
+            Authorization: `Bearer ${supabaseServiceRoleKey}`,
             "Content-Type": "application/json",
             "X-Actor-Source": "cloud-admin-ui",
         },
