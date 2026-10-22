@@ -4,7 +4,7 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { ForgotPasswordDialog } from './components/ForgotPasswordDialog'
 import { ResetPasswordScreen } from './components/ResetPasswordScreen'
-import { supabase, adminFetch } from './lib/supabase'
+import { supabase, supabaseAdmin } from './lib/supabase'
 import type { CloudAdminProfile, CloudAdminUser } from './types'
 import type { CloudAdminPermissionKey } from './types'
 import { hasCloudAdminPermission } from './lib/cloudAdminPermissions'
@@ -57,9 +57,26 @@ async function resolveCloudAdminSession(session: Session | null): Promise<CloudA
     const authUser = session?.user;
     if (!authUser?.id) return null;
 
-    const response = await adminFetch('/api/admin-session');
-    if (!response.ok) throw new Error('No se pudo validar la sesión administrativa.');
-    const { adminUser, profile } = await response.json() as { adminUser: CloudAdminUser; profile: CloudAdminProfile };
+    const { data: adminUser, error: adminError } = await supabaseAdmin
+        .from('cloud_admin_users')
+        .select('*')
+        .eq('auth_user_id', authUser.id)
+        .maybeSingle();
+
+    if (adminError) throw adminError;
+    if (!adminUser || (adminUser as CloudAdminUser).status === 'suspended') return null;
+
+    let profile: CloudAdminProfile | null = null;
+    const profileId = (adminUser as CloudAdminUser).profile_id;
+    if (profileId) {
+        const { data: profileData, error: profileError } = await supabaseAdmin
+            .from('cloud_admin_profiles')
+            .select('*')
+            .eq('id', profileId)
+            .maybeSingle();
+        if (profileError) throw profileError;
+        profile = profileData as CloudAdminProfile | null;
+    }
 
     return { authUser, adminUser: adminUser as CloudAdminUser, profile };
 }
@@ -363,9 +380,7 @@ function LoginScreen({ error, onLogin }: { error: string | null; onLogin: (email
 }
 
 function getAuthErrorMessage(error: unknown) {
-    const message = error instanceof Error ? error.message
-        : error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
-            ? error.message : 'No se pudo completar la autenticación.';
+    const message = error instanceof Error ? error.message : String(error || '');
     if (/invalid login credentials/i.test(message)) return 'Email o clave incorrectos.';
     if (/email not confirmed/i.test(message)) return 'Este email no ha sido confirmado.';
     if (/access activo|cloud-admin/i.test(message)) return message;

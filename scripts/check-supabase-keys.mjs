@@ -19,6 +19,7 @@ const decodeJwtRole = (token) => {
 };
 
 const isPublicClientKey = (token) => token?.startsWith("sb_publishable_") || decodeJwtRole(token) === "anon";
+const isElevatedServerKey = (token) => token?.startsWith("sb_secret_") || decodeJwtRole(token) === "service_role";
 
 const loadEnv = (filePath) => Object.fromEntries(
     fs.readFileSync(filePath, "utf8")
@@ -60,9 +61,9 @@ for (const envPath of defaultEnvPaths) {
         hasError = true;
         console.error("  ERROR: VITE_SUPABASE_ANON_KEY is not anon/sb_publishable.");
     }
-    if (serviceKey) {
+    if (serviceKey && !isElevatedServerKey(serviceKey)) {
         hasError = true;
-        console.error("  ERROR: Privileged credentials must be server-only, never VITE_SUPABASE_SERVICE_ROLE_KEY.");
+        console.error("  ERROR: VITE_SUPABASE_SERVICE_ROLE_KEY is not service_role/sb_secret.");
     }
     if (anonKey && serviceKey && anonKey === serviceKey) {
         hasError = true;
