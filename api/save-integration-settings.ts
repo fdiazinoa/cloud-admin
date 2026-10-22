@@ -1,3 +1,4 @@
+import { requireCloudAdminPermission } from "./lib/cloud-admin-session.ts";
 import { createHash, createCipheriv, randomBytes } from 'node:crypto';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
 import { createClient } from '@supabase/supabase-js';
@@ -92,20 +93,11 @@ async function readBody(request: ApiRequest) {
     return rawBody ? JSON.parse(rawBody) : {};
 }
 
-function isAuthorizedConfigurationRequest(request: ApiRequest) {
+async function isAuthorizedConfigurationRequest(request: ApiRequest) {
     const expectedToken = process.env.CONFIG_ADMIN_TOKEN;
-    const receivedToken = getHeader(request.headers, 'x-config-admin-token');
-
-    if (expectedToken && receivedToken === expectedToken) {
-        return true;
-    }
-
-    const authorization = getHeader(request.headers, 'authorization') ?? '';
-    const bearerToken = authorization.replace(/^Bearer\s+/i, '').trim();
-    if (!bearerToken) return false;
-
-    const serviceRoleKey = getEnv('SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_SERVICE_ROLE_KEY');
-    return bearerToken === serviceRoleKey;
+    if (expectedToken && getHeader(request.headers, 'x-config-admin-token') === expectedToken) return true;
+    try { await requireCloudAdminPermission(request.headers, 'settings_manage'); return true; }
+    catch { return false; }
 }
 
 function encryptSecret(value: string) {
@@ -177,7 +169,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
     }
 
     try {
-        if (!isAuthorizedConfigurationRequest(request)) {
+        if (!await isAuthorizedConfigurationRequest(request)) {
             sendJson(response, 401, { error: 'Unauthorized configuration request' });
             return;
         }
@@ -185,7 +177,7 @@ export default async function handler(request: ApiRequest, response: ServerRespo
         const payload = await readBody(request) as SavePayload;
         const supabase = createClient(
             getEnv('SUPABASE_URL', 'VITE_SUPABASE_URL'),
-            getEnv('SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_SERVICE_ROLE_KEY'),
+            getEnv('SUPABASE_SERVICE_ROLE_KEY'),
             {
                 auth: { autoRefreshToken: false, persistSession: false },
                 db: { schema: 'landlord' },

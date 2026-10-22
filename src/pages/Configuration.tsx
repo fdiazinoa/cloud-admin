@@ -9,7 +9,7 @@ import {
     ShieldCheck,
     Sparkles,
 } from 'lucide-react';
-import { supabaseAdmin, supabaseProjectUrl, supabaseServiceRoleKey } from '../lib/supabase';
+import { supabaseAdmin, supabaseProjectUrl, adminFetch } from '../lib/supabase';
 
 const functionName = 'process-inbound-email';
 const settingsEndpoint = '/api/save-integration-settings';
@@ -222,10 +222,9 @@ export const Configuration: React.FC = () => {
         setMessage('');
 
         try {
-            const response = await fetch(settingsEndpoint, {
+            const response = await adminFetch(settingsEndpoint, {
                 method: 'POST',
                 headers: {
-                    'Authorization': `Bearer ${supabaseServiceRoleKey}`,
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
@@ -448,7 +447,7 @@ export const Configuration: React.FC = () => {
                     )}
                     <div className="mx-5 mb-5 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
                         <Sparkles size={15} className="mt-0.5 shrink-0 text-indigo-500" />
-                        Para habilitar esta pantalla en Vercel, define `INTEGRATION_SECRET_KEY`. Las variables `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` pueden usar los mismos valores ya configurados como `VITE_SUPABASE_URL` y `VITE_SUPABASE_SERVICE_ROLE_KEY`.
+                        Para habilitar esta pantalla en Vercel, define `INTEGRATION_SECRET_KEY`. Configura `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` únicamente en el servidor. El navegador utiliza la clave pública.
                     </div>
                 </section>
             </div>
