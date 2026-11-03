@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Propuesta C — Consola de operaciones · Tenants</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="mockup.css" />
+</head>
+<body class="antialiased bg-slate-100 text-slate-900">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-headset" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Z"/><path d="M21 11h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-5Z"/><path d="M3 11a9 9 0 0 1 18 0"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M7 15v3M12 10v8M17 6v12"/></symbol>
+  <symbol id="i-chev-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-chev-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-sync" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M3 21v-5h5M21 3v5h-5"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3v12M7 11l5 5 5-5M4 21h16"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9 4v16M15 4v16"/></symbol>
+</defs></svg>
+
+<div class="bg-slate-900 text-slate-300">
+  <div class="flex items-center gap-3 px-6 py-2 text-[11px] font-bold uppercase tracking-wider">
+    <span class="rounded-md bg-blue-600 px-2 py-0.5 text-white">Propuesta C</span>
+    <span class="text-white">Consola de operaciones</span>
+    <span class="text-slate-500">·</span>
+    <span class="normal-case tracking-normal text-slate-400">Incidencias primero, tabla densa con acciones en lote e inspector de terminal fijado (sin modales).</span>
+  </div>
+</div>
+
+<div class="flex h-[calc(100vh-34px)]">
+  <aside class="flex w-[76px] shrink-0 flex-col items-center gap-1 bg-slate-900 py-4">
+    <div class="grid h-10 w-10 place-items-center rounded-xl bg-blue-600 text-sm font-black text-white">C</div>
+    <div class="mt-4 flex flex-col items-center gap-1.5">
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-grid"/></svg></a>
+      <a class="relative grid h-11 w-11 place-items-center rounded-xl bg-white/10 text-white ring-1 ring-white/15"><svg class="h-5 w-5"><use href="#i-building"/></svg><span class="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r bg-blue-500"></span><span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-slate-900"></span></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-monitor"/></svg></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-headset"/></svg></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-chart"/></svg></a>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="flex h-14 shrink-0 items-center gap-4 border-b border-slate-200 bg-white px-6">
+      <div class="text-sm font-bold text-slate-400">Clientes <span class="mx-1 text-slate-300">/</span> <span class="text-slate-800">Operaciones de tenants</span></div>
+      <div class="ml-auto flex items-center gap-3">
+        <div class="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50 p-0.5 text-[11px] font-black">
+          <button class="rounded-lg px-2.5 py-1 text-slate-500">24 h</button>
+          <button class="rounded-lg bg-white px-2.5 py-1 text-slate-800 shadow-sm">7 días</button>
+          <button class="rounded-lg px-2.5 py-1 text-slate-500">30 días</button>
+        </div>
+        <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600"><svg class="h-4 w-4"><use href="#i-sync"/></svg>Actualizar</button>
+        <div class="grid h-9 w-9 place-items-center rounded-full bg-slate-900 text-[11px] font-black text-white">FD</div>
+      </div>
+    </header>
+
+    <div class="flex min-h-0 flex-1">
+      <!-- columna principal -->
+      <div class="flex min-w-0 flex-1 flex-col">
+        <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          <!-- incidencias -->
+          <div class="flex items-center justify-between">
+            <h1 class="text-lg font-black text-slate-800">Incidencias abiertas <span class="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-black text-red-700">6</span></h1>
+            <button class="text-[11px] font-black text-blue-600">Silenciar avisos de trial</button>
+          </div>
+          <div class="mt-2.5 grid grid-cols-4 gap-3">
+            <button class="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-left">
+              <div class="flex items-center justify-between"><p class="text-[10px] font-black uppercase tracking-wider text-red-700">Endpoints offline</p><svg class="h-4 w-4 text-red-500"><use href="#i-alert"/></svg></div>
+              <p class="mt-1 text-2xl font-black text-red-800">27</p>
+              <p class="text-[11px] font-bold text-red-700/80">9 tenants afectados · filtrar →</p>
+            </button>
+            <button class="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-left">
+              <div class="flex items-center justify-between"><p class="text-[10px] font-black uppercase tracking-wider text-amber-700">Sync detenido &gt; 24 h</p><svg class="h-4 w-4 text-amber-500"><use href="#i-pause"/></svg></div>
+              <p class="mt-1 text-2xl font-black text-amber-800">3</p>
+              <p class="text-[11px] font-bold text-amber-700/80">2 en trial, 1 activo · filtrar →</p>
+            </button>
+            <button class="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-left">
+              <div class="flex items-center justify-between"><p class="text-[10px] font-black uppercase tracking-wider text-amber-700">Licencias al límite</p><svg class="h-4 w-4 text-amber-500"><use href="#i-alert"/></svg></div>
+              <p class="mt-1 text-2xl font-black text-amber-800">2</p>
+              <p class="text-[11px] font-bold text-amber-700/80">POS excedido o sin cupo</p>
+            </button>
+            <button class="rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-left">
+              <div class="flex items-center justify-between"><p class="text-[10px] font-black uppercase tracking-wider text-slate-500">ERP esperando confirmación</p><svg class="h-4 w-4 text-slate-400"><use href="#i-sync"/></svg></div>
+              <p class="mt-1 text-2xl font-black text-slate-800">1</p>
+              <p class="text-[11px] font-bold text-slate-500">Device autorizado sin reflejo ERP</p>
+            </button>
+          </div>
+
+          <!-- toolbar de la tabla -->
+          <div class="mt-4 flex items-center gap-2">
+            <div class="flex flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-400"><svg class="h-4 w-4"><use href="#i-search"/></svg><span>Filtrar por nombre, RNC, device ID o terminal…</span></div>
+            <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600">Salud <svg class="h-3.5 w-3.5 text-slate-400"><use href="#i-chev-down"/></svg></button>
+            <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600">Producto <svg class="h-3.5 w-3.5 text-slate-400"><use href="#i-chev-down"/></svg></button>
+            <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600">Estado <svg class="h-3.5 w-3.5 text-slate-400"><use href="#i-chev-down"/></svg></button>
+          </div>
+
+          <!-- barra de acciones en lote -->
+          <div class="mt-2 flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2">
+            <p class="text-xs font-black text-blue-800">2 tenants seleccionados</p>
+            <div class="flex items-center gap-1.5">
+              <button class="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-700 shadow-sm"><svg class="h-3.5 w-3.5"><use href="#i-pause"/></svg>Suspender</button>
+              <button class="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-700 shadow-sm"><svg class="h-3.5 w-3.5"><use href="#i-bolt"/></svg>Reactivar</button>
+              <button class="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-700 shadow-sm"><svg class="h-3.5 w-3.5"><use href="#i-monitor"/></svg>Aplicar límite POS</button>
+              <button class="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-700 shadow-sm"><svg class="h-3.5 w-3.5"><use href="#i-download"/></svg>Exportar</button>
+              <button class="grid h-7 w-7 place-items-center rounded-lg text-blue-700"><svg class="h-3.5 w-3.5"><use href="#i-close"/></svg></button>
+            </div>
+          </div>
+
+          <!-- tabla densa -->
+          <div class="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <table class="w-full text-left text-[12px]">
+              <thead class="border-b border-slate-200 bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th class="w-8 py-2 pl-3"><input type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" /></th>
+                  <th class="px-2 py-2">Empresa</th>
+                  <th class="px-2 py-2">Producto</th>
+                  <th class="px-2 py-2">Licencias</th>
+                  <th class="px-2 py-2">APK</th>
+                  <th class="px-2 py-2">Endpoints</th>
+                  <th class="px-2 py-2">Sync</th>
+                  <th class="px-2 py-2">ERP</th>
+                  <th class="px-2 py-2">Estado</th>
+                  <th class="px-2 py-2"></th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr class="hover:bg-blue-50/40">
+                  <td class="py-1.5 pl-3"><input type="checkbox" checked class="h-3.5 w-3.5 rounded border-slate-300" /></td>
+                  <td class="px-2 py-1.5"><div class="flex items-center gap-1.5"><span class="font-bold text-slate-800">Ferretería Central</span></div><div class="font-mono text-[10px] text-slate-400">ferreteria_central</div></td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-black text-blue-700">POS</span></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-amber-700">2/2</span><div class="mt-1 h-1 w-14 rounded-full bg-slate-100"><div class="h-full w-full rounded-full bg-amber-400"></div></div></td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">2.3.9</span></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-amber-700">1/2</span></td>
+                  <td class="px-2 py-1.5 font-bold text-amber-700">3 h</td>
+                  <td class="px-2 py-1.5 text-slate-500">—</td>
+                  <td class="px-2 py-1.5"><span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Activo</span></td>
+                  <td class="px-2 py-1.5 text-right"><button class="grid h-6 w-6 place-items-center rounded text-slate-400"><svg class="h-3.5 w-3.5"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr class="bg-red-50/40 hover:bg-red-50/60">
+                  <td class="py-1.5 pl-3"><input type="checkbox" checked class="h-3.5 w-3.5 rounded border-slate-300" /></td>
+                  <td class="px-2 py-1.5"><div class="flex items-center gap-1.5"><span class="font-bold text-slate-800">Colmado Doña Rosa</span><span class="rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-black uppercase text-red-700">Sin sync</span></div><div class="font-mono text-[10px] text-slate-400">dona_rosa</div></td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-black text-blue-700">POS</span></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-slate-700">1/1</span><div class="mt-1 h-1 w-14 rounded-full bg-slate-100"><div class="h-full w-full rounded-full bg-red-400"></div></div></td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">N/D</span></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-red-700">0/1</span></td>
+                  <td class="px-2 py-1.5 font-black text-red-700">nunca</td>
+                  <td class="px-2 py-1.5 text-slate-500">—</td>
+                  <td class="px-2 py-1.5"><span class="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">Trial</span></td>
+                  <td class="px-2 py-1.5 text-right"><button class="grid h-6 w-6 place-items-center rounded text-slate-400"><svg class="h-3.5 w-3.5"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr class="hover:bg-blue-50/40">
+                  <td class="py-1.5 pl-3"><input type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" /></td>
+                  <td class="px-2 py-1.5"><div class="font-bold text-slate-800">Supermercado El Sol</div><div class="font-mono text-[10px] text-slate-400">el_sol_prod</div></td>
+                  <td class="px-2 py-1.5"><div class="flex gap-1"><span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-black text-blue-700">POS</span><span class="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-black text-violet-700">ERP</span></div></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-emerald-700">4/6</span><div class="mt-1 h-1 w-14 rounded-full bg-slate-100"><div class="h-full w-[66%] rounded-full bg-emerald-500"></div></div></td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">2.4.1</span></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-emerald-700">4/5</span></td>
+                  <td class="px-2 py-1.5 font-bold text-emerald-700">2 min</td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">LISTO</span></td>
+                  <td class="px-2 py-1.5"><span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Activo</span></td>
+                  <td class="px-2 py-1.5 text-right"><button class="grid h-6 w-6 place-items-center rounded text-slate-400"><svg class="h-3.5 w-3.5"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr class="hover:bg-blue-50/40">
+                  <td class="py-1.5 pl-3"><input type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" /></td>
+                  <td class="px-2 py-1.5"><div class="font-bold text-slate-800">Farmacia San Rafael</div><div class="font-mono text-[10px] text-slate-400">san_rafael</div></td>
+                  <td class="px-2 py-1.5"><div class="flex gap-1"><span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-black text-blue-700">POS</span><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">BKP</span></div></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-amber-700">3/3</span><div class="mt-1 h-1 w-14 rounded-full bg-slate-100"><div class="h-full w-full rounded-full bg-amber-400"></div></div></td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">2.4.1</span></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-emerald-700">3/3</span></td>
+                  <td class="px-2 py-1.5 font-bold text-slate-700">12 min</td>
+                  <td class="px-2 py-1.5 text-slate-500">—</td>
+                  <td class="px-2 py-1.5"><span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Activo</span></td>
+                  <td class="px-2 py-1.5 text-right"><button class="grid h-6 w-6 place-items-center rounded text-slate-400"><svg class="h-3.5 w-3.5"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr class="hover:bg-blue-50/40">
+                  <td class="py-1.5 pl-3"><input type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" /></td>
+                  <td class="px-2 py-1.5"><div class="font-bold text-slate-800">Hotel Vista Mar</div><div class="font-mono text-[10px] text-slate-400">vista_mar</div></td>
+                  <td class="px-2 py-1.5"><div class="flex gap-1"><span class="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-black text-blue-700">POS</span><span class="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-black text-violet-700">ERP</span></div></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-red-700">6/6</span><div class="mt-1 h-1 w-14 rounded-full bg-slate-100"><div class="h-full w-full rounded-full bg-red-500"></div></div></td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">2.4.1</span></td>
+                  <td class="px-2 py-1.5"><span class="font-black text-emerald-700">6/6</span></td>
+                  <td class="px-2 py-1.5 font-bold text-slate-700">5 min</td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">PENDIENTE</span></td>
+                  <td class="px-2 py-1.5"><span class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-black uppercase text-red-700">Suspendido</span></td>
+                  <td class="px-2 py-1.5 text-right"><button class="grid h-6 w-6 place-items-center rounded text-slate-400"><svg class="h-3.5 w-3.5"><use href="#i-more"/></svg></button></td>
+                </tr>
+                <tr class="hover:bg-blue-50/40">
+                  <td class="py-1.5 pl-3"><input type="checkbox" class="h-3.5 w-3.5 rounded border-slate-300" /></td>
+                  <td class="px-2 py-1.5"><div class="font-bold text-slate-800">Distribuidora Caribe</div><div class="font-mono text-[10px] text-slate-400">caribe_dist</div></td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-black text-violet-700">ERP</span></td>
+                  <td class="px-2 py-1.5 text-slate-400">—</td>
+                  <td class="px-2 py-1.5 text-slate-400">—</td>
+                  <td class="px-2 py-1.5 text-slate-400">—</td>
+                  <td class="px-2 py-1.5 font-bold text-slate-700">1 h</td>
+                  <td class="px-2 py-1.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">LISTO</span></td>
+                  <td class="px-2 py-1.5"><span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">Activo</span></td>
+                  <td class="px-2 py-1.5 text-right"><button class="grid h-6 w-6 place-items-center rounded text-slate-400"><svg class="h-3.5 w-3.5"><use href="#i-more"/></svg></button></td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="flex items-center justify-between border-t border-slate-100 px-3 py-2 text-[11px] font-bold text-slate-500">
+              <span>6 de 128 · 2 seleccionados</span>
+              <div class="flex items-center gap-1"><button class="rounded border border-slate-200 px-2 py-0.5">Anterior</button><button class="rounded bg-slate-900 px-2 py-0.5 text-white">1</button><button class="rounded border border-slate-200 px-2 py-0.5">2</button><button class="rounded border border-slate-200 px-2 py-0.5">Siguiente</button></div>
+            </div>
+          </div>
+
+          <!-- cola de trabajo -->
+          <div class="mt-3 grid grid-cols-2 gap-3">
+            <div class="rounded-xl border border-slate-200 bg-white">
+              <div class="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+                <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Reintentos de sync en curso</p>
+                <a class="text-[10px] font-black text-blue-600">Ver cola</a>
+              </div>
+              <table class="w-full text-left text-[11px]">
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="px-3 py-2 font-bold text-slate-700">Colmado Doña Rosa</td><td class="px-2 py-2 text-slate-500">2 documentos</td><td class="px-2 py-2"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">3/5</span></td><td class="px-3 py-2 text-right text-slate-400">08:12</td></tr>
+                  <tr><td class="px-3 py-2 font-bold text-slate-700">Ferretería Central</td><td class="px-2 py-2 text-slate-500">1 documento</td><td class="px-2 py-2"><span class="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-black text-red-700">5/5</span></td><td class="px-3 py-2 text-right text-slate-400">07:40</td></tr>
+                  <tr><td class="px-3 py-2 font-bold text-slate-700">Hotel Vista Mar</td><td class="px-2 py-2 text-slate-500">3 documentos</td><td class="px-2 py-2"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">en cola</span></td><td class="px-3 py-2 text-right text-slate-400">07:15</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Uso por producto</p>
+              <div class="mt-2.5 space-y-2 text-[11px]">
+                <div><div class="flex justify-between font-bold text-slate-600"><span>POS + ERP</span><span>64 tenants</span></div><div class="mt-1 h-1.5 rounded-full bg-slate-100"><div class="h-full w-[50%] rounded-full bg-blue-600"></div></div></div>
+                <div><div class="flex justify-between font-bold text-slate-600"><span>Solo POS</span><span>41 tenants</span></div><div class="mt-1 h-1.5 rounded-full bg-slate-100"><div class="h-full w-[32%] rounded-full bg-blue-400"></div></div></div>
+                <div><div class="flex justify-between font-bold text-slate-600"><span>Solo ERP</span><span>15 tenants</span></div><div class="mt-1 h-1.5 rounded-full bg-slate-100"><div class="h-full w-[12%] rounded-full bg-violet-500"></div></div></div>
+                <div><div class="flex justify-between font-bold text-slate-600"><span>POS offline explícito</span><span>8 tenants</span></div><div class="mt-1 h-1.5 rounded-full bg-slate-100"><div class="h-full w-[7%] rounded-full bg-amber-500"></div></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- inspector fijado -->
+      <aside class="w-[520px] shrink-0 border-l border-slate-200 bg-white">
+        <div class="flex items-start justify-between border-b border-slate-100 px-4 py-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <p class="text-sm font-black text-slate-800">Caja 2</p>
+              <span class="rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-red-700">Endpoint offline</span>
+            </div>
+            <p class="mt-0.5 font-mono text-[10px] text-slate-400">Ferretería Central · DEV-9QW3PT · Naco</p>
+          </div>
+          <div class="flex items-center gap-1">
+            <button class="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-black text-slate-600">Reemplazar</button>
+            <button class="grid h-7 w-7 place-items-center rounded-lg text-slate-400"><svg class="h-3.5 w-3.5"><use href="#i-close"/></svg></button>
+          </div>
+        </div>
+
+        <div class="flex gap-1 border-b border-slate-100 px-4">
+          <button class="border-b-2 border-blue-600 px-1 pb-2 pt-2.5 text-[11px] font-black text-blue-700">Resumen</button>
+          <button class="border-b-2 border-transparent px-1 pb-2 pt-2.5 text-[11px] font-bold text-slate-500">Devices</button>
+          <button class="border-b-2 border-transparent px-1 pb-2 pt-2.5 text-[11px] font-bold text-slate-500">ERP</button>
+          <button class="border-b-2 border-transparent px-1 pb-2 pt-2.5 text-[11px] font-bold text-slate-500">Sync</button>
+          <button class="border-b-2 border-transparent px-1 pb-2 pt-2.5 text-[11px] font-bold text-slate-500">Fiscal</button>
+          <button class="border-b-2 border-transparent px-1 pb-2 pt-2.5 text-[11px] font-bold text-slate-500">Intentos</button>
+        </div>
+
+        <div class="space-y-3 px-4 py-3">
+          <div class="grid grid-cols-3 gap-2">
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2"><p class="text-[9px] font-black uppercase tracking-wider text-slate-400">Licencia</p><p class="text-sm font-black text-slate-800">Sin cupo</p></div>
+            <div class="rounded-lg border border-red-200 bg-red-50 px-2.5 py-2"><p class="text-[9px] font-black uppercase tracking-wider text-red-600">Latido</p><p class="text-sm font-black text-red-700">hace 26 h</p></div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2"><p class="text-[9px] font-black uppercase tracking-wider text-slate-400">APK</p><p class="text-sm font-black text-amber-700">2.3.9</p></div>
+          </div>
+
+          <div class="rounded-lg border border-slate-200">
+            <div class="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+              <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Identidad y autorización</p>
+              <button class="text-[10px] font-black text-blue-600">Reparar enlace ERP</button>
+            </div>
+            <dl class="grid grid-cols-2 gap-x-3 gap-y-2 px-3 py-2.5 text-[11px]">
+              <div><dt class="font-bold text-slate-400">Autorizado</dt><dd class="font-mono font-bold text-slate-700">DEV-9QW3PT</dd></div>
+              <div><dt class="font-bold text-slate-400">Visto por POS</dt><dd class="font-mono font-bold text-slate-700">DEV-9QW3PT</dd></div>
+              <div><dt class="font-bold text-slate-400">En ERP</dt><dd class="font-mono font-bold text-amber-700">— sin confirmar</dd></div>
+              <div><dt class="font-bold text-slate-400">Estado auth</dt><dd><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">WAITING_ERP</span></dd></div>
+            </dl>
+          </div>
+
+          <div class="rounded-lg border border-slate-200">
+            <div class="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+              <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Timeline (últimas 26 h)</p>
+              <a class="text-[10px] font-black text-blue-600">Ver todo</a>
+            </div>
+            <ol class="space-y-2 px-3 py-2.5">
+              <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-red-500"></span><div><p class="text-[11px] font-bold text-slate-700">Sin latido desde hace 26 h</p><p class="text-[10px] text-slate-400">endpoint publicado · Naco</p></div></li>
+              <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span><div><p class="text-[11px] font-bold text-slate-700">2 documentos pendientes de sync</p><p class="text-[10px] text-slate-400">hace 26 h · reintento automático 3/5</p></div></li>
+              <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400"></span><div><p class="text-[11px] font-bold text-slate-700">Takeover aprobado en Cloud-Admin</p><p class="text-[10px] text-slate-400">hace 2 días · FD</p></div></li>
+            </ol>
+            <div class="rounded-lg border border-slate-200">
+              <div class="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+                <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Documentos pendientes</p>
+                <span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">2</span>
+              </div>
+              <table class="w-full text-left text-[11px]">
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="px-3 py-2"><p class="font-bold text-slate-700">Factura F-00123</p><p class="text-[10px] text-slate-400">RD$ 12,450 · 08:02</p></td><td class="px-2 py-2"><span class="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-black text-red-700">ERP_CONTEXT_MISSING</span></td><td class="px-3 py-2 text-right"><button class="text-[10px] font-black text-blue-600">Reparar</button></td></tr>
+                  <tr><td class="px-3 py-2"><p class="font-bold text-slate-700">Factura F-00124</p><p class="text-[10px] text-slate-400">RD$ 3,980 · 08:11</p></td><td class="px-2 py-2"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">EN COLA</span></td><td class="px-3 py-2 text-right"><button class="text-[10px] font-black text-blue-600">Reintentar</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex gap-1.5 border-t border-slate-100 px-4 py-2.5">
+          <button class="flex-1 rounded-lg bg-blue-600 px-2 py-1.5 text-[11px] font-black text-white">Reintentar sync</button>
+          <button class="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-bold text-slate-600">Rotar credenciales</button>
+          <button class="rounded-lg border border-red-200 px-2 py-1.5 text-[11px] font-bold text-red-600">Limpiar devices</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+</div>
+</body>
+</html>
