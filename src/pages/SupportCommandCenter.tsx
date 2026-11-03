@@ -3,7 +3,6 @@ import {
     AlertTriangle,
     BarChart3,
     BatteryLow,
-    Bell,
     BookOpen,
     Bot,
     Building2,
@@ -781,7 +780,6 @@ const SupportCommandCenter: React.FC = () => {
     const [ticketSort, setTicketSort] = useState<HelpdeskTicketSortKey>('activity_desc');
     const [showContextPanel, setShowContextPanel] = useState(true);
     const [isFocusMode, setIsFocusMode] = useState(false);
-    const [actorDepartmentAccess, setActorDepartmentAccess] = useState<{ all: boolean; ids: string[] }>({ all: false, ids: [] });
     const [canDeleteTickets, setCanDeleteTickets] = useState(false);
     const [canManageAssignments, setCanManageAssignments] = useState(false);
     const [isAssignmentDashboardOpen, setIsAssignmentDashboardOpen] = useState(false);
@@ -913,10 +911,6 @@ const SupportCommandCenter: React.FC = () => {
                 setTickets(mappedTickets);
                 setAgents(response.agents);
                 setTeams(response.teams);
-                setActorDepartmentAccess({
-                    all: response.actor_access.all_departments,
-                    ids: response.actor_access.department_ids,
-                });
                 setCanDeleteTickets(response.actor_access.can_delete_tickets);
                 setCanManageAssignments(response.actor_access.can_manage_assignments);
                 setReplyTemplates(response.templates);
@@ -1296,14 +1290,6 @@ const SupportCommandCenter: React.FC = () => {
             options.set(value, ticket.contact?.name || ticket.contact?.company_name || ticket.contact?.email || ticket.external_sender_email || value);
         });
         return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label, 'es'));
-    }, [tickets]);
-
-    const departmentUnreadCounts = useMemo(() => {
-        const counts: Record<string, number> = {};
-        tickets.forEach((ticket) => {
-            if (ticket.team_id && ticket.is_unread) counts[ticket.team_id] = (counts[ticket.team_id] ?? 0) + 1;
-        });
-        return counts;
     }, [tickets]);
 
     const conversationMatches = useMemo(() => {
@@ -2072,75 +2058,6 @@ const SupportCommandCenter: React.FC = () => {
 
     return (
         <div className="relative flex h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] overflow-hidden bg-slate-100">
-            <aside className={`hidden w-[56px] xl:w-[200px] shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white md:flex ${isFocusMode ? '!hidden' : ''}`}>
-                <div className="p-2 xl:p-3">
-                    <p className="hidden pb-1.5 pl-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 xl:block">Bandejas</p>
-                    <div className="space-y-1">
-                        <button
-                            type="button"
-                            title="Bandeja activa"
-                            onClick={() => { setMailboxFilter('active'); setSelectedTicketIds([]); setSelectedTicket(null); setQuickFilter('none'); }}
-                            className={`flex w-full items-center justify-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors xl:justify-start xl:px-3 ${mailboxFilter === 'active' && quickFilter === 'none' ? 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200' : 'text-slate-600 hover:bg-slate-50'}`}
-                        >
-                            <Mail size={16} className={mailboxFilter === 'active' && quickFilter === 'none' ? 'text-indigo-600' : 'text-slate-400'} />
-                            <span className="hidden flex-1 truncate text-[13px] font-bold xl:inline">Bandeja activa</span>
-                            <span className="hidden rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white xl:inline-flex">{ticketStats.active}</span>
-                        </button>
-                        <button
-                            type="button"
-                            title="Sin asignar"
-                            onClick={() => { setQuickFilter('unassigned'); setMailboxFilter('active'); setFilterStatus('Todos'); setFilterSource('Todos'); setSelectedTicketIds([]); setSelectedTicket(null); }}
-                            className={`flex w-full items-center justify-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors xl:justify-start xl:px-3 ${mailboxFilter === 'active' && quickFilter === 'unassigned' ? 'bg-amber-50 text-amber-900 ring-1 ring-amber-200' : 'text-slate-600 hover:bg-slate-50'}`}
-                        >
-                            <UserPlus size={16} className={mailboxFilter === 'active' && quickFilter === 'unassigned' ? 'text-amber-600' : 'text-slate-400'} />
-                            <span className="hidden flex-1 truncate text-[13px] font-bold xl:inline">Sin asignar</span>
-                            <span className="hidden rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 xl:inline-flex">{ticketStats.unassigned}</span>
-                        </button>
-                        <button
-                            type="button"
-                            title="Spam"
-                            onClick={() => { setMailboxFilter('spam'); setSelectedTicketIds([]); setSelectedTicket(null); setFilterStatus('Todos'); setQuickFilter('none'); }}
-                            className={`flex w-full items-center justify-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors xl:justify-start xl:px-3 ${mailboxFilter === 'spam' ? 'bg-red-50 text-red-900 ring-1 ring-red-200' : 'text-slate-600 hover:bg-slate-50'}`}
-                        >
-                            <AlertTriangle size={16} className={mailboxFilter === 'spam' ? 'text-red-500' : 'text-slate-400'} />
-                            <span className="hidden flex-1 truncate text-[13px] font-bold xl:inline">Spam</span>
-                            <span className="hidden rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 xl:inline-flex">{ticketStats.spam}</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div className="border-t border-slate-100 p-2 xl:p-3">
-                    <p className="hidden pb-1.5 pl-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 xl:block">Departamentos</p>
-                    <div className="space-y-0.5">
-                        {teams.filter((team) => actorDepartmentAccess.all || actorDepartmentAccess.ids.includes(team.id)).map((team) => (
-                            <button
-                                key={team.id}
-                                type="button"
-                                title={team.name}
-                                onClick={() => setFilterTeam((current) => current === team.id ? 'Todos' : team.id)}
-                                className={`flex w-full items-center justify-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors xl:justify-start xl:px-3 ${filterTeam === team.id ? 'bg-indigo-50 text-indigo-900' : 'text-slate-600 hover:bg-slate-50'}`}
-                            >
-                                <Bell size={14} className={filterTeam === team.id ? 'text-indigo-600' : 'text-slate-400'} />
-                                <span className="hidden flex-1 truncate text-[13px] font-semibold xl:inline">{team.name}</span>
-                                {departmentUnreadCounts[team.id] ? <span className="hidden rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white xl:inline-flex">{departmentUnreadCounts[team.id]}</span> : null}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                <div className="border-t border-slate-100 p-2 xl:p-3">
-                    <p className="hidden pb-1.5 pl-1 text-[10px] font-black uppercase tracking-[0.16em] text-slate-400 xl:block">Agentes</p>
-                    <div className="space-y-0.5">
-                        {agents.map((agent) => (
-                            <div key={agent.id} title={agent.full_name} className="flex items-center justify-center gap-2.5 rounded-lg px-2 py-1.5 xl:justify-start xl:px-3">
-                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-[9px] font-black text-slate-600">{agent.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase()}</span>
-                                <span className="hidden flex-1 truncate text-[13px] font-semibold text-slate-600 xl:inline">{agent.full_name}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </aside>
-
             <section className={`${selectedTicket ? 'hidden md:flex' : 'flex'} h-full w-full md:w-[340px] 2xl:w-[360px] shrink-0 flex-col overflow-hidden border-r border-slate-200 bg-white shadow-sm ${isFocusMode ? '!hidden' : ''}`}>
                 <div className="shrink-0 border-b border-slate-100 px-3 pb-3 pt-2">
                     <div className="space-y-2.5">
@@ -2156,18 +2073,10 @@ const SupportCommandCenter: React.FC = () => {
                                 <RefreshCw size={14} className={isRefreshingTickets ? 'animate-spin' : ''} />
                             </button>
                         </div>
-                        <button
-                            type="button"
-                            onClick={openAssignmentDashboard}
-                            className="flex w-full items-center justify-between rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-left text-xs font-bold text-indigo-800 transition-colors hover:border-indigo-300 hover:bg-indigo-100"
-                        >
-                            <span className="inline-flex items-center gap-2"><BarChart3 size={15} />Operación de agentes</span>
-                            <span>{ticketStats.unassigned} pendientes</span>
-                        </button>
                         <div className="flex items-center justify-between gap-2">
                             <div className="flex min-w-0 items-center gap-2">
                                 <h3 className="truncate text-[13px] font-black text-slate-800">{currentViewLabel}</h3>
-                                <span className="shrink-0 text-[11px] font-semibold text-slate-400">Recuento total: {filteredTickets.length}</span>
+                                <span className="shrink-0 text-[11px] font-semibold text-slate-400">Recuento total: {filteredTickets.length}{ticketStats.unread > 0 ? ` · ${ticketStats.unread} sin leer` : ''}</span>
                             </div>
                             <div className="flex shrink-0 items-center gap-1">
                                 <button type="button" onClick={() => setViewsOpen((current) => !current)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 hover:bg-slate-50" aria-haspopup="listbox" aria-expanded={viewsOpen}>
@@ -2185,6 +2094,10 @@ const SupportCommandCenter: React.FC = () => {
                                         {ticketSortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                                     </select>
                                 </div>
+                                <button type="button" onClick={openAssignmentDashboard} title="Operación de agentes" aria-label="Operación de agentes" className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100">
+                                    <BarChart3 size={13} />
+                                    {ticketStats.unassigned}
+                                </button>
                             </div>
                         </div>
                         {viewsOpen ? (
@@ -2320,16 +2233,6 @@ const SupportCommandCenter: React.FC = () => {
                             </div>
                         ) : null}
 
-                        <p className="border-t border-slate-200 pt-2 text-[11px] font-medium text-slate-500">
-                            Mostrando <span className="font-bold text-slate-800">{filteredTickets.length}</span> de{' '}
-                            <span className="font-bold text-slate-800">{tickets.length}</span> tickets
-                            {ticketStats.unread > 0 ? (
-                                <span className="ml-2 inline-flex items-center gap-1 font-bold text-indigo-700">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-                                    {ticketStats.unread} sin leer
-                                </span>
-                            ) : null}
-                        </p>
                         {bulkActionError && <p className="text-xs font-medium text-red-600">{bulkActionError}</p>}
                         {actionNotice && <p className="text-xs font-medium text-emerald-700">{actionNotice}</p>}
                     </div>
@@ -2422,35 +2325,26 @@ const SupportCommandCenter: React.FC = () => {
                         <div className="shrink-0 border-b border-slate-200 bg-white px-5 py-4">
                             <div className="flex items-start justify-between gap-4">
                                 <div className="min-w-0">
-                                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${sourceStyles[selectedTicket.source] ?? sourceStyles.POS}`}>
-                                            {selectedTicket.source === 'Email' ? <Mail size={12} /> : <MonitorSmartphone size={12} />}
+                                    <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${sourceStyles[selectedTicket.source] ?? sourceStyles.POS}`}>
+                                            {selectedTicket.source === 'Email' ? <Mail size={11} /> : <MonitorSmartphone size={11} />}
                                             {selectedTicket.source}
                                         </span>
-                                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600">
                                             {formatStatusLabel(selectedTicket.status)}
                                         </span>
-                                        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
-                                            {selectedTicket.category}
+                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${getPriorityBadgeClass(selectedTicket.priority)}`}>
+                                            {selectedTicket.priority === 'Critica' || selectedTicket.priority === 'Alta' ? <AlertTriangle size={10} /> : null}
+                                            {selectedTicket.priority}
                                         </span>
                                         {selectedTicket.assignment_status === 'spam' ? (
-                                            <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">
+                                            <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">
                                                 Spam
                                             </span>
                                         ) : null}
-                                        {selectedTicket.resolution_status && selectedTicket.resolution_status !== 'open' && (
-                                            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${resolutionStatusStyles[selectedTicket.resolution_status] ?? 'border-slate-200 bg-white text-slate-600'}`}>
-                                                {resolutionStatusLabels[selectedTicket.resolution_status] ?? selectedTicket.resolution_status}
-                                            </span>
-                                        )}
-                                        {selectedTicket.customer_rating ? (
-                                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
-                                                {selectedTicket.customer_rating}/5 estrellas
-                                            </span>
-                                        ) : null}
                                         {selectedTicket.insight?.autonomy_action ? (
-                                            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${selectedTicket.insight.autonomy_action === 'auto_reply' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : selectedTicket.insight.autonomy_action === 'escalate' ? 'border-red-200 bg-red-50 text-red-700' : selectedTicket.insight.autonomy_action === 'draft' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-violet-200 bg-violet-50 text-violet-700'}`} title={(selectedTicket.insight.autonomy_reasons ?? []).join(', ')}>
-                                                <Bot size={11} />
+                                            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${selectedTicket.insight.autonomy_action === 'auto_reply' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : selectedTicket.insight.autonomy_action === 'escalate' ? 'border-red-200 bg-red-50 text-red-700' : selectedTicket.insight.autonomy_action === 'draft' ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-violet-200 bg-violet-50 text-violet-700'}`} title={(selectedTicket.insight.autonomy_reasons ?? []).join(', ')}>
+                                                <Bot size={10} />
                                                 IA: {selectedTicket.insight.autonomy_action === 'auto_reply' ? 'respondió' : selectedTicket.insight.autonomy_action === 'escalate' ? 'escaló' : selectedTicket.insight.autonomy_action === 'draft' ? 'borrador' : selectedTicket.insight.autonomy_action === 'observe' ? 'observando' : 'acuse'}
                                                 {typeof selectedTicket.insight.response_confidence === 'number' ? ` · ${Math.round(selectedTicket.insight.response_confidence * 100)}%` : ''}
                                             </span>
@@ -2531,16 +2425,6 @@ const SupportCommandCenter: React.FC = () => {
                                 <button type="button" onClick={() => setConversationTab('attachments')} className={`border-b-2 pb-1.5 ${conversationTab === 'attachments' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Adjunto</button>
                                 <button type="button" onClick={() => setConversationTab('history')} className={`border-b-2 pb-1.5 ${conversationTab === 'history' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Historia</button>
                             </div>
-
-                            {ticketTimeline ? (
-                                <div className="mt-4 grid grid-cols-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80 sm:grid-cols-3 xl:grid-cols-5">
-                                    <TicketMetric label="Creado" value={formatTime(selectedTicket.created_at)} />
-                                    <TicketMetric label="Primera respuesta" value={ticketTimeline.firstResponse} />
-                                    <TicketMetric label="Tiempo abierto" value={ticketTimeline.openTime} />
-                                    <TicketMetric label="SLA" value={slaLabels[selectedTicket.contact?.metadata?.sla ?? 'standard'] ?? 'Estándar'} accent />
-                                    <TicketMetric label="Última actividad" value={ticketTimeline.lastActivity} />
-                                </div>
-                            ) : null}
 
                             {selectedTicket.resolution_status === 'pending_customer_confirmation' && (
                                 <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -2865,6 +2749,85 @@ const SupportCommandCenter: React.FC = () => {
 
                     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
                         <section>
+                            <h4 className="mb-2 text-xs font-semibold text-slate-500">Información de Contacto</h4>
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+                                <p className="font-bold text-slate-800">{getContactLabel(selectedTicket)}</p>
+                                <p className="mt-1 text-xs text-slate-500">{selectedTicket.contact?.company_name || selectedTicket.tenant_name}</p>
+
+                                {getTicketRecipientEmail(selectedTicket) && (
+                                    <button
+                                        onClick={openContactModal}
+                                        disabled={isCreatingContact}
+                                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                        <UserPlus size={14} />
+                                        {selectedTicket.contact?.company_name || selectedTicket.contact?.phone ? 'Editar contacto' : 'Convertir en contacto'}
+                                    </button>
+                                )}
+
+                                {selectedTicket.contact?.metadata?.sla && (
+                                    <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-600">
+                                        SLA: <span className="font-bold text-slate-800">{slaLabels[selectedTicket.contact.metadata.sla] ?? selectedTicket.contact.metadata.sla}</span>
+                                    </div>
+                                )}
+
+                                {selectedTicket.contact && (
+                                    <div className="mt-3 space-y-2 border-t border-slate-200 pt-3 text-xs">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-slate-500">Contrato</span>
+                                            <span className={`rounded-full px-2 py-0.5 font-bold ${selectedTicket.contact.has_retainership ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                                                {selectedTicket.contact.has_retainership ? 'Iguala' : 'Sin iguala'}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center justify-between"><span className="text-slate-500">Renovación</span><span className="font-bold text-slate-800">{formatCustomerDate(selectedTicket.contact.renewal_at)}</span></div>
+                                        <div>
+                                            <p className="mb-1 font-bold text-slate-700">Servicios activos</p>
+                                            <div className="flex flex-wrap gap-1">
+                                                {(selectedTicket.contact.customer_services ?? []).filter((service) => service.status === 'active').map((service) => (
+                                                    <span key={service.id} className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-1 font-bold text-indigo-700">{service.service_name} × {service.quantity}</span>
+                                                ))}
+                                                {!(selectedTicket.contact.customer_services ?? []).some((service) => service.status === 'active') ? <span className="text-slate-400">Sin servicios registrados</span> : null}
+                                            </div>
+                                        </div>
+                                        {selectedTicket.contact.administrative_notes ? <p className="rounded-lg border border-amber-100 bg-amber-50 p-2 text-amber-800">{selectedTicket.contact.administrative_notes}</p> : null}
+                                    </div>
+                                )}
+
+                                {selectedTicket.assignment_status === 'needs_assignment' && (
+                                    <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                                        <AlertTriangle className="mt-0.5 shrink-0" size={14} />
+                                        Falta vincular este contacto a un tenant.
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+
+                        <section>
+                            <h4 className="mb-2 text-xs font-semibold text-slate-500">Métricas</h4>
+                            <div className="space-y-2">
+                                {ticketTimeline ? (
+                                    <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-slate-200 bg-slate-50/80">
+                                        <TicketMetric label="Creado" value={formatTime(selectedTicket.created_at)} />
+                                        <TicketMetric label="1ª respuesta" value={ticketTimeline.firstResponse} />
+                                        <TicketMetric label="Abierto" value={ticketTimeline.openTime} />
+                                        <TicketMetric label="SLA" value={slaLabels[selectedTicket.sla_level ?? selectedTicket.contact?.metadata?.sla ?? 'standard'] ?? 'Estándar'} accent />
+                                        <TicketMetric label="Última act." value={ticketTimeline.lastActivity} />
+                                    </div>
+                                ) : null}
+                                {selectedTicket.resolution_status && selectedTicket.resolution_status !== 'open' ? (
+                                    <p className={`rounded-lg border px-2 py-1.5 text-xs font-medium ${resolutionStatusStyles[selectedTicket.resolution_status] ?? 'border-slate-200 bg-white text-slate-600'}`}>
+                                        {resolutionStatusLabels[selectedTicket.resolution_status] ?? selectedTicket.resolution_status}
+                                    </p>
+                                ) : null}
+                                {selectedTicket.customer_rating ? (
+                                    <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs font-bold text-emerald-700">
+                                        Valoración del cliente: {selectedTicket.customer_rating}/5
+                                    </p>
+                                ) : null}
+                            </div>
+                        </section>
+
+                        <section>
                             <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold text-slate-500"><Users size={13} /> Información clave</h4>
                             <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
                                 <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Estado</p>
@@ -3006,60 +2969,6 @@ const SupportCommandCenter: React.FC = () => {
                             ) : (
                                 <p className="text-xs text-slate-400">Sin artículos sugeridos para este ticket.</p>
                             )}
-                        </section>
-
-                        <section>
-                            <h4 className="mb-2 text-xs font-semibold text-slate-500">Información de Contacto</h4>
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
-                                <p className="font-bold text-slate-800">{getContactLabel(selectedTicket)}</p>
-                                <p className="mt-1 text-xs text-slate-500">{selectedTicket.contact?.company_name || selectedTicket.tenant_name}</p>
-
-                                {getTicketRecipientEmail(selectedTicket) && (
-                                    <button
-                                        onClick={openContactModal}
-                                        disabled={isCreatingContact}
-                                        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                        <UserPlus size={14} />
-                                        {selectedTicket.contact?.company_name || selectedTicket.contact?.phone ? 'Editar contacto' : 'Convertir en contacto'}
-                                    </button>
-                                )}
-
-                                {selectedTicket.contact?.metadata?.sla && (
-                                    <div className="mt-3 rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-600">
-                                        SLA: <span className="font-bold text-slate-800">{slaLabels[selectedTicket.contact.metadata.sla] ?? selectedTicket.contact.metadata.sla}</span>
-                                    </div>
-                                )}
-
-                                {selectedTicket.contact && (
-                                    <div className="mt-3 space-y-2 border-t border-slate-200 pt-3 text-xs">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-slate-500">Contrato</span>
-                                            <span className={`rounded-full px-2 py-0.5 font-bold ${selectedTicket.contact.has_retainership ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
-                                                {selectedTicket.contact.has_retainership ? 'Iguala' : 'Sin iguala'}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center justify-between"><span className="text-slate-500">Renovación</span><span className="font-bold text-slate-800">{formatCustomerDate(selectedTicket.contact.renewal_at)}</span></div>
-                                        <div>
-                                            <p className="mb-1 font-bold text-slate-700">Servicios activos</p>
-                                            <div className="flex flex-wrap gap-1">
-                                                {(selectedTicket.contact.customer_services ?? []).filter((service) => service.status === 'active').map((service) => (
-                                                    <span key={service.id} className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-1 font-bold text-indigo-700">{service.service_name} × {service.quantity}</span>
-                                                ))}
-                                                {!(selectedTicket.contact.customer_services ?? []).some((service) => service.status === 'active') ? <span className="text-slate-400">Sin servicios registrados</span> : null}
-                                            </div>
-                                        </div>
-                                        {selectedTicket.contact.administrative_notes ? <p className="rounded-lg border border-amber-100 bg-amber-50 p-2 text-amber-800">{selectedTicket.contact.administrative_notes}</p> : null}
-                                    </div>
-                                )}
-
-                                {selectedTicket.assignment_status === 'needs_assignment' && (
-                                    <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-                                        <AlertTriangle className="mt-0.5 shrink-0" size={14} />
-                                        Falta vincular este contacto a un tenant.
-                                    </div>
-                                )}
-                            </div>
                         </section>
 
                         <section>
