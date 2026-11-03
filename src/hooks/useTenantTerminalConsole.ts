@@ -32,6 +32,9 @@ import {
     isPendingDeviceUnauthorizedAttempt,
 } from '../lib/terminalIdentity';
 import {
+    formatApkVersion,
+    getApkVersionKey,
+    getRegistryStatusLabel,
     getTakeoverSelectionKey,
     getTerminalKey,
     isErpProfileIncomplete,
@@ -1166,63 +1169,6 @@ export const useTenantTerminalConsole = ({
         }
     };
 
-    const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
-        if (terminal.registry?.is_revoked || terminal.registry?.auth_status === 'OLD_DEVICE_REVOKED') return 'REVOCADA';
-        const registryStatus = (terminal.registry?.status || '').toUpperCase();
-        if (registryStatus === 'ONLINE') return 'ONLINE';
-        if (registryStatus === 'OFFLINE') return 'OFFLINE';
-        return terminal.is_active ? 'ACTIVA' : 'INACTIVA';
-    };
-
-    const getRegistryStatusClassName = (statusLabel: string) => {
-        if (statusLabel === 'ONLINE') return 'bg-emerald-100 text-emerald-700';
-        if (statusLabel === 'REVOCADA') return 'bg-rose-100 text-rose-700';
-        return 'bg-slate-100 text-slate-500';
-    };
-
-    const getEffectiveApkVersion = (terminal: TenantTerminalSnapshot) => {
-        const registryDeviceId = (terminal.registry?.current_device_id || terminal.registry?.device_id || '').trim().toUpperCase();
-        const erpDeviceId = (terminal.erp_current_device_id || '').trim().toUpperCase();
-        const canUseErpVersion = Boolean(terminal.erp_app_version || terminal.erp_app_version_code)
-            && (!registryDeviceId || !erpDeviceId || registryDeviceId === erpDeviceId);
-
-        if (canUseErpVersion) {
-            return {
-                version: terminal.erp_app_version?.trim() || '',
-                versionCode: terminal.erp_app_version_code ?? null,
-                source: 'ERP',
-            };
-        }
-
-        return {
-            version: terminal.registry?.app_version?.trim() || '',
-            versionCode: terminal.registry?.app_version_code ?? null,
-            source: 'Cloud-Admin',
-        };
-    };
-
-    const getApkVersionKey = (terminal: TenantTerminalSnapshot) => {
-        const apkVersion = getEffectiveApkVersion(terminal);
-        const version = apkVersion.version;
-        const versionCode = apkVersion.versionCode ? String(apkVersion.versionCode) : '';
-        if (!version && !versionCode) return '';
-        return `${version}::${versionCode}`;
-    };
-
-    const formatApkVersion = (terminal: TenantTerminalSnapshot) => {
-        const { version, versionCode } = getEffectiveApkVersion(terminal);
-        if (!version && !versionCode) return 'N/D';
-        if (version && versionCode) return `APK v${version} (${versionCode})`;
-        if (version) return `APK v${version}`;
-        return `Build ${versionCode}`;
-    };
-
-    const getApkVersionSourceLabel = (terminal: TenantTerminalSnapshot) => {
-        const apkVersion = getEffectiveApkVersion(terminal);
-        if (!apkVersion.version && !apkVersion.versionCode) return '';
-        return apkVersion.source;
-    };
-
     const referenceVersionCandidate = (() => {
         if (latestPosApkRelease) {
             return {
@@ -1474,11 +1420,6 @@ export const useTenantTerminalConsole = ({
         handleTerminalLocalRebuild,
 
         // --- derived values ---
-        getRegistryStatusLabel,
-        getRegistryStatusClassName,
-        getApkVersionKey,
-        formatApkVersion,
-        getApkVersionSourceLabel,
         referenceVersionCandidate,
         referenceVersionKey,
         outOfVersionCount,

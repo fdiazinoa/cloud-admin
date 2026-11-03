@@ -51,6 +51,8 @@ interface ErpModuleStoreModalProps {
     canManage: boolean;
     onClose: () => void;
     onSaved?: (activeModules: number) => void;
+    /** `inline` renderiza la tienda dentro de la ficha, sin diálogo. */
+    presentation?: 'modal' | 'inline';
 }
 
 function getErrorMessage(error: unknown) {
@@ -74,7 +76,9 @@ export function ErpModuleStoreModal({
     canManage,
     onClose,
     onSaved,
+    presentation = 'modal',
 }: ErpModuleStoreModalProps) {
+    const isInline = presentation === 'inline';
     const [overview, setOverview] = useState<ErpModuleStoreOverview | null>(null);
     const [draft, setDraft] = useState<Record<string, DraftEntitlement>>({});
     const [loading, setLoading] = useState(false);
@@ -182,10 +186,9 @@ export function ErpModuleStoreModal({
 
     if (!isOpen) return null;
 
-    return (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-            <div role="dialog" aria-modal="true" aria-labelledby="erp-module-store-title" className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
-                <header className="flex items-start justify-between border-b border-slate-200 bg-slate-50 px-6 py-5">
+    const content = (
+        <>
+                <header className={`flex items-start justify-between border-b border-slate-200 bg-slate-50 ${isInline ? 'px-4 py-3' : 'px-6 py-5'}`}>
                     <div>
                         <div className="flex items-center gap-3">
                             <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white"><PackagePlus size={22} /></span>
@@ -198,7 +201,7 @@ export function ErpModuleStoreModal({
                     <button type="button" onClick={onClose} disabled={saving} aria-label="Cerrar tienda de módulos" className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 disabled:opacity-50"><X size={20} /></button>
                 </header>
 
-                <div className="min-h-0 flex-1 overflow-y-auto p-6">
+                <div className={isInline ? 'p-4' : 'min-h-0 flex-1 overflow-y-auto p-6'}>
                     {loading ? (
                         <div className="flex min-h-80 items-center justify-center gap-3 text-sm font-bold text-slate-500"><Loader2 className="animate-spin" size={20} /> Cargando catálogo de módulos...</div>
                     ) : error && !overview ? (
@@ -250,7 +253,7 @@ export function ErpModuleStoreModal({
                     ) : null}
                 </div>
 
-                <footer className="flex flex-col gap-3 border-t border-slate-200 bg-white px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <footer className={`flex flex-col gap-3 border-t border-slate-200 bg-white sm:flex-row sm:items-center sm:justify-between ${isInline ? 'px-4 py-3' : 'px-6 py-4'}`}>
                     <div>
                         <p className="text-sm font-black text-slate-800">{activeCount} módulo{activeCount === 1 ? '' : 's'} activo{activeCount === 1 ? '' : 's'}</p>
                         <p className="text-xs text-slate-500">{canManage ? (isDirty ? 'Hay cambios sin aplicar.' : 'No hay cambios pendientes.') : 'Tu perfil tiene acceso de solo lectura.'}</p>
@@ -263,6 +266,21 @@ export function ErpModuleStoreModal({
                         </button>
                     </div>
                 </footer>
+        </>
+    );
+
+    if (isInline) {
+        return (
+            <section aria-label="Módulos y licencias ERP" className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                {content}
+            </section>
+        );
+    }
+
+    return (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+            <div role="dialog" aria-modal="true" aria-labelledby="erp-module-store-title" className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+                {content}
             </div>
         </div>
     );
