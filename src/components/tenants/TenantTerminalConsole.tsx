@@ -217,6 +217,7 @@ export const TenantTerminalConsole: React.FC<TenantTerminalConsoleProps> = ({
                     <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
                         <div className="min-w-0">
                             <h3 className="text-base font-black text-slate-900">Terminales del tenant</h3>
+                            {tenant.status === 'SUSPENDED' ? <p role="alert" className="text-sm font-bold text-red-700">Tenant suspendido: acceso bloqueado para todas las cajas. Una caja desconectada recibirá el estado al reconectarse.</p> : null}
                             <p className="truncate text-[11px] text-slate-500">
                                 {tenant.name} · {tenant.contracted_product || 'sin producto'} · {tenantTerminals.length} terminal(es)
                             </p>

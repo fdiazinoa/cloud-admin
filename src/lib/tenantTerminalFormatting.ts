@@ -215,7 +215,8 @@ export const getCheckLabel = (value: boolean | null, readyLabel: string, missing
 };
 
 // --- Estado de registro y versión APK de una terminal ---
-export const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
+export const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot, tenantStatus?: string) => {
+    if (tenantStatus === 'SUSPENDED') return 'SUSPENDIDA';
     if (terminal.registry?.is_revoked || terminal.registry?.auth_status === 'OLD_DEVICE_REVOKED') return 'REVOCADA';
     const registryStatus = (terminal.registry?.status || '').toUpperCase();
     if (registryStatus === 'ONLINE') return 'ONLINE';
@@ -225,6 +226,7 @@ export const getRegistryStatusLabel = (terminal: TenantTerminalSnapshot) => {
 
 export const getRegistryStatusClassName = (statusLabel: string) => {
     if (statusLabel === 'ONLINE') return 'bg-emerald-100 text-emerald-700';
+    if (statusLabel === 'SUSPENDIDA') return 'bg-red-100 text-red-700';
     if (statusLabel === 'REVOCADA') return 'bg-rose-100 text-rose-700';
     return 'bg-slate-100 text-slate-500';
 };

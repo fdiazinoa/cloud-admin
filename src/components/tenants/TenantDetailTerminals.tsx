@@ -61,6 +61,7 @@ export const TenantDetailTerminals: React.FC<TenantDetailTerminalsProps> = ({ te
 
     return (
         <div className="space-y-3">
+            {tenant.status === 'SUSPENDED' ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">Tenant suspendido: todas sus cajas tienen el acceso bloqueado. El latido indica conectividad, no autorización. Las cajas desconectadas recibirán el estado al reconectarse.</div> : null}
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3">
                 <SummaryChip tone="muted">{summary.total} terminal{summary.total === 1 ? '' : 'es'}</SummaryChip>
                 <SummaryChip tone="ok">{summary.online} online</SummaryChip>
@@ -122,7 +123,7 @@ export const TenantDetailTerminals: React.FC<TenantDetailTerminalsProps> = ({ te
                                 </td>
                             </tr>
                         ) : rows.map((terminal) => {
-                            const statusLabel = getRegistryStatusLabel(terminal);
+                            const statusLabel = getRegistryStatusLabel(terminal, tenant.status);
                             const apkVersion = formatApkVersion(terminal);
                             const versionKey = getApkVersionKey(terminal);
                             const outdated = Boolean(summary.referenceVersionKey && versionKey && versionKey !== summary.referenceVersionKey);
