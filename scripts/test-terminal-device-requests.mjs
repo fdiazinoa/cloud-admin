@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readTenantTerminalSource } from './lib/tenant-terminal-source.mjs';
 
 const [
     attemptsProxy,
@@ -20,7 +21,7 @@ const [
     readFile(new URL('../supabase/functions/request-terminal-auth-attempts/index.ts', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/functions/request-terminal-device-authorization/index.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/lib/tenantService.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src/pages/Tenants.tsx', import.meta.url), 'utf8'),
+    Promise.resolve(readTenantTerminalSource()),
     readFile(new URL('../supabase/migrations/20260830224924_cloud_admin_terminal_reauthorization_permission.sql', import.meta.url), 'utf8'),
     readFile(new URL('../docs/erp-terminal-device-requests-contract.md', import.meta.url), 'utf8'),
 ]);

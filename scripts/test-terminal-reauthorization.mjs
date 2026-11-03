@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readTenantTerminalSource } from './lib/tenant-terminal-source.mjs';
 
 const [edge, service, page, proxy] = await Promise.all([
     readFile(new URL('../supabase/functions/request-terminal-device-authorization/index.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/lib/tenantService.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src/pages/Tenants.tsx', import.meta.url), 'utf8'),
+    Promise.resolve(readTenantTerminalSource()),
     readFile(new URL('../api/terminal-device-action.ts', import.meta.url), 'utf8'),
 ]);
 

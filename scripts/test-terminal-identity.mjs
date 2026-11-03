@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readTenantTerminalSource } from './lib/tenant-terminal-source.mjs';
 
 const identityLib = readFileSync('src/lib/terminalIdentity.ts', 'utf8');
-const tenantsPage = readFileSync('src/pages/Tenants.tsx', 'utf8');
+const tenantsPage = readTenantTerminalSource();
 const fiscalDebugFunction = readFileSync('supabase/functions/request-terminal-fiscal-debug/index.ts', 'utf8');
 
 assert.match(identityLib, /AUTHORIZED_CURRENT/, 'identity lib must classify authorized current devices');

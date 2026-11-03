@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readTenantTerminalSource } from './lib/tenant-terminal-source.mjs';
 import { invokeAuthenticatedEdgeFunction } from '../src/lib/authenticatedEdgeFunction.ts';
 
 function clientWith({ sessionToken = 'session-token', invokeResults, refreshedToken = 'refreshed-token' }) {
@@ -50,7 +51,7 @@ await assert.rejects(
     /sesión administrativa expiró/i,
 );
 
-const tenantPage = readFileSync('src/pages/Tenants.tsx', 'utf8');
+const tenantPage = readTenantTerminalSource();
 assert.match(
     tenantPage,
     /getLatestAvailablePosApkRelease\(\)\.catch\([\s\S]*?return null;/,

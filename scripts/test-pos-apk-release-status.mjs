@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readTenantTerminalSource } from './lib/tenant-terminal-source.mjs';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 const [page, service, api, latestEndpoint, tenants, app, migration, config, workflow] = await Promise.all([
@@ -7,7 +8,7 @@ const [page, service, api, latestEndpoint, tenants, app, migration, config, work
     read('src/lib/posApkReleases.ts'),
     read('supabase/functions/pos-apk-releases-api/index.ts'),
     read('api/pos-apk/latest.ts'),
-    read('src/pages/Tenants.tsx'),
+    Promise.resolve(readTenantTerminalSource()),
     read('src/App.tsx'),
     read('supabase/migrations/20260912192818_manage_pos_apk_release_status.sql'),
     read('supabase/config.toml'),
@@ -20,7 +21,7 @@ for (const status of ['draft', 'internal_testing', 'beta', 'available', 'retired
     assert.ok(migration.includes(`'${status}'`), `APK migration is missing ${status}`);
 }
 
-assert.ok(service.includes("supabase.functions.invoke('pos-apk-releases-api'"), 'APK management must use the protected API');
+assert.ok(service.includes("invokeAuthenticatedEdgeFunction(supabase, 'pos-apk-releases-api'"), 'APK management must use the protected API');
 assert.ok(!service.includes('supabaseAdmin'), 'APK management must not expose service-role access in the browser');
 assert.ok(api.includes("action === 'list'"), 'APK API must separate list permissions');
 assert.ok(api.includes("action === 'latest'"), 'Tenant reference lookup must use its own action');
