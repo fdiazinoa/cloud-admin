@@ -19,13 +19,14 @@ const hrDisabled = cascadeErpModuleSelection(payrollEnabled.draft, dependencies,
 assert.equal(hrDisabled.draft.hr.enabled, false);
 assert.equal(hrDisabled.draft.payroll.enabled, false, 'disabling HR must also disable Payroll');
 
-const [migration, edgeFunction, component, service, tenantsPage, app] = await Promise.all([
+const [migration, edgeFunction, component, service, tenantsPage, app, tenantEditModal] = await Promise.all([
     readFile(new URL('../supabase/migrations/20260815134742_erp_module_licensing.sql', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/functions/module-licensing-api/index.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/ErpModuleStoreModal.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/lib/erpModuleLicensing.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/pages/Tenants.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/App.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/tenants/TenantEditModal.tsx', import.meta.url), 'utf8'),
 ]);
 
 for (const moduleCode of ['hr', 'payroll', 'accounting', 'shopify', 'uber']) {
@@ -51,7 +52,7 @@ assert.match(component, /Módulos y licencias ERP/);
 assert.match(component, /Pendiente ERP/);
 assert.match(component, /cascadeErpModuleSelection/);
 assert.match(service, /module-licensing-api/);
-assert.match(tenantsPage, /Abrir módulos ERP/);
+assert.match(tenantEditModal, /Abrir módulos ERP/);
 assert.match(tenantsPage, /canManageErpModules/);
 assert.match(app, /<Tenants permissions=\{permissions\}/);
 

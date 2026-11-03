@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readTenantTerminalSource } from './lib/tenant-terminal-source.mjs';
 
 const actionFunction = readFileSync('supabase/functions/request-terminal-device-authorization/index.ts', 'utf8');
 const attemptsFunction = readFileSync('supabase/functions/request-terminal-auth-attempts/index.ts', 'utf8');
@@ -7,7 +8,7 @@ const deviceActionProxy = readFileSync('api/terminal-device-action.ts', 'utf8');
 const authAttemptsProxy = readFileSync('api/terminal-auth-attempts.ts', 'utf8');
 const terminalTakeoverProxy = readFileSync('api/terminal-takeover.ts', 'utf8');
 const terminalTakeoverFunction = readFileSync('supabase/functions/request-terminal-takeover/index.ts', 'utf8');
-const tenantsPage = readFileSync('src/pages/Tenants.tsx', 'utf8');
+const tenantsPage = readTenantTerminalSource();
 const migration = readFileSync('supabase/migrations/202605271015_terminal_device_authorization.sql', 'utf8');
 const pairingMigration = readFileSync('supabase/migrations/202605301845_terminal_pairing_code_flow.sql', 'utf8');
 const clearDevicesMigration = readFileSync('supabase/migrations/202605302010_terminal_devices_clear_action.sql', 'utf8');

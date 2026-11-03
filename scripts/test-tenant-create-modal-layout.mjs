@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const page = readFileSync('src/pages/Tenants.tsx', 'utf8');
+const page = readFileSync('src/components/tenants/TenantCreateModal.tsx', 'utf8');
 
 assert.match(
     page,
@@ -20,7 +20,7 @@ assert.match(
 );
 assert.match(
     page,
-    /renderProductSummary\(formData\.products, true\)/,
+    /<TenantProductSummary products=\{formData\.products\} compact \/>/,
     'Create tenant modal must use the compact product summary',
 );
 assert.match(

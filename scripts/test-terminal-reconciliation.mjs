@@ -59,13 +59,15 @@ const validPreview = buildTerminalReconciliationPreview(orphanSnapshot, {
 assert.equal(validPreview.executable, true);
 assert.equal(validPreview.resultingAuthorizedDeviceId, 'DEV-1DU4NVYT');
 
-const [migration, catalogConfigMigration, displayNameMigration, endpoint, service, ui] = await Promise.all([
+const [migration, catalogConfigMigration, displayNameMigration, endpoint, service, ui, terminalConsole, terminalHook] = await Promise.all([
     readFile(new URL('../supabase/migrations/20260821215032_terminal_identity_reconciliation.sql', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/migrations/20260821221528_add_terminal_catalog_config.sql', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/migrations/20260821223327_terminal_reconciliation_uses_erp_display_name.sql', import.meta.url), 'utf8'),
     readFile(new URL('../api/terminal-reconciliation.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/lib/tenantService.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/pages/Tenants.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/tenants/TenantTerminalConsole.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/hooks/useTenantTerminalConsole.ts', import.meta.url), 'utf8'),
 ]);
 
 // 2. orphan_registry -> explicit_mapping/ERP canónico en una única transacción.
@@ -125,12 +127,12 @@ assert.deepEqual(affected.map((row) => row.id), [sourceRegistryId, siblingRegist
 assert.match(migration, /upper\(btrim\(registry\.terminal_id\)\) = upper\(btrim\(v_source\.terminal_id\)\)/);
 
 // 10. La UI refresca las terminales tras ejecutar y muestra todos los planes.
-assert.match(ui, /Ejecutar reconciliación/);
-assert.match(ui, /await refreshTerminalModalData\(\)/);
-assert.match(ui, /Devices históricos/);
-assert.match(ui, /Registros huérfanos afectados/);
-assert.match(ui, /Plan de escritura/);
-assert.match(ui, /Plan de rollback/);
+assert.match(terminalConsole, /Ejecutar reconciliación/);
+assert.match(terminalHook, /await refreshTerminalModalData\(\)/);
+assert.match(terminalConsole, /Devices históricos/);
+assert.match(terminalConsole, /Registros huérfanos afectados/);
+assert.match(terminalConsole, /Plan de escritura/);
+assert.match(terminalConsole, /Plan de rollback/);
 
 // 11. Autorización y auditoría incluyen administrador, before/after y correlación.
 assert.match(endpoint, /admin\.auth\.getUser\(accessToken\)/);
@@ -154,6 +156,6 @@ assert.doesNotMatch(endpoint, /Access-Control-Allow-Origin[^\n]*\|\| "\*"/);
 
 // El hash del dry-run es obligatorio al ejecutar y evita planes obsoletos.
 assert.match(migration, /RECONCILIATION_PLAN_CHANGED/);
-assert.match(ui, /serverPreview\?\.plan_hash/);
+assert.match(terminalConsole, /serverPreview\?\.plan_hash/);
 
 console.log('terminal reconciliation regression: ok');

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readTenantTerminalSource } from './lib/tenant-terminal-source.mjs';
 
 const readinessFunction = readFileSync('supabase/functions/request-terminal-fiscal-readiness/index.ts', 'utf8');
 const configFunction = readFileSync('supabase/functions/request-terminal-fiscal-config/index.ts', 'utf8');
-const tenantsPage = readFileSync('src/pages/Tenants.tsx', 'utf8');
+const tenantsPage = readTenantTerminalSource();
 const migration = readFileSync('supabase/migrations/202605271145_terminal_fiscal_config.sql', 'utf8');
 
 assert.match(readinessFunction, /\/api\/sync\/terminals\/.*fiscal-readiness/, 'fiscal readiness must call ERP fiscal-readiness endpoint');
