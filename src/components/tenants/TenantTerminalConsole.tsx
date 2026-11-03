@@ -55,6 +55,11 @@ import {
     getOperationalStatusLabel,
     getOperationalStatusClasses,
     getCheckLabel,
+    formatApkVersion,
+    getApkVersionKey,
+    getApkVersionSourceLabel,
+    getRegistryStatusClassName,
+    getRegistryStatusLabel,
 } from '../../lib/tenantTerminalFormatting';
 import {
     isLocalPosTenant,
@@ -81,6 +86,8 @@ interface TenantTerminalConsoleProps {
     onTenantsLoaded?: (tenants: Tenant[]) => void;
     /** Replaces the selected tenant with a freshly loaded row. */
     onSelectTenant?: (tenant: Tenant) => void;
+    /** `page` renderiza la consola a pantalla completa, sin diálogo. */
+    presentation?: 'modal' | 'page';
 }
 
 export const TenantTerminalConsole: React.FC<TenantTerminalConsoleProps> = ({
@@ -89,7 +96,9 @@ export const TenantTerminalConsole: React.FC<TenantTerminalConsoleProps> = ({
     onClose,
     onTenantsLoaded,
     onSelectTenant,
+    presentation = 'modal',
 }) => {
+    const isPage = presentation === 'page';
     const {
         tenantTerminals,
         terminalSearchTerm,
@@ -152,11 +161,6 @@ export const TenantTerminalConsole: React.FC<TenantTerminalConsoleProps> = ({
         handleTakeoverTerminalChange,
         handleTerminalTakeover,
         handleTerminalLocalRebuild,
-        getRegistryStatusLabel,
-        getRegistryStatusClassName,
-        getApkVersionKey,
-        formatApkVersion,
-        getApkVersionSourceLabel,
         referenceVersionCandidate,
         referenceVersionKey,
         outOfVersionCount,
@@ -195,8 +199,12 @@ export const TenantTerminalConsole: React.FC<TenantTerminalConsoleProps> = ({
 
     return (
         <>
-                            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+            <div className={isPage
+                ? 'flex h-full min-h-0 flex-col'
+                : 'fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 z-50'}>
+                <div className={isPage
+                    ? 'flex h-full w-full flex-col overflow-hidden bg-white'
+                    : 'bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col'}>
                         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50">
                             <div>
                                 <h3 className="font-black text-lg text-slate-800">Terminales Activas del Tenant</h3>
