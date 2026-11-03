@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Building2, Loader2 } from 'lucide-react';
-import type { CloudAdminPermissions, Distributor, Tenant } from '../types';
+import type { CloudAdminPermissions, Distributor, Tenant, TenantTerminalSnapshot } from '../types';
 import { tenantService } from '../lib/tenantService';
 import { hasCloudAdminPermission } from '../lib/cloudAdminPermissions';
 import { getErrorMessage } from '../lib/errorMessage';
@@ -341,9 +341,10 @@ export const Tenants: React.FC<TenantsProps> = ({ permissions }) => {
         }
     };
 
-    const openConsole = () => {
+    const openConsole = (terminal?: TenantTerminalSnapshot) => {
         if (!selectedTenant) return;
-        navigate(`/tenants/${encodeURIComponent(selectedTenant.id)}/terminales`);
+        const base = `/tenants/${encodeURIComponent(selectedTenant.id)}/terminales`;
+        navigate(terminal ? `${base}?terminal=${encodeURIComponent(terminal.id)}` : base);
     };
 
     return (

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
  */
 const TENANT_TERMINAL_FILES = [
     'src/components/tenants/TenantTerminalConsole.tsx',
+    'src/components/tenants/TerminalDetail.tsx',
     'src/components/tenants/TerminalTakeoverModal.tsx',
     'src/components/tenants/TerminalRebuildModal.tsx',
     'src/hooks/useTenantTerminalConsole.ts',

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import type { CloudAdminPermissions, Tenant } from '../types';
 import { tenantService } from '../lib/tenantService';
@@ -14,6 +14,8 @@ interface TenantConsoleProps {
 /** Consola de terminales como pantalla completa (sin modal), ruta /tenants/:tenantId/terminales. */
 export const TenantConsole: React.FC<TenantConsoleProps> = ({ permissions }) => {
     const { tenantId = '' } = useParams();
+    const [searchParams] = useSearchParams();
+    const initialTerminalKey = searchParams.get('terminal');
     const navigate = useNavigate();
     const [state, setState] = useState<{ tenantId: string; tenant: Tenant | null; error: string | null; total: number }>({
         tenantId: '',
@@ -94,6 +96,7 @@ export const TenantConsole: React.FC<TenantConsoleProps> = ({ permissions }) => 
                         tenant={tenant}
                         canReauthorizeTerminals={canReauthorizeTerminals}
                         onClose={backToTenant}
+                        initialTerminalKey={initialTerminalKey}
                         onSelectTenant={(next) => setState((current) => ({ ...current, tenant: next }))}
                     />
                 ) : null}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { AlertTriangle, ArrowUpRight, Loader2, Monitor, RefreshCcw } from 'lucide-react';
-import type { Tenant } from '../../types';
+import type { Tenant, TenantTerminalSnapshot } from '../../types';
 import { getTerminalAuthorizedDeviceId, getTerminalPosReportedDeviceId } from '../../lib/terminalIdentity';
 import {
     formatApkVersion,
@@ -19,7 +19,8 @@ import { useTenantTerminalOverview } from './useTenantTerminalOverview';
 
 interface TenantDetailTerminalsProps {
     tenant: Tenant;
-    onOpenConsole: () => void;
+    /** Abre la consola; si se pasa una terminal, la selecciona al entrar. */
+    onOpenConsole: (terminal?: TenantTerminalSnapshot) => void;
 }
 
 const SummaryChip: React.FC<{ tone: 'ok' | 'warn' | 'bad' | 'muted'; children: React.ReactNode }> = ({ tone, children }) => {
@@ -83,7 +84,7 @@ export const TenantDetailTerminals: React.FC<TenantDetailTerminalsProps> = ({ te
                     </button>
                     <button
                         type="button"
-                        onClick={onOpenConsole}
+                        onClick={() => onOpenConsole()}
                         className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-[11px] font-black text-white hover:bg-slate-800"
                     >
                         <Monitor size={13} /> Abrir consola completa
@@ -163,7 +164,7 @@ export const TenantDetailTerminals: React.FC<TenantDetailTerminalsProps> = ({ te
                                     <td className="px-3 py-2.5 text-right">
                                         <button
                                             type="button"
-                                            onClick={onOpenConsole}
+                                            onClick={() => onOpenConsole(terminal)}
                                             className="text-[11px] font-black text-blue-600 hover:text-blue-700"
                                         >
                                             Inspeccionar

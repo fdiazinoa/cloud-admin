@@ -90,6 +90,7 @@ export const useTenantTerminalConsole = ({
     const [latestPosApkRelease, setLatestPosApkRelease] = useState<PosApkReleaseReference | null>(null);
     const [terminalAdvancedOpen, setTerminalAdvancedOpen] = useState<Record<string, boolean>>({});
     const [isTerminalModalLoading, setIsTerminalModalLoading] = useState(false);
+    const [reloadToken, setReloadToken] = useState(0);
     const [takeoverTerminal, setTakeoverTerminal] = useState<TenantTerminalSnapshot | null>(null);
     const [isTakeoverModalOpen, setIsTakeoverModalOpen] = useState(false);
     const [isTakeoverSubmitting, setIsTakeoverSubmitting] = useState(false);
@@ -126,6 +127,9 @@ export const useTenantTerminalConsole = ({
         confirmRebuild: false,
     });
 
+
+    // Recarga de la flota: incrementa un token que vuelve a disparar la carga.
+    const reloadConsole = () => setReloadToken((current) => current + 1);
 
     useEffect(() => {
         let cancelled = false;
@@ -171,7 +175,8 @@ export const useTenantTerminalConsole = ({
             cancelled = true;
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tenant.id, canReauthorizeTerminals]);
+    }, [tenant.id, canReauthorizeTerminals, reloadToken]);
+
 
     const terminalRequiresCanonicalErp = () => isFiscalEligibleTenant(selectedTenantForTerminals);
     const isCanonicalTerminalActionBlocked = (terminal: TenantTerminalSnapshot) => (
@@ -1441,6 +1446,7 @@ export const useTenantTerminalConsole = ({
         terminalStoreOptions,
         pendingDeviceRequestTerminalCount,
         visibleTenantTerminals,
+        reloadConsole,
 
         // --- setters used directly by the console ---
         setTerminalSearchTerm,
