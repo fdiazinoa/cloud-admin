@@ -410,12 +410,6 @@ function formatStatusLabel(status: string) {
     return status.replace(/_/g, ' ');
 }
 
-function truncatePreview(value: string, maxLength = 110) {
-    const normalized = value.replace(/\s+/g, ' ').trim();
-    if (!normalized) return '';
-    return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized;
-}
-
 function renderHighlightedText(value: string, query: string) {
     const needle = query.trim();
     if (!needle) return value;
@@ -424,12 +418,6 @@ function renderHighlightedText(value: string, query: string) {
     return parts.map((part, index) => part.toLocaleLowerCase('es') === needle.toLocaleLowerCase('es')
         ? <mark key={`${part}-${index}`} className="rounded bg-yellow-200 px-0.5 text-inherit">{part}</mark>
         : part);
-}
-
-function getSenderPreviewLabel(senderType: Message['sender_type']) {
-    if (senderType === 'Admin') return 'Soporte';
-    if (senderType === 'System') return 'Sistema';
-    return 'Cliente';
 }
 
 function buildLatestMessagePreviewMap(rows: Array<{ ticket_id?: string | null; message?: string | null; sender_type?: string | null; created_at?: string | null }>) {
@@ -805,6 +793,7 @@ const SupportCommandCenter: React.FC = () => {
     const [conversationSearch, setConversationSearch] = useState('');
     const [conversationMatchIndex, setConversationMatchIndex] = useState(0);
     const [messageExpansion, setMessageExpansion] = useState<Record<string, boolean>>({});
+    const [conversationTab, setConversationTab] = useState<'conversation' | 'attachments' | 'history'>('conversation');
     const [quickFilter, setQuickFilter] = useState<'none' | 'critical' | 'unassigned'>('none');
     const [savedViews, setSavedViews] = useState<SavedTicketView[]>(() => loadSavedViews());
     const [viewsOpen, setViewsOpen] = useState(false);
@@ -960,6 +949,7 @@ const SupportCommandCenter: React.FC = () => {
         setConversationMatchIndex(0);
         setIsComposerOpen(false);
         setShowReplyOptions(false);
+        setConversationTab('conversation');
         messageElementRefs.current = {};
     }, [selectedTicketId]);
 
@@ -1321,6 +1311,17 @@ const SupportCommandCenter: React.FC = () => {
         if (!needle) return [];
         return messages.filter((message) => message.message.toLocaleLowerCase('es').includes(needle));
     }, [conversationSearch, messages]);
+
+    const visibleMessages = useMemo(() => {
+        if (conversationTab === 'attachments') {
+            return messages.filter((message) => normalizeMessageAttachments(message.attachments).length > 0);
+        }
+        if (conversationTab === 'history') {
+            return messages.filter((message) => message.sender_type === 'System'
+                || (message.message_kind && ['merge', 'split', 'link_parent'].includes(message.message_kind)));
+        }
+        return messages;
+    }, [conversationTab, messages]);
 
     const originalThreadCc = useMemo(() => {
         const inbound = [...messages].reverse().find((message) => message.sender_type === 'Client');
@@ -2371,9 +2372,6 @@ const SupportCommandCenter: React.FC = () => {
                     <div className="min-w-0 space-y-1.5">
                     {organizedTickets.map((ticket) => {
                         const preview = lastMessageByTicketId[ticket.id];
-                        const previewText = preview?.message
-                            ? truncatePreview(preview.message)
-                            : truncatePreview(ticket.insight?.summary || ticket.subject);
                         const emphasizeClosed = filterStatus === 'Todos';
                         const closed = isClosedTicket(ticket);
                         const urgent = isUrgentTicket(ticket);
@@ -2390,30 +2388,24 @@ const SupportCommandCenter: React.FC = () => {
                                         className="h-4 w-4 rounded border-slate-300 text-indigo-600"
                                     />
                                 </label>
-                                <button type="button" onClick={() => setSelectedTicket(ticket)} className="min-w-0 flex-1 px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500">
+                                <button type="button" onClick={() => setSelectedTicket(ticket)} className="min-w-0 flex-1 px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500">
                                     <div className="flex min-w-0 items-center gap-1.5">
-                                        {ticket.is_unread ? <span className="h-2 w-2 shrink-0 rounded-full bg-indigo-600" aria-label="Ticket nuevo" /> : <span className="h-2 w-2 shrink-0 rounded-full bg-slate-300" />}
-                                        <span className="shrink-0 text-[11px] font-black text-slate-400">{getTicketNumberLabel(ticket)}</span>
-                                        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${getPriorityBadgeClass(ticket.priority)}`}>{urgent ? <AlertTriangle size={10} /> : null}{ticket.priority}</span>
+                                        {ticket.source === 'Email' ? <Mail size={13} className="shrink-0 text-violet-400" /> : <MonitorSmartphone size={13} className="shrink-0 text-blue-400" />}
+                                        <h3 className={`truncate text-sm ${ticket.is_unread ? 'font-black text-slate-950' : 'font-semibold text-slate-800'}`}>{ticket.subject}</h3>
+                                    </div>
+                                    <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+                                        {ticket.is_unread ? <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-600" aria-label="Ticket nuevo" /> : null}
+                                        <span className="shrink-0 font-bold text-slate-400">{getTicketNumberLabel(ticket)}</span>
+                                        <span className={`inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${closed ? 'border-slate-300 bg-slate-100 text-slate-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{closed ? 'Cerrado' : formatStatusLabel(ticket.status)}</span>
+                                        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${getPriorityBadgeClass(ticket.priority)}`}>{urgent ? <AlertTriangle size={9} /> : null}{ticket.priority}</span>
                                         <span className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-slate-400"><Clock3 size={11} />{formatTime(getHelpdeskLastActivityAt(ticket, preview?.created_at))}</span>
                                     </div>
-                                    <h3 className={`mt-1 truncate text-sm ${ticket.is_unread ? 'font-black text-slate-950' : 'font-bold text-slate-800'}`}>{ticket.subject}</h3>
-                                    <p className="mt-0.5 flex min-w-0 items-center gap-1 truncate text-xs font-semibold text-slate-500">
-                                        <Building2 size={11} className="shrink-0 text-indigo-500" />
-                                        <span className="truncate">{getHelpdeskCompanyName(ticket)}</span>
+                                    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-slate-500">
+                                        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[8px] font-black text-indigo-700">{ticket.assignee ? ticket.assignee.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase() : '—'}</span>
+                                        <span className="truncate font-semibold">{getContactLabel(ticket)}</span>
                                         <span className="shrink-0 text-slate-300">·</span>
-                                        <span className="truncate">{getContactLabel(ticket)}</span>
-                                    </p>
-                                    <p className={`mt-1 truncate text-xs ${ticket.is_unread ? 'font-medium text-slate-700' : 'text-slate-500'}`}>
-                                        {preview ? <><span className="font-semibold">{getSenderPreviewLabel(preview.sender_type)}:</span>{' '}{previewText}</> : previewText}
-                                    </p>
-                                    <div className="mt-2 flex items-center gap-1.5">
-                                        <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${closed ? 'border-slate-300 bg-slate-100 text-slate-600' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{closed ? 'Cerrado' : formatStatusLabel(ticket.status)}</span>
-                                        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${sourceStyles[ticket.source] ?? sourceStyles.POS}`}>{ticket.source === 'Email' ? <Mail size={10} /> : <MonitorSmartphone size={10} />}{ticket.source}</span>
-                                        <span className="ml-auto flex min-w-0 items-center gap-1.5">
-                                            <span className="truncate text-[11px] font-bold text-indigo-700">{ticket.support_team?.name || 'Sin departamento'}</span>
-                                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[9px] font-black text-indigo-700">{ticket.assignee ? ticket.assignee.full_name.split(/\s+/).slice(0, 2).map((part) => part.charAt(0)).join('').toUpperCase() : '—'}</span>
-                                        </span>
+                                        <span className="inline-flex min-w-0 items-center gap-0.5 truncate text-slate-400"><Building2 size={11} className="shrink-0" />{getHelpdeskCompanyName(ticket)}</span>
+                                        {ticket.contact?.has_retainership ? <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 font-bold text-amber-600">Iguala</span> : null}
                                     </div>
                                 </button>
                             </div>
@@ -2534,6 +2526,12 @@ const SupportCommandCenter: React.FC = () => {
                                 </div>
                             </div>
 
+                            <div className="mt-3 flex items-center gap-4 border-b border-slate-100 text-xs font-bold">
+                                <button type="button" onClick={() => setConversationTab('conversation')} className={`border-b-2 pb-1.5 ${conversationTab === 'conversation' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Conversación</button>
+                                <button type="button" onClick={() => setConversationTab('attachments')} className={`border-b-2 pb-1.5 ${conversationTab === 'attachments' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Adjunto</button>
+                                <button type="button" onClick={() => setConversationTab('history')} className={`border-b-2 pb-1.5 ${conversationTab === 'history' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>Historia</button>
+                            </div>
+
                             {ticketTimeline ? (
                                 <div className="mt-4 grid grid-cols-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/80 sm:grid-cols-3 xl:grid-cols-5">
                                     <TicketMetric label="Creado" value={formatTime(selectedTicket.created_at)} />
@@ -2590,18 +2588,18 @@ const SupportCommandCenter: React.FC = () => {
                         </div>
 
                         <div ref={messagesPaneRef} className="min-h-0 flex-1 overflow-y-auto bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_120px)] px-4 py-4">
-                            {messages.length === 0 ? (
+                            {visibleMessages.length === 0 ? (
                                 <div className="flex h-full min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/70 text-sm text-slate-500">
-                                    Aún no hay mensajes en este ticket.
+                                    {conversationTab === 'attachments' ? 'Sin adjuntos en este ticket.' : conversationTab === 'history' ? 'Sin eventos en el historial.' : 'Aún no hay mensajes en este ticket.'}
                                 </div>
                             ) : null}
                             <div className="mx-auto flex w-full max-w-6xl flex-col gap-3">
-                            {messages.map((message, messageIndex) => {
+                            {visibleMessages.map((message, messageIndex) => {
                                 const attachments = normalizeMessageAttachments(message.attachments);
                                 const isAdminMessage = message.sender_type === 'Admin';
                                 const isSystemMessage = message.sender_type === 'System';
                                 const isPrivateMessage = message.visibility === 'private';
-                                const isLatestMessage = messageIndex === messages.length - 1;
+                                const isLatestMessage = messageIndex === visibleMessages.length - 1;
                                 const isExpanded = messageExpansion[message.id] ?? isLatestMessage;
                                 const senderLabel = isPrivateMessage ? 'Nota interna' : isAdminMessage ? 'Cloud Admin' : isSystemMessage ? 'Sistema' : getContactLabel(selectedTicket);
 
@@ -2928,6 +2926,15 @@ const SupportCommandCenter: React.FC = () => {
                                     <input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void addTagToSelectedTicket(); } }} placeholder="Agregar etiqueta" className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-blue-400" />
                                     <button type="button" onClick={() => void addTagToSelectedTicket()} className="rounded-lg bg-slate-900 px-2.5 text-xs font-bold text-white">+</button>
                                 </div>
+                            </div>
+                        </section>
+
+                        <section>
+                            <h4 className="mb-2 text-xs font-semibold text-slate-500">Información sobre la Ticket</h4>
+                            <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
+                                <div className="flex items-center justify-between"><span className="text-slate-500">Canal</span><span className="font-semibold text-slate-700">{selectedTicket.source}</span></div>
+                                <div className="flex items-center justify-between"><span className="text-slate-500">Prioridad</span><span className={`font-semibold ${selectedTicket.priority === 'Critica' || selectedTicket.priority === 'Alta' ? 'text-red-600' : 'text-slate-700'}`}>{selectedTicket.priority}</span></div>
+                                <div className="flex items-center justify-between"><span className="text-slate-500">Categoría</span><span className="font-semibold text-slate-700">{selectedTicket.category}</span></div>
                             </div>
                         </section>
 
