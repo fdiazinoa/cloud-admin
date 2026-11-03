@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import { getRegistryStatusLabel } from '../src/lib/tenantTerminalFormatting.ts';
+const terminal = { is_active: true, registry: { status: 'ONLINE', is_revoked: false } };
+assert.equal(getRegistryStatusLabel(terminal, 'SUSPENDED'), 'SUSPENDIDA');
+assert.equal(getRegistryStatusLabel({ ...terminal, registry: { status: 'OFFLINE' } }, 'SUSPENDED'), 'SUSPENDIDA');
+assert.equal(getRegistryStatusLabel(terminal, 'ACTIVE'), 'ONLINE');
+assert.equal(getRegistryStatusLabel({ ...terminal, registry: { is_revoked: true } }, 'ACTIVE'), 'REVOCADA');
+assert.equal(getRegistryStatusLabel({ is_active: false }, 'ACTIVE'), 'INACTIVA');
+assert.equal(terminal.is_active, true);
+console.log('tenant suspension effective terminal status: PASS');
