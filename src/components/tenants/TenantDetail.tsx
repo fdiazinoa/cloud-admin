@@ -139,7 +139,7 @@ export const TenantDetail: React.FC<TenantDetailProps> = ({
                             </button>
                             <button
                                 type="button"
-                                onClick={actions.onOpenConsole}
+                                onClick={() => actions.onOpenConsole()}
                                 className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white transition-colors hover:bg-slate-800"
                             >
                                 <Monitor size={14} />

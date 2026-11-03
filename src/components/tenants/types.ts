@@ -1,5 +1,5 @@
 import type { TenantProductSelection } from '../../lib/tenantProducts';
-import type { TenantStatus } from '../../types';
+import type { TenantStatus, TenantTerminalSnapshot } from '../../types';
 
 export type TenantDetailTab = 'resumen' | 'productos' | 'terminales' | 'modulos' | 'actividad';
 
@@ -39,5 +39,5 @@ export interface TenantDetailActions {
     onToggleStatus: () => Promise<void>;
     onActivateTrial: () => Promise<void>;
     onDelete: () => Promise<void>;
-    onOpenConsole: () => void;
+    onOpenConsole: (terminal?: TenantTerminalSnapshot) => void;
 }

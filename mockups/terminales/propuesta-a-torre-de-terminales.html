@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Terminales — Propuesta A · Torre de terminales</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="mockup.css" />
+</head>
+<body class="antialiased bg-slate-100 text-slate-900">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-headset" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Z"/><path d="M21 11h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-5Z"/><path d="M3 11a9 9 0 0 1 18 0"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M7 15v3M12 10v8M17 6v12"/></symbol>
+  <symbol id="i-chev-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M3 21v-5h5M21 3v5h-5"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 8-8 3 3-3 3-2-2"/></symbol>
+  <symbol id="i-wifi-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m2 2 20 20"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 4-2.4"/><path d="M19 12.9a10 10 0 0 0-2.3-1.6"/><path d="M2 8.8a15 15 0 0 1 4-2.3"/><path d="M22 8.8a15 15 0 0 0-2-1.4"/><path d="M12 20h.01"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z"/><path d="m3 7 9 5 9-5M12 22V12"/></symbol>
+</defs></svg>
+
+<div class="bg-slate-900 text-slate-300">
+  <div class="flex items-center gap-3 px-6 py-2 text-[11px] font-bold uppercase tracking-wider">
+    <span class="rounded-md bg-blue-600 px-2 py-0.5 text-white">Propuesta A</span>
+    <span class="text-white">Torre de terminales</span>
+    <span class="text-slate-500">·</span>
+    <span class="normal-case tracking-normal text-slate-400">Una tabla comparativa de la flota + inspector lateral. Adiós a las tarjetas con 6 pestañas por terminal.</span>
+  </div>
+</div>
+
+<div class="flex min-h-screen">
+  <aside class="flex w-[76px] shrink-0 flex-col items-center gap-1 bg-slate-900 py-4">
+    <div class="grid h-10 w-10 place-items-center rounded-xl bg-blue-600 text-sm font-black text-white">C</div>
+    <div class="mt-4 flex flex-col items-center gap-1.5">
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-grid"/></svg></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-building"/></svg></a>
+      <a class="relative grid h-11 w-11 place-items-center rounded-xl bg-white/10 text-white ring-1 ring-white/15"><svg class="h-5 w-5"><use href="#i-monitor"/></svg><span class="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r bg-blue-500"></span></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-headset"/></svg></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-chart"/></svg></a>
+    </div>
+  </aside>
+
+  <div class="min-w-0 flex-1">
+    <header class="flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-6">
+      <div class="flex items-center gap-3">
+        <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-black text-slate-600"><svg class="h-3.5 w-3.5"><use href="#i-arrow-left"/></svg>Ficha</button>
+        <div class="text-sm font-bold text-slate-400">Tenants <span class="mx-1 text-slate-300">/</span> <span class="text-slate-800">Supermercado El Sol</span> <span class="mx-1 text-slate-300">/</span> <span class="text-slate-800">Terminales</span></div>
+      </div>
+      <div class="ml-auto flex items-center gap-2">
+        <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600"><svg class="h-3.5 w-3.5"><use href="#i-refresh"/></svg>Actualizar</button>
+        <div class="grid h-9 w-9 place-items-center rounded-full bg-slate-900 text-[11px] font-black text-white">FD</div>
+      </div>
+    </header>
+
+    <main class="space-y-4 p-5">
+      <div class="flex items-end justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-black text-slate-800">Terminales</h1>
+          <p class="text-sm text-slate-500">Supermercado El Sol · POS + ERP · 5 terminales en 2 sucursales</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600"><svg class="h-4 w-4"><use href="#i-cube"/></svg>Exportar flota</button>
+          <button class="flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-black text-white"><svg class="h-4 w-4"><use href="#i-plus"/></svg>Vincular caja</button>
+        </div>
+      </div>
+
+      <!-- KPIs de flota -->
+      <div class="grid grid-cols-4 gap-3">
+        <div class="rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Licencias POS</p>
+          <div class="mt-1 flex items-end gap-1"><span class="text-2xl font-black text-slate-800">4</span><span class="mb-0.5 text-sm font-black text-slate-400">/ 6</span></div>
+          <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100"><div class="h-full w-[66%] rounded-full bg-emerald-500"></div></div>
+        </div>
+        <div class="rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Endpoints online</p>
+          <div class="mt-1 flex items-end gap-1"><span class="text-2xl font-black text-slate-800">4</span><span class="mb-0.5 text-sm font-black text-slate-400">/ 5</span></div>
+          <p class="mt-1 text-[11px] text-slate-500">1 sin latido hace 26 h</p>
+        </div>
+        <div class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm">
+          <p class="text-[10px] font-black uppercase tracking-wider text-amber-700">Requieren acción</p>
+          <div class="mt-1 flex items-end gap-1"><span class="text-2xl font-black text-amber-800">3</span></div>
+          <p class="mt-1 text-[11px] text-amber-700">1 sin licencia · 2 con APK vieja</p>
+        </div>
+        <div class="rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">ERP listo / Fiscal</p>
+          <div class="mt-1 flex items-end gap-1"><span class="text-2xl font-black text-slate-800">3</span><span class="mb-0.5 text-sm font-black text-slate-400">/ 2</span></div>
+          <p class="mt-1 text-[11px] text-slate-500">referencia APK v2.4.1 (241)</p>
+        </div>
+      </div>
+
+      <!-- filtros -->
+      <div class="flex items-center gap-2 rounded-2xl border border-slate-100 bg-white px-3 py-2.5 shadow-sm">
+        <div class="flex items-center gap-1 rounded-xl bg-slate-100 p-1 text-[11px] font-black">
+          <button class="rounded-lg bg-white px-2.5 py-1 text-slate-800 shadow-sm">Todas 5</button>
+          <button class="rounded-lg px-2.5 py-1 text-slate-500">Online 4</button>
+          <button class="rounded-lg px-2.5 py-1 text-slate-500">Con incidencia 3</button>
+          <button class="rounded-lg px-2.5 py-1 text-slate-500">Sin licencia 1</button>
+        </div>
+        <div class="ml-auto flex items-center gap-2">
+          <div class="flex w-64 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-400"><svg class="h-4 w-4"><use href="#i-search"/></svg><span>Terminal, código o device</span></div>
+          <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600">Sucursal <span class="text-slate-400">Todas</span><svg class="h-3 w-3 text-slate-400"><use href="#i-chev-down"/></svg></button>
+          <button class="grid h-8 w-8 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500"><svg class="h-4 w-4"><use href="#i-sliders"/></svg></button>
+        </div>
+      </div>
+
+      <!-- tabla de flota -->
+      <div class="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        <table class="w-full text-left">
+          <thead class="border-b border-slate-100 bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
+            <tr>
+              <th class="px-4 py-2.5">Terminal · sucursal</th>
+              <th class="px-3 py-2.5">Device</th>
+              <th class="px-3 py-2.5">APK</th>
+              <th class="px-3 py-2.5">ERP</th>
+              <th class="px-3 py-2.5">Fiscal</th>
+              <th class="px-3 py-2.5">Latido</th>
+              <th class="px-3 py-2.5">Licencia</th>
+              <th class="px-3 py-2.5">Salud</th>
+              <th class="px-3 py-2.5"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100 text-[12px]">
+            <tr class="bg-blue-50/50">
+              <td class="px-4 py-2.5"><p class="font-black text-slate-900">Caja 1</p><p class="text-[11px] text-slate-500">Naco · <span class="font-mono">TER-001</span></p></td>
+              <td class="px-3 py-2.5"><p class="font-mono text-[11px] font-bold text-slate-700">DEV-7H2KLM</p><p class="font-mono text-[10px] text-emerald-700">ERP confirmado</p></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">2.4.1</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">LISTO</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">READY</span></td>
+              <td class="px-3 py-2.5 font-bold text-emerald-700">2 min</td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">OCUPA CUPO</span></td>
+              <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700"><span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Operativa</span></td>
+              <td class="px-3 py-2.5 text-right text-blue-700"><svg class="ml-auto h-4 w-4"><use href="#i-arrow-right"/></svg></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><p class="font-bold text-slate-800">Caja 2</p><p class="text-[11px] text-slate-500">Naco · <span class="font-mono">TER-002</span></p></td>
+              <td class="px-3 py-2.5"><p class="font-mono text-[11px] font-bold text-slate-700">DEV-9QW3PT</p><p class="font-mono text-[10px] text-amber-700">ERP sin confirmar</p></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">2.4.1</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">PENDIENTE</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">SIN VALIDAR</span></td>
+              <td class="px-3 py-2.5 font-bold text-emerald-700">6 min</td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">OCUPA CUPO</span></td>
+              <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>Requiere ERP</span></td>
+              <td class="px-3 py-2.5 text-right text-slate-400"><svg class="ml-auto h-4 w-4"><use href="#i-arrow-right"/></svg></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><p class="font-bold text-slate-800">Caja Mostrador</p><p class="text-[11px] text-slate-500">Naco · <span class="font-mono">TER-003</span></p></td>
+              <td class="px-3 py-2.5"><p class="font-mono text-[11px] font-bold text-slate-700">DEV-4KLM2P</p><p class="font-mono text-[10px] text-emerald-700">ERP confirmado</p></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">2.3.9</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">LISTO</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">READY</span></td>
+              <td class="px-3 py-2.5 font-bold text-amber-700">1 h</td>
+              <td class="px-3 py-2.5"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-black text-emerald-700">OCUPA CUPO</span></td>
+              <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black text-amber-700"><span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>APK vieja</span></td>
+              <td class="px-3 py-2.5 text-right text-slate-400"><svg class="ml-auto h-4 w-4"><use href="#i-arrow-right"/></svg></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><p class="font-bold text-slate-800">Tablet Almacén</p><p class="text-[11px] text-slate-500">Depósito · <span class="font-mono">TER-004</span></p></td>
+              <td class="px-3 py-2.5"><p class="font-mono text-[11px] font-bold text-slate-700">DEV-1DU4NV</p><p class="font-mono text-[10px] text-amber-700">ERP sin confirmar</p></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">2.3.9</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">PENDIENTE</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">SIN VALIDAR</span></td>
+              <td class="px-3 py-2.5 font-black text-red-700">26 h</td>
+              <td class="px-3 py-2.5"><span class="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-black text-red-700">SIN LICENCIA</span></td>
+              <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-black text-red-700"><span class="h-1.5 w-1.5 rounded-full bg-red-500"></span>Sin latido</span></td>
+              <td class="px-3 py-2.5 text-right text-slate-400"><svg class="ml-auto h-4 w-4"><use href="#i-arrow-right"/></svg></td>
+            </tr>
+            <tr>
+              <td class="px-4 py-2.5"><p class="font-bold text-slate-800">Caja Terraza</p><p class="text-[11px] text-slate-500">Sucursal Este · <span class="font-mono">TER-005</span></p></td>
+              <td class="px-3 py-2.5"><p class="font-mono text-[11px] font-bold text-red-700">Pendiente</p><p class="font-mono text-[10px] text-slate-500">solicita DEV-8XP2LQ</p></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">N/D</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">—</span></td>
+              <td class="px-3 py-2.5"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-500">—</span></td>
+              <td class="px-3 py-2.5 font-bold text-slate-400">nunca</td>
+              <td class="px-3 py-2.5"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">LIBRE</span></td>
+              <td class="px-3 py-2.5"><span class="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-blue-700"><span class="h-1.5 w-1.5 rounded-full bg-blue-500"></span>Por autorizar</span></td>
+              <td class="px-3 py-2.5 text-right text-slate-400"><svg class="ml-auto h-4 w-4"><use href="#i-arrow-right"/></svg></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div class="overflow-hidden rounded-2xl border border-blue-200 bg-blue-50/40">
+          <div class="flex items-center justify-between border-b border-blue-100 px-4 py-2">
+            <p class="text-[10px] font-black uppercase tracking-wider text-blue-800">Solicitudes de dispositivo pendientes</p>
+            <span class="rounded-full bg-white px-2 py-0.5 text-[10px] font-black text-blue-700">1</span>
+          </div>
+          <table class="w-full text-left text-[12px]">
+            <tbody>
+              <tr>
+                <td class="px-4 py-2.5"><p class="font-bold text-slate-800">Caja Terraza</p><p class="text-[11px] text-slate-500">solicita <span class="font-mono">DEV-8XP2LQ</span> · hace 14 min</p></td>
+                <td class="px-2 py-2.5"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">SIN LICENCIA LIBRE</span></td>
+                <td class="px-4 py-2.5 text-right"><button class="mr-1 rounded-lg bg-blue-600 px-2 py-1 text-[11px] font-black text-white">Autorizar</button><button class="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-600">Rechazar</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="rounded-2xl border border-slate-100 bg-white px-4 py-2.5">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Resumen por sucursal</p>
+          <div class="mt-2 space-y-1.5 text-[12px]">
+            <div class="flex items-center justify-between"><span class="text-slate-600">Naco</span><span class="font-black text-slate-800">3 cajas · 3 online</span></div>
+            <div class="flex items-center justify-between"><span class="text-slate-600">Depósito</span><span class="font-black text-amber-700">1 tablet · 0 online</span></div>
+            <div class="flex items-center justify-between"><span class="text-slate-600">Sucursal Este</span><span class="font-black text-blue-700">1 caja · por autorizar</span></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- inspector lateral (fijado, no modal) -->
+  <aside class="flex w-[420px] shrink-0 flex-col border-l border-slate-200 bg-white">
+    <div class="border-b border-slate-100 px-5 py-3.5">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <div class="flex items-center gap-2">
+            <p class="text-base font-black text-slate-900">Caja 2</p>
+            <span class="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700">Requiere ERP</span>
+            <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-700">Ocupa cupo</span>
+          </div>
+          <p class="mt-0.5 font-mono text-[10px] text-slate-400">Naco · TER-002 · DEV-9QW3PT</p>
+        </div>
+        <button class="grid h-7 w-7 place-items-center rounded-lg text-slate-400"><svg class="h-4 w-4"><use href="#i-x"/></svg></button>
+      </div>
+
+      <div class="mt-2.5 flex flex-wrap gap-1.5">
+        <button class="flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-black text-white"><svg class="h-3.5 w-3.5"><use href="#i-refresh"/></svg>Reparar enlace ERP</button>
+        <button class="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-600"><svg class="h-3.5 w-3.5"><use href="#i-key"/></svg>Rotar credenciales</button>
+        <button class="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-black text-slate-600"><svg class="h-3.5 w-3.5"><use href="#i-monitor"/></svg>Reemplazar tablet</button>
+        <button class="grid h-7 w-8 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500"><svg class="h-3.5 w-3.5"><use href="#i-more"/></svg></button>
+      </div>
+    </div>
+
+    <div class="flex gap-4 border-b border-slate-100 px-5 text-[11px] font-bold">
+      <button class="border-b-2 border-blue-600 pb-2 pt-2.5 font-black text-blue-700">Resumen</button>
+      <button class="border-b-2 border-transparent pb-2 pt-2.5 text-slate-500">Dispositivos</button>
+      <button class="border-b-2 border-transparent pb-2 pt-2.5 text-slate-500">Sync <span class="rounded bg-amber-100 px-1 text-[9px] font-black text-amber-700">2</span></button>
+      <button class="border-b-2 border-transparent pb-2 pt-2.5 text-slate-500">Fiscal</button>
+      <button class="border-b-2 border-transparent pb-2 pt-2.5 text-slate-500">Solicitudes <span class="rounded bg-blue-100 px-1 text-[9px] font-black text-blue-700">1</span></button>
+    </div>
+
+    <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-3.5">
+      <!-- identidad -->
+      <div class="rounded-xl border border-slate-200">
+        <div class="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Identidad del equipo</p>
+          <span class="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-black text-amber-700">WAITING_ERP</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2 px-3 py-2.5 text-[11px]">
+          <div><p class="font-bold text-slate-400">Autorizado</p><p class="mt-0.5 font-mono font-black text-slate-800">DEV-9QW3PT</p></div>
+          <div><p class="font-bold text-slate-400">Visto por POS</p><p class="mt-0.5 font-mono font-black text-slate-800">DEV-9QW3PT</p></div>
+          <div><p class="font-bold text-slate-400">En ERP</p><p class="mt-0.5 font-mono font-black text-amber-700">sin confirmar</p></div>
+        </div>
+      </div>
+
+      <!-- versión y licencia -->
+      <div class="grid grid-cols-2 gap-2">
+        <div class="rounded-xl border border-slate-200 px-3 py-2">
+          <p class="text-[9px] font-black uppercase tracking-wider text-slate-400">APK instalada</p>
+          <p class="mt-0.5 text-sm font-black text-slate-800">v2.4.1 <span class="text-[10px] font-bold text-emerald-700">· referencia</span></p>
+          <p class="text-[10px] text-slate-400">reportada por Cloud-Admin</p>
+        </div>
+        <div class="rounded-xl border border-slate-200 px-3 py-2">
+          <p class="text-[9px] font-black uppercase tracking-wider text-slate-400">Licencia POS</p>
+          <p class="mt-0.5 text-sm font-black text-emerald-700">Ocupa cupo</p>
+          <p class="text-[10px] text-slate-400">4 de 6 en uso</p>
+        </div>
+      </div>
+
+      <!-- sync -->
+      <div class="rounded-xl border border-slate-200">
+        <div class="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Sync de documentos</p>
+          <a class="text-[10px] font-black text-blue-600">Reintentar 2</a>
+        </div>
+        <table class="w-full text-left text-[11px]">
+          <tbody class="divide-y divide-slate-100">
+            <tr><td class="px-3 py-1.5"><p class="font-bold text-slate-700">Factura F-00123</p><p class="text-[10px] text-slate-400">RD$ 12,450 · 08:02</p></td><td class="px-2 py-1.5"><span class="rounded bg-red-50 px-1.5 py-0.5 text-[9px] font-black text-red-700">ERP_CONTEXT_MISSING</span></td><td class="px-3 py-1.5 text-right"><button class="text-[10px] font-black text-blue-600">Preparar</button></td></tr>
+            <tr><td class="px-3 py-1.5"><p class="font-bold text-slate-700">Factura F-00124</p><p class="text-[10px] text-slate-400">RD$ 3,980 · 08:11</p></td><td class="px-2 py-1.5"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-black text-slate-500">EN COLA</span></td><td class="px-3 py-1.5 text-right"><button class="text-[10px] font-black text-blue-600">Reintentar</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- timeline -->
+      <div class="rounded-xl border border-slate-200">
+        <p class="border-b border-slate-100 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-400">Últimos eventos</p>
+        <ol class="space-y-2 px-3 py-2.5">
+          <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span><div><p class="text-[11px] font-bold text-slate-700">Solicitud de autorización de DEV-8XP2LQ</p><p class="text-[10px] text-slate-400">hace 14 min · pendiente</p></div></li>
+          <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400"></span><div><p class="text-[11px] font-bold text-slate-700">Sync completado con 2 documentos en cola</p><p class="text-[10px] text-slate-400">hace 6 min</p></div></li>
+          <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400"></span><div><p class="text-[11px] font-bold text-slate-700">Credenciales rotadas</p><p class="text-[10px] text-slate-400">hace 2 días · FD</p></div></li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="flex gap-1.5 border-t border-slate-100 px-5 py-2.5">
+      <button class="flex-1 rounded-lg bg-slate-900 px-2 py-1.5 text-[11px] font-black text-white">Ver histórico completo</button>
+      <button class="rounded-lg border border-red-200 px-2 py-1.5 text-[11px] font-bold text-red-600">Limpiar devices</button>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

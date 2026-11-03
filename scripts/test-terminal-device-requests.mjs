@@ -99,7 +99,7 @@ assert.match(page, /getTenantTerminalOverview/);
 assert.match(page, /type TerminalRequestFilter = 'ALL' \| 'PENDING'/);
 assert.match(page, /pendingDeviceRequestTerminalCount = tenantTerminals\.filter\(hasPendingDeviceRequest\)\.length/);
 assert.match(page, /terminalRequestFilter === 'PENDING' && !hasPendingDeviceRequest\(terminal\)/);
-assert.match(page, /Con solicitudes pendientes \(\{pendingDeviceRequestTerminalCount\}\)/);
+assert.match(page, /Solicitudes \(\{pendingDeviceRequestTerminalCount\}\)/);
 assert.match(page, /No hay terminales con solicitudes pendientes que coincidan con los filtros seleccionados\./);
 
 assert.match(permissionMigration, /'terminal_reauthorization', code in \('owner', 'admin'\)/);

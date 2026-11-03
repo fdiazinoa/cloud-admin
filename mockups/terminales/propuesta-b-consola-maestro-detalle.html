@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Terminales — Propuesta B · Consola maestro-detalle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="mockup.css" />
+</head>
+<body class="antialiased bg-slate-100 text-slate-900">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+  <symbol id="i-building" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-headset" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Z"/><path d="M21 11h-3a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-5Z"/><path d="M3 11a9 9 0 0 1 18 0"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 3v18h18"/><path d="M7 15v3M12 10v8M17 6v12"/></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M3 21v-5h5M21 3v5h-5"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m11 12 8-8 3 3-3 3-2-2"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M2 9a15 15 0 0 1 20 0"/><path d="M12 20h.01"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m12 2 9 5v10l-9 5-9-5V7l9-5Z"/><path d="m3 7 9 5 9-5M12 22V12"/></symbol>
+</defs></svg>
+
+<div class="bg-slate-900 text-slate-300">
+  <div class="flex items-center gap-3 px-6 py-2 text-[11px] font-bold uppercase tracking-wider">
+    <span class="rounded-md bg-blue-600 px-2 py-0.5 text-white">Propuesta B</span>
+    <span class="text-white">Consola maestro-detalle</span>
+    <span class="text-slate-500">·</span>
+    <span class="normal-case tracking-normal text-slate-400">Mismo patrón que la ficha de tenant: lista de terminales a la izquierda, terminal activo al centro, cupo y flota a la derecha.</span>
+  </div>
+</div>
+
+<div class="flex h-[calc(100vh-34px)]">
+  <aside class="flex w-[76px] shrink-0 flex-col items-center gap-1 bg-slate-900 py-4">
+    <div class="grid h-10 w-10 place-items-center rounded-xl bg-blue-600 text-sm font-black text-white">C</div>
+    <div class="mt-4 flex flex-col items-center gap-1.5">
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-grid"/></svg></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-building"/></svg></a>
+      <a class="relative grid h-11 w-11 place-items-center rounded-xl bg-white/10 text-white ring-1 ring-white/15"><svg class="h-5 w-5"><use href="#i-monitor"/></svg><span class="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r bg-blue-500"></span></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-headset"/></svg></a>
+      <a class="grid h-11 w-11 place-items-center rounded-xl text-slate-500"><svg class="h-5 w-5"><use href="#i-chart"/></svg></a>
+    </div>
+  </aside>
+
+  <div class="flex min-w-0 flex-1 flex-col">
+    <header class="flex h-14 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-5">
+      <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-black text-slate-600"><svg class="h-3.5 w-3.5"><use href="#i-arrow-left"/></svg>Ficha del tenant</button>
+      <div class="text-sm font-bold text-slate-400">Tenants <span class="mx-1 text-slate-300">/</span> <span class="text-slate-800">Supermercado El Sol</span> <span class="mx-1 text-slate-300">/</span> <span class="text-slate-800">Terminales</span></div>
+      <div class="ml-auto flex items-center gap-2">
+        <span class="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-emerald-700">4 online</span>
+        <span class="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-amber-700">3 requieren acción</span>
+        <div class="grid h-9 w-9 place-items-center rounded-full bg-slate-900 text-[11px] font-black text-white">FD</div>
+      </div>
+    </header>
+
+    <div class="flex min-h-0 flex-1">
+      <!-- lista de terminales -->
+      <section class="flex w-[300px] shrink-0 flex-col border-r border-slate-200 bg-white">
+        <div class="border-b border-slate-100 px-4 py-3">
+          <div class="flex items-center justify-between">
+            <h1 class="text-base font-black text-slate-800">Terminales <span class="ml-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-black text-slate-500">5</span></h1>
+            <button class="rounded-xl bg-blue-600 px-2.5 py-1.5 text-[11px] font-black text-white">Vincular</button>
+          </div>
+          <div class="mt-2.5 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-400"><svg class="h-4 w-4"><use href="#i-search"/></svg><span>Terminal, código o device</span></div>
+          <div class="mt-2 flex gap-1 text-[10px] font-black">
+            <button class="whitespace-nowrap rounded-full bg-slate-900 px-2 py-1 text-white">Todas</button>
+            <button class="whitespace-nowrap rounded-full border border-slate-200 px-2 py-1 text-slate-500">Online 4</button>
+            <button class="whitespace-nowrap rounded-full border border-slate-200 px-2 py-1 text-slate-500">Incidencia 3</button>
+          </div>
+        </div>
+
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          <button class="w-full border-l-[3px] border-transparent px-4 py-2.5 text-left hover:bg-slate-50">
+            <div class="flex items-start gap-2.5">
+              <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-emerald-50 text-emerald-700"><svg class="h-4 w-4"><use href="#i-monitor"/></svg></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between"><p class="truncate text-sm font-bold text-slate-700">Caja 1</p><span class="h-2 w-2 rounded-full bg-emerald-500"></span></div>
+                <p class="truncate text-[11px] text-slate-500">Naco · APK 2.4.1 · 2 min</p>
+                <div class="mt-1 flex gap-1 text-[9px] font-black uppercase tracking-wide"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">ERP listo</span><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">Fiscal ready</span></div>
+              </div>
+            </div>
+          </button>
+
+          <button class="w-full border-l-[3px] border-blue-600 bg-blue-50/60 px-4 py-2.5 text-left">
+            <div class="flex items-start gap-2.5">
+              <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-600 text-white"><svg class="h-4 w-4"><use href="#i-monitor"/></svg></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between"><p class="truncate text-sm font-black text-slate-900">Caja 2</p><span class="h-2 w-2 rounded-full bg-amber-500"></span></div>
+                <p class="truncate text-[11px] text-slate-500">Naco · APK 2.4.1 · 6 min</p>
+                <div class="mt-1 flex gap-1 text-[9px] font-black uppercase tracking-wide"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">ERP pendiente</span><span class="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">Fiscal sin validar</span></div>
+              </div>
+            </div>
+          </button>
+
+          <button class="w-full border-l-[3px] border-transparent px-4 py-2.5 text-left hover:bg-slate-50">
+            <div class="flex items-start gap-2.5">
+              <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-700"><svg class="h-4 w-4"><use href="#i-monitor"/></svg></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between"><p class="truncate text-sm font-bold text-slate-700">Caja Mostrador</p><span class="h-2 w-2 rounded-full bg-amber-500"></span></div>
+                <p class="truncate text-[11px] text-slate-500">Naco · APK 2.3.9 · 1 h</p>
+                <div class="mt-1 flex gap-1 text-[9px] font-black uppercase tracking-wide"><span class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">APK vieja</span></div>
+              </div>
+            </div>
+          </button>
+
+          <button class="w-full border-l-[3px] border-transparent px-4 py-2.5 text-left hover:bg-slate-50">
+            <div class="flex items-start gap-2.5">
+              <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-red-50 text-red-700"><svg class="h-4 w-4"><use href="#i-monitor"/></svg></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between"><p class="truncate text-sm font-bold text-slate-700">Tablet Almacén</p><span class="h-2 w-2 rounded-full bg-red-500"></span></div>
+                <p class="truncate text-[11px] text-slate-500">Depósito · APK 2.3.9 · 26 h</p>
+                <div class="mt-1 flex gap-1 text-[9px] font-black uppercase tracking-wide"><span class="rounded bg-red-50 px-1.5 py-0.5 text-red-700">Sin licencia</span><span class="rounded bg-red-50 px-1.5 py-0.5 text-red-700">Sin latido</span></div>
+              </div>
+            </div>
+          </button>
+
+          <button class="w-full border-l-[3px] border-transparent px-4 py-2.5 text-left hover:bg-slate-50">
+            <div class="flex items-start gap-2.5">
+              <span class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-500"><svg class="h-4 w-4"><use href="#i-monitor"/></svg></span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between"><p class="truncate text-sm font-bold text-slate-700">Caja Terraza</p><span class="h-2 w-2 rounded-full bg-blue-500"></span></div>
+                <p class="truncate text-[11px] text-slate-500">Sucursal Este · sin device · nunca</p>
+                <div class="mt-1 flex gap-1 text-[9px] font-black uppercase tracking-wide"><span class="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">Por autorizar</span><span class="rounded bg-amber-50 px-1.5 py-0.5 text-amber-700">Cupo libre</span></div>
+              </div>
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <!-- detalle del terminal -->
+      <section class="flex min-w-0 flex-1 flex-col bg-slate-50">
+        <div class="shrink-0 border-b border-slate-200 bg-white px-5 pt-3.5">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="flex items-start gap-3">
+              <span class="grid h-10 w-10 place-items-center rounded-xl bg-blue-600 text-white"><svg class="h-5 w-5"><use href="#i-monitor"/></svg></span>
+              <div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="text-lg font-black text-slate-900">Caja 2</h2>
+                  <span class="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-700">Requiere ERP</span>
+                  <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-emerald-700">Ocupa cupo (4/6)</span>
+                  <span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-black text-slate-600"><svg class="h-3 w-3"><use href="#i-wifi"/></svg>Online · 6 min</span>
+                </div>
+                <p class="mt-0.5 font-mono text-[11px] text-slate-400">Naco · TER-002 · DEV-9QW3PT · APK v2.4.1 (241)</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600"><svg class="h-4 w-4"><use href="#i-refresh"/></svg>Actualizar</button>
+              <button class="flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-black text-white"><svg class="h-4 w-4"><use href="#i-monitor"/></svg>Reemplazar tablet</button>
+              <button class="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500"><svg class="h-4 w-4"><use href="#i-more"/></svg></button>
+            </div>
+          </div>
+
+          <!-- acciones primarias -->
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <button class="flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-[11px] font-black text-white"><svg class="h-3.5 w-3.5"><use href="#i-refresh"/></svg>Reparar enlace ERP</button>
+            <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-black text-slate-600"><svg class="h-3.5 w-3.5"><use href="#i-key"/></svg>Rotar credenciales</button>
+            <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-black text-slate-600"><svg class="h-3.5 w-3.5"><use href="#i-db"/></svg>Reconstruir base local</button>
+            <button class="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-black text-slate-600"><svg class="h-3.5 w-3.5"><use href="#i-wifi"/></svg>Sincronizar device</button>
+            <span class="ml-1 text-[10px] font-bold text-slate-400">Canónico ERP requerido para acciones de identidad</span>
+          </div>
+
+          <nav class="mt-3 flex gap-5 text-[11px] font-bold">
+            <button class="border-b-2 border-blue-600 pb-2 font-black text-blue-700">Resumen</button>
+            <button class="border-b-2 border-transparent pb-2 text-slate-500">Dispositivos</button>
+            <button class="border-b-2 border-transparent pb-2 text-slate-500">Solicitudes <span class="rounded bg-blue-100 px-1 text-[9px] font-black text-blue-700">1</span></button>
+            <button class="border-b-2 border-transparent pb-2 text-slate-500">Sync <span class="rounded bg-amber-100 px-1 text-[9px] font-black text-amber-700">2</span></button>
+            <button class="border-b-2 border-transparent pb-2 text-slate-500">Fiscal</button>
+            <button class="border-b-2 border-transparent pb-2 text-slate-500">Intentos</button>
+          </nav>
+        </div>
+
+        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-3.5">
+            <!-- solicitud pendiente -->
+            <section class="rounded-2xl border border-blue-200 bg-blue-50/40">
+              <div class="flex items-center justify-between border-b border-blue-100 px-4 py-2">
+                <p class="text-[10px] font-black uppercase tracking-wider text-blue-800">Solicitud de dispositivo pendiente</p>
+                <span class="rounded-full bg-white px-2 py-0.5 text-[10px] font-black text-blue-700">1</span>
+              </div>
+              <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-[11px]">
+                <div>
+                  <p class="font-bold text-slate-800">Un equipo nuevo pide autorización: <span class="font-mono">DEV-8XP2LQ</span></p>
+                  <p class="text-[10px] text-slate-500">hace 14 min · reemplazaría al device actual de la terminal</p>
+                </div>
+                <div class="flex gap-1.5">
+                  <button class="rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-black text-white">Autorizar y reemplazar</button>
+                  <button class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-600">Rechazar</button>
+                  <button class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-600">Ver intentos</button>
+                </div>
+              </div>
+            </section>
+
+          <!-- identidad -->
+          <section class="rounded-2xl border border-slate-200 bg-white p-4">
+            <div class="flex items-center justify-between">
+              <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Identidad del equipo</p>
+              <span class="rounded bg-amber-50 px-1.5 py-0.5 text-[9px] font-black text-amber-700">WAITING_ERP_CONFIRMATION</span>
+            </div>
+            <div class="mt-2.5 grid grid-cols-3 gap-3">
+              <div class="rounded-xl border border-emerald-200 bg-emerald-50/50 px-3 py-2">
+                <p class="text-[10px] font-bold text-emerald-700">Autorizado en Cloud-Admin</p>
+                <p class="mt-0.5 font-mono text-sm font-black text-slate-800">DEV-9QW3PT</p>
+                <p class="text-[10px] text-slate-500">desde 12 mar 2026</p>
+              </div>
+              <div class="rounded-xl border border-emerald-200 bg-emerald-50/50 px-3 py-2">
+                <p class="text-[10px] font-bold text-emerald-700">Reportado por el POS</p>
+                <p class="mt-0.5 font-mono text-sm font-black text-slate-800">DEV-9QW3PT</p>
+                <p class="text-[10px] text-slate-500">último latido hace 6 min</p>
+              </div>
+              <div class="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2">
+                <p class="text-[10px] font-bold text-amber-700">Registrado en ERP</p>
+                <p class="mt-0.5 font-mono text-sm font-black text-amber-800">sin confirmar</p>
+                <p class="text-[10px] text-amber-700">revisa el terminal en el ERP o repara el enlace</p>
+              </div>
+            </div>
+          </section>
+
+          <div class="grid grid-cols-2 gap-3">
+            <!-- sync -->
+            <section class="rounded-2xl border border-slate-200 bg-white">
+              <div class="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+                <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Sync de documentos</p>
+                <button class="text-[10px] font-black text-blue-600">Reintentar 2</button>
+              </div>
+              <table class="w-full text-left text-[11px]">
+                <tbody class="divide-y divide-slate-100">
+                  <tr><td class="px-4 py-2"><p class="font-bold text-slate-700">Factura F-00123</p><p class="text-[10px] text-slate-400">RD$ 12,450 · 08:02</p></td><td class="px-2 py-2"><span class="rounded bg-red-50 px-1.5 py-0.5 text-[9px] font-black text-red-700">ERP_CONTEXT_MISSING</span></td><td class="px-4 py-2 text-right"><button class="text-[10px] font-black text-blue-600">Preparar</button></td></tr>
+                  <tr><td class="px-4 py-2"><p class="font-bold text-slate-700">Factura F-00124</p><p class="text-[10px] text-slate-400">RD$ 3,980 · 08:11</p></td><td class="px-2 py-2"><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-black text-slate-500">EN COLA</span></td><td class="px-4 py-2 text-right"><button class="text-[10px] font-black text-blue-600">Reintentar</button></td></tr>
+                  <tr><td class="px-4 py-2"><p class="font-bold text-slate-700">Factura F-00120</p><p class="text-[10px] text-slate-400">RD$ 7,120 · 07:44</p></td><td class="px-2 py-2"><span class="rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-black text-emerald-700">SINCRONIZADO</span></td><td class="px-4 py-2 text-right text-[10px] text-slate-400">07:45</td></tr>
+                </tbody>
+              </table>
+            </section>
+
+            <!-- fiscal -->
+            <section class="rounded-2xl border border-slate-200 bg-white">
+              <div class="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+                <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Configuración fiscal</p>
+                <button class="text-[10px] font-black text-blue-600">Verificar mapping</button>
+              </div>
+              <div class="space-y-2 px-4 py-2.5 text-[11px]">
+                <div class="flex items-center justify-between"><span class="text-slate-500">Estado fiscal</span><span class="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-black text-slate-600">SIN VALIDAR</span></div>
+                <div class="flex items-center justify-between"><span class="text-slate-500">NCF / secuencia</span><span class="font-black text-slate-800">B02 · 0001-0000123</span></div>
+                <div class="flex items-center justify-between"><span class="text-slate-500">Modo</span><span class="font-black text-slate-800">DEMO_READY</span></div>
+                <div class="flex items-center justify-between"><span class="text-slate-500">Última validación</span><span class="font-black text-slate-800">hace 3 h</span></div>
+                <p class="rounded-lg bg-slate-50 px-2 py-1.5 text-[10px] text-slate-500">FISCAL_CONFIG_MISSING: la terminal aún no reporta configuración fiscal completa.</p>
+              </div>
+            </section>
+
+            <!-- eventos -->
+            <section class="rounded-2xl border border-slate-200 bg-white">
+              <p class="border-b border-slate-100 px-4 py-2 text-[10px] font-black uppercase tracking-wider text-slate-400">Últimos eventos</p>
+              <ol class="space-y-2 px-4 py-2.5">
+                <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"></span><div><p class="text-[11px] font-bold text-slate-700">Solicitud de autorización de DEV-8XP2LQ</p><p class="text-[10px] text-slate-400">hace 14 min · pendiente</p></div></li>
+                <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400"></span><div><p class="text-[11px] font-bold text-slate-700">Sync con 2 documentos en cola</p><p class="text-[10px] text-slate-400">hace 6 min</p></div></li>
+                <li class="flex items-start gap-2"><span class="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400"></span><div><p class="text-[11px] font-bold text-slate-700">Credenciales rotadas</p><p class="text-[10px] text-slate-400">hace 2 días · FD</p></div></li>
+              </ol>
+            </section>
+
+            <!-- autorizacion -->
+            <section class="rounded-2xl border border-slate-200 bg-white">
+              <div class="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+                <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Historial de autorización</p>
+                <button class="text-[10px] font-black text-blue-600">Ver todo</button>
+              </div>
+              <div class="space-y-2 px-4 py-2.5 text-[11px]">
+                <div class="flex items-center justify-between"><span class="text-slate-500">Estado efectivo</span><span class="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-black text-amber-700">WAITING_ERP</span></div>
+                <div class="flex items-center justify-between"><span class="text-slate-500">Último intento</span><span class="font-bold text-slate-700">rechazado DEV-1DU4NV · hace 2 d</span></div>
+                <div class="flex items-center justify-between"><span class="text-slate-500">Equipo anterior</span><span class="font-mono font-bold text-slate-700">DEV-3PMQ8K</span></div>
+                <div class="flex items-center justify-between"><span class="text-slate-500">Auditoría</span><span class="font-bold text-slate-700">4 movimientos</span></div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- rail derecho -->
+      <aside class="w-[268px] shrink-0 space-y-3 overflow-y-auto border-l border-slate-200 bg-white px-4 py-3.5">
+        <section class="rounded-xl border border-slate-200 p-3">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Licencia POS</p>
+          <div class="mt-1 flex items-end gap-1"><span class="text-xl font-black text-slate-800">4</span><span class="mb-0.5 text-xs font-black text-slate-400">/ 6 en uso</span></div>
+          <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100"><div class="h-full w-[66%] rounded-full bg-emerald-500"></div></div>
+          <p class="mt-1.5 text-[10px] text-slate-500">2 cupos libres · libera una caja completa desde su terminal</p>
+        </section>
+        <section class="rounded-xl border border-slate-200 p-3">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Versión de referencia</p>
+          <p class="mt-1 text-sm font-black text-slate-800">APK v2.4.1 (241)</p>
+          <p class="text-[10px] text-slate-500">fuente: APK POS publicada</p>
+          <p class="mt-1.5 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">2 terminales por debajo</p>
+        </section>
+        <section class="rounded-xl border border-slate-200 p-3">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Flota</p>
+          <div class="mt-1.5 space-y-1.5 text-[11px]">
+            <div class="flex items-center justify-between"><span class="text-slate-500">Online</span><span class="font-black text-emerald-700">4</span></div>
+            <div class="flex items-center justify-between"><span class="text-slate-500">Sin latido</span><span class="font-black text-red-700">1</span></div>
+            <div class="flex items-center justify-between"><span class="text-slate-500">ERP listo</span><span class="font-black text-slate-800">3</span></div>
+            <div class="flex items-center justify-between"><span class="text-slate-500">Solicitudes</span><span class="font-black text-blue-700">1</span></div>
+            <div class="flex items-center justify-between"><span class="text-slate-500">Sucursales</span><span class="font-black text-slate-800">2</span></div>
+          </div>
+        </section>
+        <section class="rounded-xl border border-slate-200 p-3">
+          <p class="text-[10px] font-black uppercase tracking-wider text-slate-400">Acciones de flota</p>
+          <div class="mt-1.5 space-y-1.5">
+            <button class="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-left text-[11px] font-bold text-slate-600">Aplicar límite de licencias</button>
+            <button class="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-left text-[11px] font-bold text-slate-600">Reintentar sync de todas</button>
+            <button class="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-left text-[11px] font-bold text-slate-600">Exportar flota CSV</button>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </div>
+</div>
+</body>
+</html>
