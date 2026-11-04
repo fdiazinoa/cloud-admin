@@ -4,7 +4,7 @@ import type { Distributor, Tenant } from '../../types';
 import { getTenantHealth, TENANT_HEALTH_CLASSES, formatRelativeTime } from '../../lib/tenantHealth';
 import { getTenantSemantics } from '../../lib/tenantSemantics';
 import { summarizeTenantTerminals } from '../../lib/tenantTerminalSummary';
-import { formatApkVersion, getRegistryStatusLabel } from '../../lib/tenantTerminalFormatting';
+import { formatApkVersion, getRegistryStatusClassName, getRegistryStatusLabel } from '../../lib/tenantTerminalFormatting';
 import type { TenantFieldsDraft } from './types';
 import { useTenantTerminalOverview } from './useTenantTerminalOverview';
 
@@ -63,7 +63,7 @@ export const TenantDetailSummary: React.FC<TenantDetailSummaryProps> = ({
     const health = getTenantHealth(tenant);
     const healthClasses = TENANT_HEALTH_CLASSES[health.level];
     const { terminals, seats, loading } = useTenantTerminalOverview(tenant.id);
-    const summary = summarizeTenantTerminals(terminals ?? []);
+    const summary = summarizeTenantTerminals(terminals ?? [], tenant.status);
 
     const distributorName = (id?: string) => distributors.find((item) => item.id === id)?.name || 'Sin asignar';
     const licenseLimit = seats?.maxSeats ?? tenant.max_pos_terminals ?? null;
@@ -183,7 +183,8 @@ export const TenantDetailSummary: React.FC<TenantDetailSummaryProps> = ({
                             <span className="text-slate-400">Cargando…</span>
                         ) : (
                             <>
-                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">{summary.online} online</span>
+                                {tenant.status !== 'SUSPENDED' ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">{summary.online} online</span> : null}
+                                {summary.suspended > 0 ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-red-700">{summary.suspended} suspendidas</span> : null}
                                 {summary.offline > 0 ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">{summary.offline} sin latido</span> : null}
                                 {summary.outdated > 0 ? <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">{summary.outdated} APK distinta</span> : null}
                             </>
@@ -205,7 +206,7 @@ export const TenantDetailSummary: React.FC<TenantDetailSummaryProps> = ({
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {(terminals ?? []).slice(0, 3).map((terminal) => {
-                            const status = getRegistryStatusLabel(terminal);
+                            const status = getRegistryStatusLabel(terminal, tenant.status);
                             return (
                                 <tr key={terminal.id}>
                                     <td className="px-5 py-2.5">
@@ -214,7 +215,7 @@ export const TenantDetailSummary: React.FC<TenantDetailSummaryProps> = ({
                                     </td>
                                     <td className="px-3 py-2.5 font-bold text-slate-600">{formatApkVersion(terminal).replace('APK ', '')}</td>
                                     <td className="px-3 py-2.5">
-                                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-black ${status === 'ONLINE' ? 'bg-emerald-50 text-emerald-700' : status === 'REVOCADA' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-500'}`}>{status}</span>
+                                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-black ${getRegistryStatusClassName(status)}`}>{status}</span>
                                     </td>
                                     <td className="px-3 py-2.5 text-slate-600">{formatRelativeTime(terminal.last_checkin_at)}</td>
                                 </tr>

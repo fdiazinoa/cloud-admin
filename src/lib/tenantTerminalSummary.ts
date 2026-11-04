@@ -6,6 +6,7 @@ export interface TenantTerminalSummary {
     online: number;
     offline: number;
     revoked: number;
+    suspended: number;
     erpReady: number;
     withoutVersion: number;
     outdated: number;
@@ -18,17 +19,19 @@ export interface TenantTerminalSummary {
  * Agrega el estado de las terminales de un tenant para la ficha.
  * Usa la misma regla de versión de referencia que la consola: la más repetida.
  */
-export const summarizeTenantTerminals = (terminals: TenantTerminalSnapshot[]): TenantTerminalSummary => {
+export const summarizeTenantTerminals = (terminals: TenantTerminalSnapshot[], tenantStatus?: string): TenantTerminalSummary => {
     const versions = new Map<string, { count: number; label: string }>();
     const stores = new Set<string>();
     let online = 0;
     let revoked = 0;
+    let suspended = 0;
     let erpReady = 0;
     let withoutVersion = 0;
 
     for (const terminal of terminals) {
-        const status = getRegistryStatusLabel(terminal);
+        const status = getRegistryStatusLabel(terminal, tenantStatus);
         if (status === 'ONLINE') online += 1;
+        if (status === 'SUSPENDIDA') suspended += 1;
         if (status === 'REVOCADA') revoked += 1;
 
         if (terminal.registry?.erp_readiness?.status === 'ready') erpReady += 1;
@@ -63,8 +66,9 @@ export const summarizeTenantTerminals = (terminals: TenantTerminalSnapshot[]): T
     return {
         total: terminals.length,
         online,
-        offline: terminals.length - online - revoked,
+        offline: terminals.length - online - revoked - suspended,
         revoked,
+        suspended,
         erpReady,
         withoutVersion,
         outdated,

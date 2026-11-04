@@ -54,7 +54,7 @@ export const TenantDetailTerminals: React.FC<TenantDetailTerminalsProps> = ({ te
     }
 
     const rows = terminals ?? [];
-    const summary = summarizeTenantTerminals(rows);
+    const summary = summarizeTenantTerminals(rows, tenant.status);
     const licenseLimit = seats?.maxSeats ?? tenant.max_pos_terminals ?? null;
     const usedSeats = seats?.usedSeats ?? null;
     const overLimit = typeof licenseLimit === 'number' && usedSeats !== null && usedSeats > licenseLimit;
@@ -64,7 +64,8 @@ export const TenantDetailTerminals: React.FC<TenantDetailTerminalsProps> = ({ te
             {tenant.status === 'SUSPENDED' ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">Tenant suspendido: todas sus cajas tienen el acceso bloqueado. El latido indica conectividad, no autorización. Las cajas desconectadas recibirán el estado al reconectarse.</div> : null}
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3">
                 <SummaryChip tone="muted">{summary.total} terminal{summary.total === 1 ? '' : 'es'}</SummaryChip>
-                <SummaryChip tone="ok">{summary.online} online</SummaryChip>
+                {tenant.status !== 'SUSPENDED' ? <SummaryChip tone="ok">{summary.online} online</SummaryChip> : null}
+                {summary.suspended > 0 ? <SummaryChip tone="bad">{summary.suspended} suspendida{summary.suspended === 1 ? '' : 's'}</SummaryChip> : null}
                 {summary.offline > 0 ? <SummaryChip tone="warn">{summary.offline} sin latido</SummaryChip> : null}
                 {summary.revoked > 0 ? <SummaryChip tone="bad">{summary.revoked} revocada{summary.revoked === 1 ? '' : 's'}</SummaryChip> : null}
                 {summary.outdated > 0 ? <SummaryChip tone="warn">{summary.outdated} con APK distinta</SummaryChip> : null}
