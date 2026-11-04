@@ -57,3 +57,16 @@ assert.deepEqual(
 );
 
 console.log('tenant terminal summary checks passed');
+
+// A tenant suspension overrides both connectivity and individual registry state.
+const fleet = [terminal({ id: 'online', registry: registry() }), terminal({ id: 'revoked', registry: registry({ is_revoked: true }) })];
+const before = JSON.stringify(fleet);
+const suspended = summarizeTenantTerminals(fleet, 'SUSPENDED');
+assert.deepEqual({ online: suspended.online, offline: suspended.offline, revoked: suspended.revoked, suspended: suspended.suspended }, { online: 0, offline: 0, revoked: 0, suspended: 2 });
+const reactivated = summarizeTenantTerminals(fleet, 'ACTIVE');
+assert.equal(reactivated.online, 1);
+assert.equal(reactivated.revoked, 1);
+assert.equal(reactivated.suspended, 0);
+assert.equal(JSON.stringify(fleet), before);
+assert.equal(summarizeTenantTerminals([], 'SUSPENDED').suspended, 0);
+console.log('suspended summary + reactivation checks passed');
