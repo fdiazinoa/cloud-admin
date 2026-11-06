@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 const runtime = mkdtempSync(join(tmpdir(), 'cloud-admin-runtime-'));
 writeFileSync(join(runtime, 'package.json'), '{"type":"module"}');
 symlinkSync(resolve('node_modules'), join(runtime, 'node_modules'));
-for (const file of ['api/admin-gateway.ts', 'api/admin-session.ts', 'api/lib/cloud-admin-session.ts', 'api/lib/admin-gateway-policy.ts', 'src/lib/cloudAdminPermissions.ts']) {
+for (const file of ['api/admin-provision-tenant.ts', 'src/lib/tenantProvisioning.ts', 'src/lib/tenantProducts.ts', 'src/lib/tenantAuthMetadata.ts', 'api/admin-gateway.ts', 'api/admin-session.ts', 'api/lib/cloud-admin-session.ts', 'api/lib/admin-gateway-policy.ts', 'src/lib/cloudAdminPermissions.ts']) {
  const target = join(runtime, file.replace(/\.ts$/, '.js'));
  mkdirSync(dirname(target), { recursive: true });
  writeFileSync(target, ts.transpileModule(readFileSync(file, 'utf8'), {
@@ -38,6 +38,7 @@ assert(allowed('/rest/v1/support_integration_secrets?select=provider,secret_last
 assert(!allowed('/rest/v1/support_integration_secrets?select=provider,secret_last4,updated_at&secret_ciphertext=not.is.null', 'GET', 'landlord', { settings_view: true }));
 assert(allowed('/rest/v1/tenants', 'GET', 'landlord', { tenants: true }));
 assert(!allowed('/rest/v1/tenants', 'GET', 'landlord', { tenants: true, tenants_view: false }));
+const { default: provision } = await import(pathToFileURL(join(runtime, 'api/admin-provision-tenant.js')));
 const originalFetch = globalThis.fetch;
 process.env.SUPABASE_URL = 'https://test.supabase.co';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'server-test-secret';
@@ -45,9 +46,12 @@ let permissions = { tenants_view: true };
 let active = true;
 let calls = [];
 globalThis.fetch = async (input, init) => {
- const url = String(input); calls.push({ url, headers: new Headers(init?.headers) });
+ const url = String(input); calls.push({ url, method: init?.method, body: init?.body, headers: new Headers(init?.headers) });
  if (url.endsWith('/auth/v1/user')) return Response.json({ id: 'auth-user', email: 'test@example.invalid' });
  if (url.includes('/rest/v1/cloud_admin_users')) return Response.json({ id: 'admin-user', auth_user_id: 'auth-user', status: active ? 'active' : 'suspended', profile_id: 'profile', cloud_admin_profiles: { is_active: true, permissions } });
+ if (url.endsWith('/auth/v1/admin/users') && init?.method === 'POST') return Response.json({ id: '00000000-0000-4000-8000-000000000001' });
+ if (url.endsWith('/rest/v1/rpc/create_new_tenant')) return Response.json('new-tenant');
+ if (url.includes('select=id%2Cmax_pos_terminals%2Cmax_erp_users')) return Response.json([{ id: 'new-tenant', max_pos_terminals: 3, max_erp_users: 2 }]);
  return Response.json([{ id: 'tenant' }], { headers: { 'content-range': '0-0/1' } });
 };
 function response() {
@@ -71,5 +75,31 @@ try {
  assert.equal(res.statusCode, 403); assert.equal(calls.length, 2);
  res = response(); await gateway({ method: 'POST', headers: { authorization: 'Bearer user-jwt' }, body: { path: '/rest/v1/tenants', method: 'GET', headers: { 'accept-profile': 'public', 'content-profile': 'landlord' } } }, res);
  assert.equal(res.statusCode, 403);
+ const payload = { name: 'Demo', slug: 'demo', email: 'demo@example.invalid', contactName: 'Demo', contactEmail: 'demo@example.invalid', city: 'Santo Domingo', maxPosTerminals: 3, maxErpUsers: 2 };
+ calls = []; res = response();
+ await provision({ method: 'POST', headers: {}, body: payload }, res);
+ assert.equal(res.statusCode, 401); assert.equal(calls.length, 0);
+ calls = []; res = response();
+ await provision({ method: 'POST', headers: { authorization: 'Bearer user-jwt' }, body: payload }, res);
+ assert.equal(res.statusCode, 403); assert.equal(calls.length, 2);
+ permissions = { tenants_manage: true };
+ res = response();
+ await provision({ method: 'POST', headers: { authorization: 'Bearer user-jwt' }, body: payload }, res);
+ assert.equal(res.statusCode, 200, res.body);
+ assert.equal(JSON.parse(res.body).tenantId, 'new-tenant');
+ assert.equal(JSON.parse(res.body).tempPassword.length, 14);
+ assert(!res.body.includes('server-test-secret'));
+ const createdUser = calls.find(call => call.url.endsWith('/auth/v1/admin/users') && call.method === 'POST');
+ assert.equal(JSON.parse(createdUser.body).user_metadata.must_change_password, true);
+ active = false; calls = []; res = response();
+ await provision({ method: 'POST', headers: { authorization: 'Bearer user-jwt' }, body: payload }, res);
+ assert.equal(res.statusCode, 403); assert.equal(calls.length, 2); active = true;
+ permissions = { tenants: true }; res = response();
+ await provision({ method: 'POST', headers: { authorization: 'Bearer user-jwt' }, body: payload }, res);
+ assert.equal(res.statusCode, 200, 'legacy tenant managers retain access');
+ res = response();
+ await provision({ method: 'POST', headers: { authorization: 'Bearer user-jwt' }, body: {} }, res);
+ assert.equal(res.statusCode, 400);
+ console.log('PASS: tenant provisioning for tenant managers without global Auth privileges');
  console.log('PASS: gateway policies, bootstrap, suspended actor, authorization, SSRF, secret isolation and response headers');
 } finally { globalThis.fetch = originalFetch; }

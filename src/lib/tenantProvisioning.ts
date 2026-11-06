@@ -8,8 +8,8 @@ import type {
     TenantProvisioningStatus,
     TenantType,
 } from "../types";
-import { deriveTenantSemanticsFromTenant, type TenantSemanticConfig } from "./tenantProducts";
-import { buildTenantAuthMetadataPayload } from "./tenantAuthMetadata";
+import { deriveTenantSemanticsFromTenant, type TenantSemanticConfig } from "./tenantProducts.js";
+import { buildTenantAuthMetadataPayload } from "./tenantAuthMetadata.js";
 
 type QueryResponse<T> = Promise<{ data: T | null; error: unknown | null }>;
 type MutationResponse = Promise<{ error: unknown | null }>;
@@ -340,6 +340,8 @@ export async function provisionTenant(
             captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
             serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
             is_new_user: true,
+            must_change_password: true,
+            temporary_password: true,
         },
     });
 
@@ -439,6 +441,8 @@ export async function provisionTenant(
             captured_by_distributor_id: normalizeOptional(capturedByDistributorId),
             serviced_by_distributor_id: normalizeOptional(servicedByDistributorId),
             is_new_user: true,
+            must_change_password: true,
+            temporary_password: true,
         }),
     );
 

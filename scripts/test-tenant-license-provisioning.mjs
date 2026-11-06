@@ -20,13 +20,15 @@ assert.match(
     'tenant creation must send the selected POS and ERP license limits',
 );
 
-for (const source of [tenantService, provisioning, provisioningApi]) {
+assert.ok(tenantService.includes("adminFetch('/api/admin-provision-tenant'"));
+
+for (const source of [provisioning, provisioningApi]) {
     assert.match(source, /p_max_pos_terminals:\s*normalizedMaxPosTerminals/);
     assert.match(source, /p_max_erp_users:\s*normalizedMaxErpUsers/);
     assert.match(source, /select\("id,max_pos_terminals,max_erp_users"\)/);
 }
 
-for (const source of [tenantService, provisioning]) {
+for (const source of [provisioning]) {
     assert.match(source, /getTenantLicenseProvisioningMismatch/);
 }
 
